@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Service Desk — Full Software Documentation</title>
+  <style>
+    @page { size: A4; margin: 2cm; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', 'Calibri', 'Helvetica Neue', Arial, sans-serif;
+      font-size: 11pt;
+      line-height: 1.5;
+      max-width: 21cm;
+      margin: 0 auto;
+      padding: 1.5cm 2cm;
+      color: #1a1a1a;
+      background: #fff;
+    }
+    h1 {
+      font-size: 22pt;
+      font-weight: 700;
+      margin: 0 0 0.5em;
+      padding-bottom: 0.3em;
+      border-bottom: 2px solid #333;
+      page-break-after: avoid;
+    }
+    h2 {
+      font-size: 14pt;
+      font-weight: 600;
+      margin: 1.2em 0 0.5em;
+      page-break-after: avoid;
+    }
+    h3 {
+      font-size: 12pt;
+      font-weight: 600;
+      margin: 1em 0 0.4em;
+      page-break-after: avoid;
+    }
+    p { margin: 0.4em 0; }
+    ul, ol { margin: 0.4em 0; padding-left: 1.5em; }
+    li { margin: 0.2em 0; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0.6em 0;
+      font-size: 10pt;
+      page-break-inside: avoid;
+    }
+    th, td {
+      border: 1px solid #444;
+      padding: 6px 8px;
+      text-align: left;
+    }
+    th { background: #e8e8e8; font-weight: 600; }
+    tr:nth-child(even) { background: #f8f8f8; }
+    pre, code {
+      font-family: 'Consolas', 'Monaco', monospace;
+      font-size: 9pt;
+      background: #f0f0f0;
+      padding: 2px 4px;
+      border-radius: 2px;
+    }
+    pre {
+      padding: 10px;
+      overflow-x: auto;
+      white-space: pre;
+      border: 1px solid #ccc;
+      page-break-inside: avoid;
+    }
+    .toc { margin: 1em 0; padding-left: 1.2em; }
+    .toc a { color: #0066cc; text-decoration: none; }
+    .toc a:hover { text-decoration: underline; }
+    .doc-meta { font-size: 10pt; color: #555; margin-bottom: 1.5em; }
+    hr { border: none; border-top: 1px solid #ccc; margin: 1.5em 0; }
+    .section { page-break-inside: avoid; }
+    @media print {
+      body { padding: 0; max-width: none; }
+      pre { white-space: pre-wrap; word-wrap: break-word; }
+      .no-print { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<h1>Service Desk — Full Software Documentation</h1>
+<p class="doc-meta"><strong>Version:</strong> 1.0 &nbsp;|&nbsp; <strong>Last Updated:</strong> February 2025 &nbsp;|&nbsp; <strong>Document Type:</strong> Complete Software Documentation</p>
+<hr />
+
+<h2>Table of Contents</h2>
+<ol class="toc">
+  <li><a href="#sec1">Executive Summary</a></li>
+  <li><a href="#sec2">System Architecture</a></li>
+  <li><a href="#sec3">Technology Stack</a></li>
+  <li><a href="#sec4">Feature Suite — In-Depth</a></li>
+  <li><a href="#sec5">Processes &amp; Workflows</a></li>
+  <li><a href="#sec6">API Reference</a></li>
+  <li><a href="#sec7">Database Schema Summary</a></li>
+  <li><a href="#sec8">Frontend Structure &amp; Routes</a></li>
+  <li><a href="#sec9">Security &amp; Access Control</a></li>
+  <li><a href="#sec10">Setup &amp; Deployment</a></li>
+  <li><a href="#sec11">Related Documentation</a></li>
+</ol>
+<hr />
+
+<h2 id="sec1">1. Executive Summary</h2>
+
+<h3>1.1 Purpose</h3>
+<p>The <strong>Service Desk</strong> (Vodafone Service Desk) is an <strong>enterprise IT support management platform</strong> for:</p>
+<ul>
+  <li><strong>Ticket management</strong> — Full lifecycle from creation to closure</li>
+  <li><strong>Approval workflows</strong> — Multi-level approval for requests requiring authorization</li>
+  <li><strong>SLA tracking</strong> — Response and resolution time monitoring with breach detection</li>
+  <li><strong>Team collaboration</strong> — Assignment to teams and individuals, multi-team support</li>
+  <li><strong>Asset management</strong> — IT asset inventory and ticket linking</li>
+  <li><strong>Knowledge base</strong> — Self-service articles and AI-powered FAQ chat</li>
+  <li><strong>Reporting &amp; analytics</strong> — Tickets, agents, SLA, CSAT, approvals, departments</li>
+</ul>
+
+<h3>1.2 Scope</h3>
+<ul>
+  <li><strong>33+ database tables</strong> — Users, tickets, SLA, KB, assets, approvals, templates, etc.</li>
+  <li><strong>80+ API endpoints</strong> — RESTful, JWT-protected</li>
+  <li><strong>15+ frontend pages</strong> — Dashboard, tickets, approvals, hierarchy, templates, reports, etc.</li>
+  <li><strong>150+ documented features</strong> — Ticketing, assets, KB, SLA, automation, notifications, custom fields</li>
+</ul>
+
+<h3>1.3 User Roles</h3>
+<table>
+  <tr><th>Role</th><th>Description</th><th>Typical Access</th></tr>
+  <tr><td><strong>Admin</strong></td><td>System administrator</td><td>Full access, users, SLA, config, reports</td></tr>
+  <tr><td><strong>Agent</strong></td><td>Support staff</td><td>Tickets, KB, assets, reports, approvals</td></tr>
+  <tr><td><strong>Requester</strong></td><td>End user / employee</td><td>Create tickets, view own tickets, KB</td></tr>
+</table>
+<hr />
+
+<h2 id="sec2">2. System Architecture</h2>
+
+<h3>2.1 High-Level Architecture</h3>
+<pre>┌─────────────────────────────────────────────────────────────────────────┐
+│                         FRONTEND (React + Vite)                           │
+│  React 19 • React Router v7 • Tailwind CSS 4 • Context API               │
+│  Pages: Dashboard, Tickets, Approvals, Hierarchy, Templates, Reports…    │
+└───────────────────────────────────┬─────────────────────────────────────┘
+                                    │ HTTP/REST (JWT)
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         BACKEND (Node.js + Express 5)                    │
+│  Controllers • Routes • Middleware (auth, roles) • Services               │
+│  Auth, Tickets, SLA, KB, Assets, Approvals, Templates, AI Chat, Reports │
+└───────────────────────────────────┬─────────────────────────────────────┘
+                                    │ mysql2
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         DATABASE (MySQL 8+)                               │
+│  33 tables • Indexes • Foreign keys • Migrations                          │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Optional: AnythingLLM (AI FAQ Chat) ← Backend proxies /api/ai-chat/message</pre>
+
+<h3>2.2 Backend Structure</h3>
+<pre>backend/
+├── src/
+│   ├── config/           # db.js, migrations, schema SQL
+│   ├── controllers/      # auth, ticket, user, team, org, kb, asset, sla,
+│   │                     # report, department, hierarchy, approval,
+│   │                     # aiChat, template, templateApproval
+│   ├── middleware/       # auth.js (JWT, requireAuth, requireRole)
+│   ├── routes/           # One file per domain (auth, tickets, users, …)
+│   ├── services/         # approvalWorkflow, approvalSlaService, slaService
+│   ├── utils/            # roles.js
+│   ├── seed.js            # Seed users, roles, sample data
+│   └── server.js          # Express app, CORS, route mounting
+└── package.json</pre>
+
+<h3>2.3 Frontend Structure</h3>
+<pre>frontend/
+├── src/
+│   ├── components/       # AppLayout, FaqChatBar, OrgChart, templates/*,
+│   │                     # tickets/*, ui/* (Button, Card, Modal, …)
+│   ├── contexts/         # auth, meta, theme
+│   ├── pages/            # login, dashboard, tickets, ticketDetail, users,
+│   │                     # teams, hierarchy, approvals, approvalRules,
+│   │                     # knowledgeBase, assets, sla, reports,
+│   │                     # templateBuilder, profile
+│   ├── services/         # api.js (api(), kbApi, assetsApi, ticketsApi,
+│   │                     # slaApi, reportsApi, tagsApi, auditApi,
+│   │                     # approvalsApi, templatesApi)
+│   ├── styles/           # main.css (Tailwind, theme)
+│   ├── App.jsx            # Routes, ProtectedRoute, RoleRoute
+│   └── index.jsx
+├── public/
+├── vite.config.js
+└── package.json</pre>
+<hr />
+
+<h2 id="sec3">3. Technology Stack</h2>
+<table>
+  <tr><th>Layer</th><th>Technology</th></tr>
+  <tr><td><strong>Backend</strong></td><td>Node.js (ES Modules), Express 5, mysql2, JWT (jsonwebtoken), bcryptjs, express-validator, multer, axios, dotenv, cors</td></tr>
+  <tr><td><strong>Frontend</strong></td><td>React 19, React Router v7, Vite 5, Tailwind CSS 4, Context API, recharts, react-markdown, react-organizational-chart</td></tr>
+  <tr><td><strong>Database</strong></td><td>MySQL 8+ (utf8mb4)</td></tr>
+  <tr><td><strong>Auth</strong></td><td>JWT in Authorization header; optional AnythingLLM API key for AI chat</td></tr>
+</table>
+<hr />
+
+<h2 id="sec4">4. Feature Suite — In-Depth</h2>
+
+<h3>4.1 Ticket Management</h3>
+<p><strong>Purpose:</strong> Manage support requests through their full lifecycle with status, priority, assignment, and SLA.</p>
+<p><strong>Capabilities:</strong></p>
+<ul>
+  <li><strong>Lifecycle:</strong> Create, update, assign, comment, close, reopen. Status flow: New → Open → Pending / On Hold → Solved → Closed.</li>
+  <li><strong>Status transitions (enforced in backend):</strong> new → open, pending, on_hold, solved, closed; open → pending, on_hold, solved, closed; pending/on_hold → open, on_hold/pending, solved, closed; solved → open (reopen), closed; closed → open (reopen only).</li>
+  <li><strong>Classification:</strong> Status, Priority (low, normal, high, urgent), Type (incident, service_request, problem, change), Channel (portal, email, phone, chat, api).</li>
+  <li><strong>Assignment:</strong> Single assignee, primary team; optional multi-team (add/remove teams, complete/reopen team work).</li>
+  <li><strong>Collaboration:</strong> Public/private comments, audit trail (field-level old → new in events).</li>
+  <li><strong>Attachments, tags, events:</strong> File attachments, tag add/remove, event log for status/assignment/field changes.</li>
+  <li><strong>Reopening:</strong> Reopen from solved/closed; reopened_count tracked.</li>
+  <li><strong>Templates:</strong> Tickets can be created from templates (categories, gallery, form builder); template approval flows can be attached.</li>
+</ul>
+<p><strong>Key APIs:</strong> List/filter tickets, get by id, create, update, bulk update, assign-to-me, escalate, reassign; comments, tags, audit, SLA; multi-team endpoints.</p>
+
+<h3>4.2 SLA Management</h3>
+<p><strong>Purpose:</strong> Define policies and measure response/resolution against due times; support approval SLAs.</p>
+<p><strong>Capabilities:</strong> Policies (response/resolution minutes, optional priority/team, default); ticket SLAs (auto-assignment, response_due_at, resolve_due_at, breach flags); actions (pause, resume, extend, reassign); monitoring (at-risk, breach check, stats); business hours; approval SLAs.</p>
+<p><strong>Key APIs:</strong> CRUD policies, ticket-SLA get/history, pause/resume/extend/reassign, at-risk, check-breaches, stats, business-hours CRUD, approval-SLA endpoints.</p>
+
+<h3>4.3 Approval System (Hierarchical)</h3>
+<p><strong>Purpose:</strong> Require one or more approvers before work is assigned to a team; support rules, departments, and reporting hierarchy.</p>
+<p><strong>Capabilities:</strong> Approval rules (admin): conditions (priority, type, department, cost); requires_approval, approval levels; workflow on ticket create/send-for-approval; approval chain from user hierarchy; ticket approvals (approve/reject with comments); UI: pending approvals, ticket approval history, approvers list.</p>
+<p><strong>Key APIs:</strong> Approval rules CRUD, pending approvals, ticket approvals, approve/reject, send-for-approval, approvers.</p>
+
+<h3>4.4 Template System</h3>
+<p><strong>Purpose:</strong> Reusable ticket templates with custom form fields and optional multi-step approval flows.</p>
+<p><strong>Capabilities:</strong> Categories; templates (fields_schema: text, textarea, richtext, select, number, date, file_upload, user_lookup, section_header, etc.); gallery; ticket creation from template; template approval flow per template; ticket template response for display.</p>
+<p><strong>Key APIs:</strong> Categories CRUD; templates CRUD, duplicate, gallery; ticket template-response; template approval-flow get/save/delete/test.</p>
+
+<h3>4.5 Asset Management</h3>
+<p><strong>Purpose:</strong> Track IT assets (hardware/software) and link them to tickets.</p>
+<p><strong>Capabilities:</strong> Asset types (Computer, Mobile Device, Monitor, Printer, Network Equipment, Software License, custom); assets (asset_tag, name, type, serial_number, manufacturer, model, status, assigned_to_user/org, location, purchase/warranty, notes); link asset to ticket; list tickets for asset.</p>
+<p><strong>Key APIs:</strong> Asset types CRUD; assets CRUD; link-ticket; get asset tickets.</p>
+
+<h3>4.6 Knowledge Base</h3>
+<p><strong>Purpose:</strong> Publish and search articles for self-service support.</p>
+<p><strong>Capabilities:</strong> Categories; articles (title, body, status draft/published, author, published_at); full-text search; filter by category/status.</p>
+<p><strong>Key APIs:</strong> Categories CRUD; articles CRUD; search.</p>
+
+<h3>4.7 AI FAQ Chat</h3>
+<p><strong>Purpose:</strong> Answer user questions about the Service Desk using a RAG-based AI (AnythingLLM).</p>
+<p><strong>Capabilities:</strong> Backend proxies to AnythingLLM workspace; FaqChatBar (floating button + expandable chat); conversation history; knowledge source with guardrails.</p>
+<p><strong>Key APIs:</strong> POST /api/ai-chat/message, POST /api/ai-chat/clear (auth required).</p>
+
+<h3>4.8 Organizations &amp; Teams</h3>
+<p><strong>Purpose:</strong> Model companies and support teams for assignment and reporting.</p>
+<p><strong>Capabilities:</strong> Organizations (name, domain, industry, size, website, notes; members); Teams (name, description; members with is_lead; optional department_id); tickets linked to organization and team(s); multi-team support.</p>
+<p><strong>Key APIs:</strong> Organizations CRUD; teams CRUD, get members, add/remove members.</p>
+
+<h3>4.9 Departments &amp; Hierarchy</h3>
+<p><strong>Purpose:</strong> Organizational hierarchy and reporting chain for approvals and org charts.</p>
+<p><strong>Capabilities:</strong> Departments (name, description, parent_department_id, head_user_id); user hierarchy (user_id, manager_id, level); org chart API; set/remove manager (admin).</p>
+<p><strong>Key APIs:</strong> Departments CRUD, get hierarchy; hierarchy: getUserChain, getDirectReports, orgChart, setManager, removeUser.</p>
+
+<h3>4.10 Users &amp; Authentication</h3>
+<p><strong>Purpose:</strong> Identify users and enforce role-based access.</p>
+<p><strong>Capabilities:</strong> Users (email, password_hash, full_name, title, phone, timezone, locale, is_active, last_login_at); roles (admin, agent, requester); Register, login (JWT); GET /auth/me; user management (list, get, create, update, delete; import from Excel).</p>
+<p><strong>Key APIs:</strong> POST auth/register, POST auth/login, GET auth/me; users CRUD, import-template, import (file upload).</p>
+
+<h3>4.11 Reports &amp; Analytics</h3>
+<p><strong>Purpose:</strong> Predefined reports for operations and performance.</p>
+<p><strong>Capabilities:</strong> Ticket metrics; agent performance; SLA compliance; customer satisfaction (CSAT); ticket trends; team performance; department breakdown; approval metrics; asset summary; resolution distribution; requester activity; hourly heatmap; agent workload; at-risk tickets; SLA by priority; export.</p>
+<p><strong>Key APIs:</strong> GET /reports/ticket-metrics, agent-performance, sla-compliance, customer-satisfaction, ticket-trends, team-performance, department-breakdown, approval-metrics, asset-summary, resolution-distribution, requester-activity, hourly-heatmap, agent-workload, at-risk-tickets, sla-priority-breakdown, export.</p>
+
+<h3>4.12 Dashboard</h3>
+<p><strong>Purpose:</strong> Single-page summary for the logged-in user.</p>
+<p><strong>Key API:</strong> GET /dashboard (requires auth).</p>
+
+<h3>4.13 Meta (Lookups)</h3>
+<p><strong>Purpose:</strong> Provide dropdown/lookup data for statuses, priorities, types, channels.</p>
+<p><strong>Key API:</strong> GET /meta.</p>
+<hr />
+
+<h2 id="sec5">5. Processes &amp; Workflows</h2>
+
+<h3>5.1 Ticket Lifecycle Process</h3>
+<ol>
+  <li><strong>Create:</strong> Requester or agent creates ticket (optional template). Subject, description, priority, type, channel, requester, optional assignee/team/org. Ticket number generated (e.g. SD-YYYYMMDD-NNNNN). Status = new.</li>
+  <li><strong>SLA assignment:</strong> Backend assigns SLA policy by priority (and team if configured); sets response_due_at, resolve_due_at in ticket_slas.</li>
+  <li><strong>Approval (if required):</strong> If an approval rule matches, ticket may go to “pending approval”; approval chain created from hierarchy; first approver notified.</li>
+  <li><strong>Approval steps:</strong> Each approver approves or rejects with optional comments. If rejected, ticket approval_status = rejected. If all levels approve, approval_status = approved; ticket can then be assigned to team.</li>
+  <li><strong>Work:</strong> Agent/team updates status, adds comments, assigns, adds tags, links assets. First public comment can mark “response SLA met.”</li>
+  <li><strong>Resolution:</strong> Agent sets status to solved; backend can set closed_at when status is solved/closed. Requester can reopen from solved (reopened_count incremented).</li>
+  <li><strong>Closure:</strong> Status closed; closed_at set. Reopen only from closed → open.</li>
+  <li><strong>Audit:</strong> Every status/assignment/field change recorded in ticket_events with old/new values where applicable.</li>
+</ol>
+
+<h3>5.2 Approval Workflow Process</h3>
+<ol>
+  <li>Rule evaluation on ticket create (or send-for-approval).</li>
+  <li>Chain build from requester’s user_hierarchy (N managers); create ticket_approvals.</li>
+  <li>Ticket approval_status = pending.</li>
+  <li>Approver approves or rejects with comments.</li>
+  <li>If approved and more levels exist, next approver notified. If all approved, ticket moves to team queue.</li>
+  <li>Optional approval-SLA policies track time-to-approve.</li>
+</ol>
+
+<h3>5.3 Template-Based Ticket Creation Process</h3>
+<ol>
+  <li>User selects template from gallery (by category/search).</li>
+  <li>Form rendered from template fields_schema; user fills and submits.</li>
+  <li>Backend creates ticket and stores template response.</li>
+  <li>Template approval flow (if configured) may create approval steps.</li>
+  <li>Ticket detail can show “Template response” tab.</li>
+</ol>
+
+<h3>5.4 SLA Breach Detection Process</h3>
+<ol>
+  <li>Policies define response_minutes, resolve_minutes.</li>
+  <li>Due dates set at create or policy change.</li>
+  <li>Cron or manual “check breaches” job sets response_breached / resolve_breached.</li>
+  <li>At-risk list shows tickets approaching due.</li>
+</ol>
+
+<h3>5.5 AI Chat Process</h3>
+<ol>
+  <li>User opens FaqChatBar and types a question.</li>
+  <li>Frontend sends POST /api/ai-chat/message with message and conversationHistory (JWT).</li>
+  <li>Backend forwards to AnythingLLM; RAG over uploaded docs.</li>
+  <li>Backend returns AI reply; frontend appends to conversation.</li>
+</ol>
+<hr />
+
+<h2 id="sec6">6. API Reference</h2>
+<p>Base URL: <code>/api</code>. All endpoints except auth register/login and health require <code>Authorization: Bearer &lt;JWT&gt;</code>.</p>
+
+<h3>6.1 Authentication</h3>
+<table>
+  <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+  <tr><td>POST</td><td>/auth/register</td><td>Register new user</td></tr>
+  <tr><td>POST</td><td>/auth/login</td><td>Login (returns JWT)</td></tr>
+  <tr><td>GET</td><td>/auth/me</td><td>Current user + roles</td></tr>
+</table>
+
+<h3>6.2 Tickets</h3>
+<table>
+  <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+  <tr><td>GET</td><td>/tickets</td><td>List (filter: status, priority, assignee, teamId, organizationId, search, page, pageSize)</td></tr>
+  <tr><td>GET</td><td>/tickets/:id</td><td>Get one</td></tr>
+  <tr><td>POST</td><td>/tickets</td><td>Create</td></tr>
+  <tr><td>PATCH</td><td>/tickets/:id</td><td>Update</td></tr>
+  <tr><td>PATCH</td><td>/tickets/bulk</td><td>Bulk update</td></tr>
+  <tr><td>POST</td><td>/tickets/:id/assign</td><td>Assign to current user</td></tr>
+  <tr><td>POST</td><td>/tickets/:id/escalate</td><td>Escalate priority</td></tr>
+  <tr><td>POST</td><td>/tickets/:id/reassign</td><td>Reassign (assignee/team)</td></tr>
+  <tr><td>GET</td><td>/tickets/:id/teams</td><td>List teams</td></tr>
+  <tr><td>POST</td><td>/tickets/:id/teams</td><td>Add team</td></tr>
+  <tr><td>PATCH</td><td>/tickets/:id/teams/:teamId</td><td>Update team</td></tr>
+  <tr><td>DELETE</td><td>/tickets/:id/teams/:teamId</td><td>Remove team</td></tr>
+  <tr><td>POST</td><td>/tickets/:id/teams/:teamId/complete</td><td>Complete team work</td></tr>
+  <tr><td>POST</td><td>/tickets/:id/teams/:teamId/reopen</td><td>Reopen team work</td></tr>
+  <tr><td>GET</td><td>/tickets/:id/sla</td><td>Ticket SLA</td></tr>
+  <tr><td>GET</td><td>/tickets/:id/comments</td><td>List comments</td></tr>
+  <tr><td>POST</td><td>/tickets/:id/comments</td><td>Add comment</td></tr>
+  <tr><td>GET</td><td>/tickets/:id/audit</td><td>Audit trail</td></tr>
+  <tr><td>GET</td><td>/tickets/:id/tags</td><td>Get tags</td></tr>
+  <tr><td>POST</td><td>/tickets/:id/tags</td><td>Add tag</td></tr>
+  <tr><td>DELETE</td><td>/tickets/:id/tags/:tagId</td><td>Remove tag</td></tr>
+  <tr><td>GET</td><td>/tags</td><td>List all tags</td></tr>
+</table>
+
+<h3>6.3 Approvals</h3>
+<table>
+  <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+  <tr><td>GET</td><td>/approval-rules</td><td>List rules (admin)</td></tr>
+  <tr><td>GET</td><td>/approval-rules/:id</td><td>Get rule</td></tr>
+  <tr><td>POST</td><td>/approval-rules</td><td>Create rule</td></tr>
+  <tr><td>PATCH</td><td>/approval-rules/:id</td><td>Update rule</td></tr>
+  <tr><td>DELETE</td><td>/approval-rules/:id</td><td>Delete rule</td></tr>
+  <tr><td>GET</td><td>/tickets/:id/approvals</td><td>Ticket approvals</td></tr>
+  <tr><td>GET</td><td>/approvals/pending</td><td>Current user pending</td></tr>
+  <tr><td>GET</td><td>/approvals/history/:ticketId</td><td>Approval history</td></tr>
+  <tr><td>POST</td><td>/approvals/:id/approve</td><td>Approve</td></tr>
+  <tr><td>POST</td><td>/approvals/:id/reject</td><td>Reject</td></tr>
+  <tr><td>POST</td><td>/tickets/:id/send-for-approval</td><td>Send for approval</td></tr>
+  <tr><td>GET</td><td>/approvers</td><td>List approvers (admin/agent)</td></tr>
+</table>
+
+<h3>6.4 SLA</h3>
+<table>
+  <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+  <tr><td>GET</td><td>/sla/policies</td><td>List policies (optional ?type=team|approval)</td></tr>
+  <tr><td>GET</td><td>/sla/policies/:id</td><td>Get policy</td></tr>
+  <tr><td>POST</td><td>/sla/policies</td><td>Create (admin)</td></tr>
+  <tr><td>PUT</td><td>/sla/policies/:id</td><td>Update (admin)</td></tr>
+  <tr><td>DELETE</td><td>/sla/policies/:id</td><td>Delete (admin)</td></tr>
+  <tr><td>GET</td><td>/sla/ticket-slas</td><td>List ticket SLAs</td></tr>
+  <tr><td>GET</td><td>/sla/tickets/:ticketId</td><td>Ticket SLA</td></tr>
+  <tr><td>GET</td><td>/sla/tickets/:ticketId/history</td><td>SLA history</td></tr>
+  <tr><td>POST</td><td>/sla/tickets/:ticketId/pause</td><td>Pause</td></tr>
+  <tr><td>POST</td><td>/sla/tickets/:ticketId/resume</td><td>Resume</td></tr>
+  <tr><td>POST</td><td>/sla/tickets/:ticketId/extend</td><td>Extend</td></tr>
+  <tr><td>POST</td><td>/sla/tickets/:ticketId/reassign</td><td>Reassign</td></tr>
+  <tr><td>GET</td><td>/sla/at-risk</td><td>At-risk tickets</td></tr>
+  <tr><td>POST</td><td>/sla/check-breaches</td><td>Run breach check</td></tr>
+  <tr><td>GET</td><td>/sla/stats</td><td>SLA stats</td></tr>
+  <tr><td>GET</td><td>/sla/stats/by-policy</td><td>Stats by policy</td></tr>
+  <tr><td>GET/POST/PUT/DELETE</td><td>/sla/business-hours</td><td>Business hours CRUD</td></tr>
+  <tr><td>GET</td><td>/sla/approval-slas</td><td>Approval SLA list</td></tr>
+  <tr><td>GET</td><td>/sla/approval-slas/stats</td><td>Approval SLA stats</td></tr>
+  <tr><td>GET</td><td>/sla/approval-slas/tickets/:ticketId</td><td>Ticket approval SLAs</td></tr>
+  <tr><td>POST</td><td>/sla/approval-slas/check-breaches</td><td>Approval breach check</td></tr>
+  <tr><td>GET</td><td>/sla/approval-rules</td><td>Rules for SLA</td></tr>
+</table>
+
+<h3>6.5 Templates</h3>
+<table>
+  <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+  <tr><td>GET</td><td>/templates/categories</td><td>List categories</td></tr>
+  <tr><td>POST</td><td>/templates/categories</td><td>Create category (admin)</td></tr>
+  <tr><td>PUT</td><td>/templates/categories/:id</td><td>Update category</td></tr>
+  <tr><td>DELETE</td><td>/templates/categories/:id</td><td>Delete category</td></tr>
+  <tr><td>GET</td><td>/templates/gallery</td><td>Gallery (for new ticket)</td></tr>
+  <tr><td>GET</td><td>/templates</td><td>List templates</td></tr>
+  <tr><td>GET</td><td>/templates/:id</td><td>Get template</td></tr>
+  <tr><td>POST</td><td>/templates</td><td>Create (admin)</td></tr>
+  <tr><td>PUT</td><td>/templates/:id</td><td>Update (admin)</td></tr>
+  <tr><td>DELETE</td><td>/templates/:id</td><td>Delete (admin)</td></tr>
+  <tr><td>POST</td><td>/templates/:id/duplicate</td><td>Duplicate (admin)</td></tr>
+  <tr><td>GET</td><td>/tickets/:id/template-response</td><td>Template response for ticket</td></tr>
+  <tr><td>GET</td><td>/templates/:id/approval-flow</td><td>Get flow (admin)</td></tr>
+  <tr><td>PUT</td><td>/templates/:id/approval-flow</td><td>Save flow (admin)</td></tr>
+  <tr><td>DELETE</td><td>/templates/:id/approval-flow</td><td>Delete flow (admin)</td></tr>
+  <tr><td>POST</td><td>/templates/:id/approval-flow/test</td><td>Test flow (admin)</td></tr>
+</table>
+
+<h3>6.6 Knowledge Base</h3>
+<table>
+  <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+  <tr><td>GET</td><td>/kb/categories</td><td>List categories</td></tr>
+  <tr><td>POST</td><td>/kb/categories</td><td>Create</td></tr>
+  <tr><td>PUT</td><td>/kb/categories/:id</td><td>Update</td></tr>
+  <tr><td>DELETE</td><td>/kb/categories/:id</td><td>Delete</td></tr>
+  <tr><td>GET</td><td>/kb/articles</td><td>List (query params)</td></tr>
+  <tr><td>GET</td><td>/kb/articles/search</td><td>Search (?q=)</td></tr>
+  <tr><td>GET</td><td>/kb/articles/:id</td><td>Get article</td></tr>
+  <tr><td>POST</td><td>/kb/articles</td><td>Create</td></tr>
+  <tr><td>PUT</td><td>/kb/articles/:id</td><td>Update</td></tr>
+  <tr><td>DELETE</td><td>/kb/articles/:id</td><td>Delete</td></tr>
+</table>
+
+<h3>6.7 Assets</h3>
+<table>
+  <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+  <tr><td>GET</td><td>/assets/types</td><td>List asset types</td></tr>
+  <tr><td>POST</td><td>/assets/types</td><td>Create type</td></tr>
+  <tr><td>GET</td><td>/assets</td><td>List assets</td></tr>
+  <tr><td>GET</td><td>/assets/:id</td><td>Get asset</td></tr>
+  <tr><td>POST</td><td>/assets</td><td>Create</td></tr>
+  <tr><td>PUT</td><td>/assets/:id</td><td>Update</td></tr>
+  <tr><td>DELETE</td><td>/assets/:id</td><td>Delete</td></tr>
+  <tr><td>POST</td><td>/assets/link-ticket</td><td>Link asset to ticket</td></tr>
+  <tr><td>GET</td><td>/assets/:id/tickets</td><td>Tickets for asset</td></tr>
+</table>
+
+<h3>6.8 Organizations &amp; Teams</h3>
+<table>
+  <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+  <tr><td>GET</td><td>/organizations</td><td>List</td></tr>
+  <tr><td>POST</td><td>/organizations</td><td>Create</td></tr>
+  <tr><td>PATCH</td><td>/organizations/:id</td><td>Update</td></tr>
+  <tr><td>DELETE</td><td>/organizations/:id</td><td>Remove</td></tr>
+  <tr><td>GET</td><td>/teams</td><td>List</td></tr>
+  <tr><td>GET</td><td>/teams/:id/members</td><td>Members</td></tr>
+  <tr><td>POST</td><td>/teams</td><td>Create</td></tr>
+  <tr><td>PATCH</td><td>/teams/:id</td><td>Update (admin)</td></tr>
+  <tr><td>DELETE</td><td>/teams/:id</td><td>Remove (admin)</td></tr>
+  <tr><td>POST</td><td>/teams/members</td><td>Add member (admin)</td></tr>
+  <tr><td>DELETE</td><td>/teams/members/:userId</td><td>Remove member (admin)</td></tr>
+</table>
+
+<h3>6.9 Departments &amp; Hierarchy</h3>
+<table>
+  <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+  <tr><td>GET</td><td>/departments</td><td>List</td></tr>
+  <tr><td>GET</td><td>/departments/:id</td><td>Get one</td></tr>
+  <tr><td>GET</td><td>/departments/:id/hierarchy</td><td>Hierarchy</td></tr>
+  <tr><td>POST</td><td>/departments</td><td>Create (admin)</td></tr>
+  <tr><td>PATCH</td><td>/departments/:id</td><td>Update (admin)</td></tr>
+  <tr><td>DELETE</td><td>/departments/:id</td><td>Delete (admin)</td></tr>
+  <tr><td>GET</td><td>/hierarchy/user/:id</td><td>User reporting chain</td></tr>
+  <tr><td>GET</td><td>/hierarchy/manager/:id/reports</td><td>Direct reports</td></tr>
+  <tr><td>GET</td><td>/hierarchy/org-chart</td><td>Org chart (admin/agent)</td></tr>
+  <tr><td>POST</td><td>/hierarchy/user/:id</td><td>Set manager (admin)</td></tr>
+  <tr><td>DELETE</td><td>/hierarchy/user/:id</td><td>Remove from hierarchy (admin)</td></tr>
+</table>
+
+<h3>6.10 Users</h3>
+<table>
+  <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+  <tr><td>GET</td><td>/users</td><td>List (admin/agent)</td></tr>
+  <tr><td>GET</td><td>/users/import-template</td><td>Download import template (admin)</td></tr>
+  <tr><td>POST</td><td>/users/import</td><td>Import users Excel (admin)</td></tr>
+  <tr><td>GET</td><td>/users/:id</td><td>Get (admin/agent)</td></tr>
+  <tr><td>POST</td><td>/users</td><td>Create (admin)</td></tr>
+  <tr><td>PATCH</td><td>/users/:id</td><td>Update (admin)</td></tr>
+  <tr><td>DELETE</td><td>/users/:id</td><td>Delete (admin)</td></tr>
+</table>
+
+<h3>6.11 Reports</h3>
+<table>
+  <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+  <tr><td>GET</td><td>/reports/ticket-metrics</td><td>Ticket metrics</td></tr>
+  <tr><td>GET</td><td>/reports/agent-performance</td><td>Agent performance</td></tr>
+  <tr><td>GET</td><td>/reports/sla-compliance</td><td>SLA compliance</td></tr>
+  <tr><td>GET</td><td>/reports/customer-satisfaction</td><td>CSAT</td></tr>
+  <tr><td>GET</td><td>/reports/ticket-trends</td><td>Ticket trends</td></tr>
+  <tr><td>GET</td><td>/reports/team-performance</td><td>Team performance</td></tr>
+  <tr><td>GET</td><td>/reports/department-breakdown</td><td>Department breakdown</td></tr>
+  <tr><td>GET</td><td>/reports/approval-metrics</td><td>Approval metrics</td></tr>
+  <tr><td>GET</td><td>/reports/asset-summary</td><td>Asset summary</td></tr>
+  <tr><td>GET</td><td>/reports/resolution-distribution</td><td>Resolution distribution</td></tr>
+  <tr><td>GET</td><td>/reports/requester-activity</td><td>Requester activity</td></tr>
+  <tr><td>GET</td><td>/reports/hourly-heatmap</td><td>Hourly heatmap</td></tr>
+  <tr><td>GET</td><td>/reports/agent-workload</td><td>Agent workload</td></tr>
+  <tr><td>GET</td><td>/reports/at-risk-tickets</td><td>At-risk tickets</td></tr>
+  <tr><td>GET</td><td>/reports/sla-priority-breakdown</td><td>SLA by priority</td></tr>
+  <tr><td>GET</td><td>/reports/export</td><td>Export (admin/agent)</td></tr>
+</table>
+
+<h3>6.12 Dashboard &amp; Meta</h3>
+<table>
+  <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+  <tr><td>GET</td><td>/dashboard</td><td>Dashboard summary</td></tr>
+  <tr><td>GET</td><td>/meta</td><td>Statuses, priorities, types, channels</td></tr>
+</table>
+
+<h3>6.13 AI Chat</h3>
+<table>
+  <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+  <tr><td>POST</td><td>/ai-chat/message</td><td>Send message (body: message, conversationHistory)</td></tr>
+  <tr><td>POST</td><td>/ai-chat/clear</td><td>Clear conversation (client-side)</td></tr>
+</table>
+
+<h3>6.14 Health</h3>
+<table>
+  <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+  <tr><td>GET</td><td>/health</td><td>Health check (no auth)</td></tr>
+</table>
+<hr />
+
+<h2 id="sec7">7. Database Schema Summary</h2>
+<ul>
+  <li><strong>Auth &amp; users:</strong> roles, users, user_roles</li>
+  <li><strong>Orgs &amp; teams:</strong> organizations, organization_members, teams, team_members</li>
+  <li><strong>Tickets:</strong> ticket_statuses, ticket_priorities, ticket_types, ticket_channels, tickets, ticket_comments, ticket_tags, ticket_tag_links, ticket_attachments, ticket_events</li>
+  <li><strong>SLA:</strong> sla_policies, ticket_slas</li>
+  <li><strong>KB:</strong> kb_categories, kb_articles</li>
+  <li><strong>Assets:</strong> asset_types, assets, asset_ticket_links</li>
+  <li><strong>Satisfaction:</strong> satisfaction_ratings</li>
+  <li><strong>Approvals:</strong> departments, user_hierarchy, approval_rules, ticket_approvals (and related)</li>
+  <li><strong>Templates:</strong> ticket_template_categories, ticket_templates, template approval tables (see migrations)</li>
+  <li><strong>Automation:</strong> automation_rules, automation_logs</li>
+  <li><strong>Email:</strong> email_accounts</li>
+  <li><strong>Business hours:</strong> business_hours, business_hours_schedules</li>
+  <li><strong>Other:</strong> canned_responses, time_entries, notification_preferences, notifications, custom_field_definitions, custom_field_values, saved_filters</li>
+</ul>
+<p><strong>Total: 33+ tables.</strong> See DATABASE_SCHEMA.md for full column definitions and indexes.</p>
+<hr />
+
+<h2 id="sec8">8. Frontend Structure &amp; Routes</h2>
+
+<h3>8.1 Routes (React Router)</h3>
+<table>
+  <tr><th>Path</th><th>Component</th><th>Access</th></tr>
+  <tr><td>/login</td><td>Login</td><td>Public</td></tr>
+  <tr><td>/dashboard</td><td>Dashboard</td><td>Protected</td></tr>
+  <tr><td>/tickets</td><td>Tickets</td><td>Protected</td></tr>
+  <tr><td>/tickets/new</td><td>Redirect to /tickets?create=1</td><td>Protected</td></tr>
+  <tr><td>/tickets/:id</td><td>TicketDetail</td><td>Protected</td></tr>
+  <tr><td>/users</td><td>Users</td><td>Protected, admin/agent</td></tr>
+  <tr><td>/teams</td><td>Teams</td><td>Protected</td></tr>
+  <tr><td>/hierarchy</td><td>Hierarchy</td><td>Protected, admin/agent</td></tr>
+  <tr><td>/approvals</td><td>Approvals</td><td>Protected</td></tr>
+  <tr><td>/approval-rules</td><td>ApprovalRules</td><td>Protected, admin</td></tr>
+  <tr><td>/knowledge-base</td><td>KnowledgeBase</td><td>Protected</td></tr>
+  <tr><td>/assets</td><td>Assets</td><td>Protected, admin/agent</td></tr>
+  <tr><td>/sla</td><td>SlaManagement</td><td>Protected, admin</td></tr>
+  <tr><td>/reports</td><td>Reports</td><td>Protected, admin/agent</td></tr>
+  <tr><td>/templates</td><td>TemplateBuilder</td><td>Protected, admin</td></tr>
+  <tr><td>/profile</td><td>Profile</td><td>Protected</td></tr>
+  <tr><td>*</td><td>Redirect to /dashboard</td><td>—</td></tr>
+</table>
+
+<h3>8.2 Key Components</h3>
+<ul>
+  <li><strong>AppLayout:</strong> Sidebar, header, breadcrumbs, FaqChatBar; wraps all authenticated pages.</li>
+  <li><strong>FaqChatBar:</strong> Floating AI chat (AnythingLLM-backed).</li>
+  <li><strong>OrgChart:</strong> Hierarchy visualization (react-organizational-chart).</li>
+  <li><strong>templates/*:</strong> TemplateBuilder (categories, gallery, form builder, approval flow).</li>
+  <li><strong>tickets/*:</strong> TicketCreateModal, ticket list, ticket detail (conversation, audit, SLA, tags, teams).</li>
+  <li><strong>ui/*:</strong> Button, Card, Badge, Input, Select, Textarea, Modal, Icon, PageHeader.</li>
+</ul>
+<hr />
+
+<h2 id="sec9">9. Security &amp; Access Control</h2>
+<ul>
+  <li><strong>Authentication:</strong> JWT issued on login; sent as Authorization: Bearer &lt;token&gt;.</li>
+  <li><strong>Authorization:</strong> Middleware requireAuth (valid token), requireRole('admin'|'agent') where needed; requester sees only own tickets.</li>
+  <li><strong>Passwords:</strong> bcrypt hashing; no plaintext storage.</li>
+  <li><strong>SQL:</strong> Parameterized queries (mysql2); no raw concatenation.</li>
+  <li><strong>CORS:</strong> Configured origin (e.g. CORS_ORIGIN env); credentials allowed.</li>
+  <li><strong>Sensitive config:</strong> JWT_SECRET, DB credentials, optional ANYTHINGLLM_URL/API key in env; not committed.</li>
+</ul>
+<p>See TEST_CREDENTIALS.md for test accounts and feature access matrix.</p>
+<hr />
+
+<h2 id="sec10">10. Setup &amp; Deployment</h2>
+<ul>
+  <li><strong>Database:</strong> Create MySQL DB; run migrations from backend/src/config/ (e.g. migrate.js, or run complete-schema.sql); optionally seed (seed.js).</li>
+  <li><strong>Backend:</strong> cd backend, npm install, create .env (PORT, DATABASE_*, JWT_SECRET, CORS_ORIGIN, optional ANYTHINGLLM_URL), npm run dev or npm start.</li>
+  <li><strong>Frontend:</strong> cd frontend, npm install, set VITE_API_URL if needed, npm run dev or npm run build + serve.</li>
+  <li><strong>AI Chat:</strong> Install/run AnythingLLM; create workspace; upload AI_FAQ_KNOWLEDGE_BASE.md; set ANYTHINGLLM_URL and API key.</li>
+</ul>
+<p>See SETUP.md for step-by-step and production checklist.</p>
+<hr />
+
+<h2 id="sec11">11. Related Documentation</h2>
+<table>
+  <tr><th>Document</th><th>Purpose</th></tr>
+  <tr><td>FEATURES.md</td><td>High-level feature list (150+ items)</td></tr>
+  <tr><td>DATABASE_SCHEMA.md</td><td>Full table definitions and indexes</td></tr>
+  <tr><td>SETUP.md</td><td>Installation, env, API list, default credentials</td></tr>
+  <tr><td>PLAN.md</td><td>Lifecycle &amp; UI revamp plan (Vodafone design)</td></tr>
+  <tr><td>HIERARCHY_APPROVAL_IMPLEMENTATION_PLAN.md</td><td>Approval system design and schema</td></tr>
+  <tr><td>AI_CHAT_INTEGRATION.md</td><td>AI FAQ chat setup and API</td></tr>
+  <tr><td>AI_FAQ_KNOWLEDGE_BASE.md</td><td>RAG content and guardrails for AI</td></tr>
+  <tr><td>TEST_CREDENTIALS.md</td><td>Test accounts and permissions</td></tr>
+</table>
+
+<hr />
+<p style="text-align:center; font-size:10pt; color:#666;"><em>End of Project Documentation</em></p>
+
+</body>
+</html>
