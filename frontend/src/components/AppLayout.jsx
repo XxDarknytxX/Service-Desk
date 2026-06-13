@@ -201,7 +201,7 @@ export default function AppLayout({ children }) {
         <button
           onClick={toggleCollapsed}
           className={cn(
-            "hidden lg:flex absolute -right-3 top-[42px] z-10",
+            "hidden lg:flex absolute -right-3 top-[20px] z-10",
             "h-6 w-6 items-center justify-center rounded-full",
             "bg-[var(--bg-elevated)] border border-[var(--border-strong)]",
             "text-[var(--fg-muted)] shadow-[0_2px_8px_rgba(0,0,0,0.25)]",
@@ -441,7 +441,7 @@ export default function AppLayout({ children }) {
                 {showNotifications && (
                   <div
                     className={cn(
-                      "absolute right-0 mt-2 w-80 max-w-[calc(100vw-2rem)]",
+                      "absolute right-0 mt-[18px] w-80 max-w-[calc(100vw-2rem)]",
                       "bg-[var(--bg-elevated)]",
                       "rounded-xl overflow-hidden",
                       "border border-[var(--border-default)]",
@@ -498,7 +498,7 @@ export default function AppLayout({ children }) {
                 {showUserMenu && (
                   <div
                     className={cn(
-                      "absolute right-0 mt-2 w-56",
+                      "absolute right-0 mt-[18px] w-56",
                       "bg-[var(--bg-elevated)]",
                       "rounded-xl overflow-hidden",
                       "border border-[var(--border-default)]",
