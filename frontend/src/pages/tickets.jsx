@@ -1,15 +1,13 @@
 /**
- * Tickets Page
- * Enhanced with Vodafone ServiceDesk-inspired features:
- * - Column visibility toggle
- * - Due By date column, Site/Org column, Type column
- * - Attachment indicator (paperclip)
- * - Per-row quick actions (copy ticket#, email)
- * - Refresh button
- * - Compact/Comfortable view toggle
+ * Tickets Page — Vodafone Service Desk
+ *
+ * Premium queue experience: branded header, segmented queue switcher, a clean
+ * filter toolbar, and an elevated data table with refined badges, SLA pills,
+ * per-row quick actions, bulk actions, and column controls. All data flows,
+ * filters, column visibility, compact mode, and bulk operations are preserved.
  */
 
-import { useEffect, useState, useCallback, useRef, useMemo } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { api } from "../services/api"
 import { useMeta } from "../contexts/meta"
@@ -18,7 +16,9 @@ import { useToast } from "../contexts/toast"
 import Badge from "../components/ui/Badge"
 import Button from "../components/ui/Button"
 import Icon from "../components/ui/Icon"
-import Card from "../components/ui/Card"
+import PageHeader from "../components/ui/PageHeader"
+import EmptyState from "../components/ui/EmptyState"
+import { SkeletonTable } from "../components/ui/Skeleton"
 import { Select } from "../components/ui/Input"
 import TicketCreateModal from "../components/tickets/TicketCreateModal"
 
@@ -337,16 +337,6 @@ export default function Tickets() {
     }
   }
 
-  const getPriorityColor = (priorityKey) => {
-    switch (priorityKey) {
-      case "urgent": return "red"
-      case "high": return "orange"
-      case "normal": return "blue"
-      case "low": return "emerald"
-      default: return "slate"
-    }
-  }
-
   const getPrioritySquareColor = (priorityKey) => {
     switch (priorityKey) {
       case "urgent": return "bg-red-500"
@@ -406,90 +396,65 @@ export default function Tickets() {
 
   const totalPages = Math.ceil(total / pageSize)
 
-  const selectStyle = cn(
-    "px-3 py-2.5 rounded-lg text-sm",
-    "bg-[var(--bg-elevated)]",
-    "text-[var(--fg-primary)]",
-    "border border-[var(--border-default)]",
-    "focus:outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/20",
-    "transition-all duration-200 cursor-pointer"
+  const cellPad = compactView ? "px-4 py-2.5" : "px-4 py-3.5"
+
+  const hasFilters = search || statusFilter || priorityFilter || assigneeFilter
+
+  const QUEUES = [
+    { key: "my-tickets", label: "My Tickets", icon: "user", desc: "Tickets assigned to me to work on" },
+    { key: "team-queue", label: "Team Queue", icon: "inbox", desc: "Unclaimed tickets in my team's queue" },
+    { key: "my-requests", label: "My Requests", icon: "fileText", desc: "Tickets I raised as requester" },
+    { key: "resolved", label: "Resolved", icon: "checkCircle", desc: "Completed tickets" },
+    { key: "all", label: "All Tickets", icon: "list", desc: "All tickets in system", adminOnly: true },
+  ].filter(tab => !tab.adminOnly || user?.roles?.includes('admin'))
+
+  // Reusable header control button
+  const ControlButton = ({ active, title, onClick, children }) => (
+    <button
+      onClick={onClick}
+      title={title}
+      className={cn(
+        "h-10 w-10 inline-flex items-center justify-center rounded-lg transition-all duration-150",
+        "bg-[var(--bg-elevated)] border",
+        active
+          ? "border-[var(--accent)] text-[var(--accent)]"
+          : "border-[var(--border-default)] text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)] hover:border-[var(--border-hover)]"
+      )}
+    >
+      {children}
+    </button>
   )
-
-  const cellPad = compactView ? "px-4 py-2" : "px-4 py-3.5"
-
-  if (loading && tickets.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center py-24 gap-4">
-        <div className={cn(
-          "w-12 h-12 rounded-xl flex items-center justify-center",
-          "bg-[var(--accent)]/10 border border-[var(--accent)]/20"
-        )}>
-          <svg className="animate-spin h-5 w-5 text-[var(--accent)]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-          </svg>
-        </div>
-        <p className="text-sm text-[var(--fg-secondary)]">Loading tickets...</p>
-      </div>
-    )
-  }
 
   return (
     <>
-      <div className="space-y-6">
+      <div className="space-y-5">
         {/* Header */}
-        <div className="rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] px-6 py-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <h1 className="text-2xl sm:text-3xl font-semibold text-[var(--fg-primary)] tracking-tight">
-                Tickets
-              </h1>
-              <p className="text-[var(--fg-secondary)] mt-1 text-sm">
-                {total} {total === 1 ? "ticket" : "tickets"} total
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              {/* Refresh */}
-              <button
-                onClick={() => fetchTickets()}
-                className={cn(
-                  "p-2.5 rounded-lg transition-all duration-200",
-                  "bg-[var(--bg-base)] border border-[var(--border-default)]",
-                  "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)]"
-                )}
-                title="Refresh"
-              >
+        <PageHeader
+          icon="tickets"
+          title="Tickets"
+          subtitle={`${total} ${total === 1 ? "ticket" : "tickets"} in this view`}
+          actions={
+            <>
+              <ControlButton title="Refresh" onClick={() => fetchTickets()}>
                 <Icon name="refresh" size={16} className={cn(loading && "animate-spin")} />
-              </button>
+              </ControlButton>
 
-              {/* Column visibility toggle */}
               <div className="relative" ref={colPickerRef}>
-                <button
-                  onClick={() => setShowColPicker(!showColPicker)}
-                  className={cn(
-                    "p-2.5 rounded-lg transition-all duration-200",
-                    "bg-[var(--bg-base)] border border-[var(--border-default)]",
-                    "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)]",
-                    showColPicker && "border-[var(--accent)] text-[var(--accent)]"
-                  )}
+                <ControlButton
+                  active={showColPicker}
                   title="Column visibility"
+                  onClick={() => setShowColPicker(!showColPicker)}
                 >
                   <Icon name="columns" size={16} />
-                </button>
+                </ControlButton>
                 {showColPicker && (
-                  <div className={cn(
-                    "absolute right-0 top-full mt-2 z-50 w-56",
-                    "bg-[var(--bg-elevated)] border border-[var(--border-default)]",
-                    "rounded-xl shadow-[var(--shadow-elevated)]",
-                    "p-2"
-                  )}>
-                    <p className="text-xs font-semibold text-[var(--fg-muted)] px-2 py-1.5 uppercase tracking-wider">Columns</p>
+                  <div className="absolute right-0 top-full mt-2 z-50 w-56 bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded-xl shadow-[var(--shadow-elevated)] p-2 animate-slide-down">
+                    <p className="text-label px-2 py-1.5">Columns</p>
                     {ALL_COLUMNS.map(col => (
                       <label
                         key={col.key}
                         className={cn(
-                          "flex items-center gap-2.5 px-2 py-1.5 rounded-lg cursor-pointer text-sm",
-                          "hover:bg-[var(--bg-surface)] transition-colors",
+                          "flex items-center gap-2.5 px-2 py-1.5 rounded-lg cursor-pointer text-sm hover:bg-[var(--bg-surface)] transition-colors",
                           col.alwaysVisible && "opacity-50 cursor-not-allowed"
                         )}
                       >
@@ -519,64 +484,59 @@ export default function Tickets() {
                 )}
               </div>
 
-              {/* Compact / Comfortable toggle */}
-              <button
-                onClick={toggleCompactView}
-                className={cn(
-                  "p-2.5 rounded-lg transition-all duration-200",
-                  "bg-[var(--bg-base)] border border-[var(--border-default)]",
-                  "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)]"
-                )}
+              <ControlButton
                 title={compactView ? "Switch to comfortable view" : "Switch to compact view"}
+                onClick={toggleCompactView}
               >
                 <Icon name={compactView ? "list" : "table"} size={16} />
-              </button>
+              </ControlButton>
 
               <Button onClick={handleCreateTicket} icon={<Icon name="plus" size={16} />}>
                 New Ticket
               </Button>
-            </div>
+            </>
+          }
+        />
+
+        {/* Queue switcher (segmented) */}
+        <div className="overflow-x-auto scrollbar-none -mx-1 px-1">
+          <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-default)]">
+            {QUEUES.map((tab) => {
+              const active = queueView === tab.key
+              return (
+                <button
+                  key={tab.key}
+                  onClick={() => {
+                    setQueueView(tab.key)
+                    setPage(1)
+                    setStatusFilter("")
+                    updateSearchParams({ queue: tab.key, status: "" })
+                  }}
+                  title={tab.desc}
+                  className={cn(
+                    "inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all duration-200",
+                    active
+                      ? "bg-[var(--bg-elevated)] text-[var(--fg-primary)] shadow-[var(--shadow-sm)]"
+                      : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
+                  )}
+                >
+                  <Icon
+                    name={tab.icon}
+                    size={15}
+                    className={active ? "text-[var(--accent)]" : "text-[var(--fg-muted)]"}
+                  />
+                  {tab.label}
+                </button>
+              )
+            })}
           </div>
         </div>
 
-        {/* Queue Tabs */}
-        <div className="flex gap-2 overflow-x-auto pb-2">
-          {[
-            { key: "my-tickets", label: "My Tickets", icon: "user", desc: "Tickets assigned to me to work on" },
-            { key: "team-queue", label: "Team Queue", icon: "inbox", desc: "Unclaimed tickets in my team's queue" },
-            { key: "my-requests", label: "My Requests", icon: "fileText", desc: "Tickets I raised as requester" },
-            { key: "resolved", label: "Resolved", icon: "checkCircle", desc: "Completed tickets" },
-            { key: "all", label: "All Tickets", icon: "list", desc: "All tickets in system", adminOnly: true },
-          ].filter(tab => !tab.adminOnly || user?.roles?.includes('admin')).map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => {
-                setQueueView(tab.key)
-                setPage(1)
-                setStatusFilter("")
-                updateSearchParams({ queue: tab.key, status: "" })
-              }}
-              className={cn(
-                "px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap",
-                "flex items-center gap-2",
-                "transition-all duration-200",
-                queueView === tab.key
-                  ? "bg-[var(--accent)] text-white"
-                  : "bg-[var(--bg-elevated)] text-[var(--fg-secondary)] hover:bg-[var(--bg-surface)] hover:text-[var(--fg-primary)]"
-              )}
-              title={tab.desc}
-            >
-              <Icon name={tab.icon} size={16} />
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
         {/* Filters */}
-        <Card padding={true} hover={false}>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] p-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div className="relative">
-              <Icon name="search" className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--fg-muted)]" />
+              <Icon name="search" className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--fg-muted)] pointer-events-none" />
               <input
                 type="text"
                 placeholder="Search tickets..."
@@ -584,7 +544,7 @@ export default function Tickets() {
                 onChange={handleSearchChange}
                 className={cn(
                   "w-full pl-10 pr-4 py-2.5 rounded-lg text-sm",
-                  "bg-[var(--bg-elevated)]",
+                  "bg-[var(--bg-base)]",
                   "text-[var(--fg-primary)] placeholder:text-[var(--fg-muted)]",
                   "border border-[var(--border-default)]",
                   "focus:outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/20",
@@ -611,37 +571,36 @@ export default function Tickets() {
               {meta?.agents?.map((a) => <option key={a.id} value={a.id}>{a.full_name || a.email}</option>)}
             </Select>
           </div>
-        </Card>
+        </div>
 
-        {/* Table */}
-        {tickets.length === 0 ? (
-          <Card hover={false}>
-            <div className="text-center py-12">
-              <div className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-4 bg-[var(--bg-surface)]">
-                <Icon name="tickets" className="w-6 h-6 text-[var(--fg-muted)]" />
-              </div>
-              <h3 className="text-base font-semibold text-[var(--fg-primary)] mb-1">
-                No tickets found
-              </h3>
-              <p className="text-sm text-[var(--fg-secondary)] mb-6">
-                {search || statusFilter || priorityFilter || assigneeFilter
-                  ? "Try adjusting your filters."
-                  : "Get started by creating your first ticket."}
-              </p>
-              {!search && !statusFilter && !priorityFilter && !assigneeFilter && (
-                <Button onClick={handleCreateTicket} icon={<Icon name="plus" size={16} />}>
-                  Create Ticket
-                </Button>
-              )}
-            </div>
-          </Card>
+        {/* Table / states */}
+        {loading && tickets.length === 0 ? (
+          <SkeletonTable rows={8} cols={6} />
+        ) : tickets.length === 0 ? (
+          <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]">
+            <EmptyState
+              icon="tickets"
+              title="No tickets found"
+              description={
+                hasFilters
+                  ? "Try adjusting your filters or switching queues."
+                  : "Get started by creating your first ticket."
+              }
+              action={
+                !hasFilters && (
+                  <Button onClick={handleCreateTicket} icon={<Icon name="plus" size={16} />}>
+                    Create Ticket
+                  </Button>
+                )
+              }
+            />
+          </div>
         ) : (
-          <Card hover={false} padding={false}>
-            <div className="overflow-x-auto">
+          <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] overflow-hidden">
+            <div className={cn("overflow-x-auto transition-opacity duration-200", loading && "opacity-60")}>
               <table className="w-full">
                 <thead>
-                  <tr className="bg-[var(--bg-surface)] border-b border-[var(--border-default)]">
-                    {/* Checkbox */}
+                  <tr className="bg-[var(--bg-surface)]/60 border-b border-[var(--border-default)]">
                     <th className="w-10 px-4 py-3 text-left">
                       <input
                         type="checkbox"
@@ -650,9 +609,7 @@ export default function Tickets() {
                         className="w-4 h-4 rounded border-[var(--border-default)] bg-[var(--bg-elevated)] text-[var(--accent)] focus:ring-[var(--accent)]/30 cursor-pointer"
                       />
                     </th>
-                    {/* Quick actions header */}
                     <th className="w-16 px-1 py-3" />
-                    {/* Dynamic columns */}
                     {ALL_COLUMNS.filter(c => isColVisible(c.key)).map(col => (
                       <th
                         key={col.key}
@@ -672,7 +629,7 @@ export default function Tickets() {
                     <tr
                       key={ticket.id}
                       onClick={() => handleRowClick(ticket.id)}
-                      className="hover:bg-[var(--bg-surface)] transition-all duration-150 cursor-pointer group"
+                      className="hover:bg-[var(--bg-surface)] transition-colors duration-150 cursor-pointer group"
                     >
                       {/* Checkbox */}
                       <td className={cellPad} onClick={(e) => e.stopPropagation()}>
@@ -687,25 +644,23 @@ export default function Tickets() {
                       {/* Quick actions */}
                       <td className={cn(cellPad, "px-1")} onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                          {/* Copy ticket number */}
                           <button
                             onClick={(e) => copyTicketNumber(ticket.ticket_number, e)}
                             className={cn(
-                              "p-1 rounded transition-colors",
+                              "p-1.5 rounded-md transition-colors",
                               copiedId === ticket.ticket_number
                                 ? "text-emerald-500"
-                                : "text-[var(--fg-muted)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)]"
+                                : "text-[var(--fg-muted)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)]"
                             )}
                             title={copiedId === ticket.ticket_number ? "Copied!" : `Copy ${ticket.ticket_number}`}
                           >
                             <Icon name={copiedId === ticket.ticket_number ? "check" : "copy"} size={14} />
                           </button>
-                          {/* Email requester */}
                           {ticket.requester_email && (
                             <a
                               href={`mailto:${ticket.requester_email}?subject=Re: ${ticket.ticket_number} - ${ticket.subject}`}
                               onClick={(e) => e.stopPropagation()}
-                              className="p-1 rounded text-[var(--fg-muted)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)] transition-colors"
+                              className="p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors"
                               title={`Email ${ticket.requester_name}`}
                             >
                               <Icon name="mail" size={14} />
@@ -718,7 +673,7 @@ export default function Tickets() {
                       {isColVisible("ticket_number") && (
                         <td className={cn(cellPad, "whitespace-nowrap")}>
                           <div className="flex items-center gap-2">
-                            <span className="text-xs font-mono font-medium text-[var(--accent)]">
+                            <span className="text-xs font-mono font-semibold text-[var(--accent)]">
                               {ticket.ticket_number}
                             </span>
                             {ticket.attachment_count > 0 && (
@@ -732,9 +687,9 @@ export default function Tickets() {
 
                       {/* Subject */}
                       {isColVisible("subject") && (
-                        <td className={cn(cellPad, "max-w-[300px]")}>
+                        <td className={cn(cellPad, "max-w-[320px]")}>
                           <span className={cn(
-                            "font-medium text-[var(--fg-primary)] line-clamp-1",
+                            "font-medium text-[var(--fg-primary)] line-clamp-1 group-hover:text-[var(--accent)] transition-colors",
                             compactView ? "text-xs" : "text-sm"
                           )}>
                             {ticket.subject}
@@ -745,7 +700,7 @@ export default function Tickets() {
                       {/* Status */}
                       {isColVisible("status") && (
                         <td className={cn(cellPad, "whitespace-nowrap")}>
-                          <Badge tone={getStatusColor(ticket.status_key)} size="sm">{ticket.status_label}</Badge>
+                          <Badge tone={getStatusColor(ticket.status_key)} size="sm" dot>{ticket.status_label}</Badge>
                         </td>
                       )}
 
@@ -753,7 +708,7 @@ export default function Tickets() {
                       {isColVisible("priority") && (
                         <td className={cn(cellPad, "whitespace-nowrap")}>
                           <div className="flex items-center gap-2">
-                            <span className={cn("w-2.5 h-2.5 rounded-sm", getPrioritySquareColor(ticket.priority_key))} />
+                            <span className={cn("w-2.5 h-2.5 rounded-[3px]", getPrioritySquareColor(ticket.priority_key))} />
                             <span className={cn(
                               "text-[var(--fg-primary)]",
                               compactView ? "text-xs" : "text-sm"
@@ -769,15 +724,15 @@ export default function Tickets() {
                         <td className={cn("hidden xl:table-cell", cellPad, "whitespace-nowrap")}>
                           {(() => {
                             const sla = formatSlaTime(ticket.resolve_time_remaining_seconds)
-                            if (!sla) return <span className="text-xs text-[var(--fg-muted)]">-</span>
+                            if (!sla) return <span className="text-xs text-[var(--fg-muted)]">—</span>
                             return (
                               <div className={cn(
                                 "inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium",
                                 sla.breached
-                                  ? "bg-red-500/10 text-red-600"
+                                  ? "bg-red-500/10 text-red-500"
                                   : sla.urgent
-                                  ? "bg-amber-500/10 text-amber-600"
-                                  : "bg-emerald-500/10 text-emerald-600"
+                                  ? "bg-amber-500/10 text-amber-500"
+                                  : "bg-emerald-500/10 text-emerald-500"
                               )}>
                                 <Icon name={sla.breached ? "alertCircle" : "clock"} size={12} />
                                 {sla.text}
@@ -800,7 +755,7 @@ export default function Tickets() {
                               {formatDateTime(ticket.resolve_due_at)}
                             </span>
                           ) : (
-                            <span className="text-xs text-[var(--fg-muted)]">-</span>
+                            <span className="text-xs text-[var(--fg-muted)]">—</span>
                           )}
                         </td>
                       )}
@@ -818,9 +773,14 @@ export default function Tickets() {
                       {isColVisible("assignee") && (
                         <td className={cn("hidden lg:table-cell", cellPad, "whitespace-nowrap")}>
                           {ticket.assignee_name ? (
-                            <span className={cn("text-[var(--fg-secondary)]", compactView ? "text-xs" : "text-sm")}>
-                              {ticket.assignee_name}
-                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className="h-6 w-6 rounded-full bg-[var(--accent)]/10 text-[var(--accent)] text-[10px] font-semibold flex items-center justify-center shrink-0">
+                                {ticket.assignee_name.charAt(0).toUpperCase()}
+                              </span>
+                              <span className={cn("text-[var(--fg-secondary)]", compactView ? "text-xs" : "text-sm")}>
+                                {ticket.assignee_name}
+                              </span>
+                            </div>
                           ) : (
                             <span className={cn("text-[var(--fg-muted)] italic", compactView ? "text-xs" : "text-sm")}>
                               Unassigned
@@ -833,7 +793,7 @@ export default function Tickets() {
                       {isColVisible("organization") && (
                         <td className={cn("hidden lg:table-cell", cellPad, "whitespace-nowrap")}>
                           <span className={cn("text-[var(--fg-secondary)]", compactView ? "text-xs" : "text-sm")}>
-                            {ticket.organization_name || ticket.department_name || "-"}
+                            {ticket.organization_name || ticket.department_name || "—"}
                           </span>
                         </td>
                       )}
@@ -842,7 +802,7 @@ export default function Tickets() {
                       {isColVisible("type") && (
                         <td className={cn("hidden lg:table-cell", cellPad, "whitespace-nowrap")}>
                           <span className={cn("text-[var(--fg-secondary)]", compactView ? "text-xs" : "text-sm")}>
-                            {ticket.type_label || "-"}
+                            {ticket.type_label || "—"}
                           </span>
                         </td>
                       )}
@@ -862,74 +822,53 @@ export default function Tickets() {
             </div>
 
             {/* Pagination */}
-            <div className="flex items-center justify-between px-5 py-3.5 border-t border-[var(--border-default)] bg-[var(--bg-surface)]">
-              <span className="text-xs text-[var(--fg-muted)]">
+            <div className="flex items-center justify-between px-5 py-3.5 border-t border-[var(--border-default)] bg-[var(--bg-surface)]/40">
+              <span className="text-xs text-[var(--fg-muted)] tabular-nums">
                 {total === 0 ? "0" : `${(page - 1) * pageSize + 1}-${Math.min(page * pageSize, total)}`} of {total}
               </span>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setPage(Math.max(1, page - 1))}
                   disabled={page === 1}
-                  className={cn(
-                    "p-2 rounded-lg text-[var(--fg-muted)] transition-all duration-150",
-                    "hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)]",
-                    "disabled:opacity-40 disabled:cursor-not-allowed"
-                  )}
+                  className="p-2 rounded-lg text-[var(--fg-muted)] transition-all duration-150 hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)] disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <Icon name="arrowLeft" size={16} />
                 </button>
-                <span className="text-xs text-[var(--fg-primary)] px-3 font-medium">
+                <span className="text-xs text-[var(--fg-primary)] px-3 font-medium tabular-nums">
                   {page} / {totalPages || 1}
                 </span>
                 <button
                   onClick={() => setPage(Math.min(totalPages, page + 1))}
                   disabled={page === totalPages || totalPages === 0}
-                  className={cn(
-                    "p-2 rounded-lg text-[var(--fg-muted)] transition-all duration-150",
-                    "hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)]",
-                    "disabled:opacity-40 disabled:cursor-not-allowed"
-                  )}
+                  className="p-2 rounded-lg text-[var(--fg-muted)] transition-all duration-150 hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)] disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <Icon name="arrowRight" size={16} />
                 </button>
               </div>
             </div>
-          </Card>
+          </div>
         )}
       </div>
 
       {/* Bulk Action Bar */}
       {selectedTickets.length > 0 && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-fade-up">
-          <div className={cn(
-            "bg-[var(--bg-elevated)] text-[var(--fg-primary)] rounded-xl",
-            "border border-[var(--border-default)]",
-            "shadow-[var(--shadow-elevated)]",
-            "px-5 py-3.5"
-          )}>
-            <div className="flex items-center gap-4">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-fade-up w-[calc(100%-2rem)] sm:w-auto">
+          <div className="surface-glass rounded-2xl border border-[var(--border-strong)] shadow-[var(--shadow-elevated)] px-4 sm:px-5 py-3.5">
+            <div className="flex items-center gap-3 sm:gap-4 flex-wrap justify-center">
               <div className="flex items-center gap-2.5 text-sm">
-                <span className={cn(
-                  "flex items-center justify-center w-7 h-7 rounded-lg",
-                  "bg-[var(--accent)] text-white",
-                  "text-xs font-semibold"
-                )}>
+                <span className="flex items-center justify-center w-7 h-7 rounded-lg bg-[var(--accent)] text-white text-xs font-semibold">
                   {selectedTickets.length}
                 </span>
-                <span className="font-medium">selected</span>
+                <span className="font-medium text-[var(--fg-primary)]">selected</span>
               </div>
 
-              <div className="h-5 w-px bg-[var(--border-default)]" />
+              <div className="h-5 w-px bg-[var(--border-default)] hidden sm:block" />
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap justify-center">
                 <select
                   onChange={(e) => { if (e.target.value) { handleBulkStatusChange(e.target.value); e.target.value = "" } }}
                   disabled={bulkActionLoading}
-                  className={cn(
-                    "px-3 py-2 rounded-lg text-xs font-medium cursor-pointer transition-all",
-                    "bg-[var(--bg-surface)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)]",
-                    "disabled:opacity-50"
-                  )}
+                  className="px-3 py-2 rounded-lg text-xs font-medium cursor-pointer transition-all bg-[var(--bg-surface)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] text-[var(--fg-primary)] disabled:opacity-50"
                 >
                   <option value="">Status</option>
                   {meta?.statuses?.map((s) => <option key={s.id} value={s.key}>{s.label}</option>)}
@@ -938,11 +877,7 @@ export default function Tickets() {
                 <select
                   onChange={(e) => { if (e.target.value) { handleBulkPriorityChange(e.target.value); e.target.value = "" } }}
                   disabled={bulkActionLoading}
-                  className={cn(
-                    "px-3 py-2 rounded-lg text-xs font-medium cursor-pointer transition-all",
-                    "bg-[var(--bg-surface)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)]",
-                    "disabled:opacity-50"
-                  )}
+                  className="px-3 py-2 rounded-lg text-xs font-medium cursor-pointer transition-all bg-[var(--bg-surface)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-default)] text-[var(--fg-primary)] disabled:opacity-50"
                 >
                   <option value="">Priority</option>
                   {meta?.priorities?.map((p) => <option key={p.id} value={p.key}>{p.label}</option>)}
@@ -959,7 +894,7 @@ export default function Tickets() {
 
                 <button
                   onClick={() => setSelectedTickets([])}
-                  className="p-2 hover:bg-[var(--bg-surface)] rounded-lg transition-all"
+                  className="p-2 hover:bg-[var(--bg-surface)] rounded-lg transition-all text-[var(--fg-secondary)]"
                 >
                   <Icon name="close" size={16} />
                 </button>
