@@ -15,7 +15,8 @@ import { useToast } from "../contexts/toast";
 import Button from "../components/ui/Button";
 import Icon from "../components/ui/Icon";
 import VodafoneLogo from "../components/ui/VodafoneLogo";
-import LoadingScreen from "../components/ui/LoadingScreen";
+import { useBoot } from "../contexts/boot";
+import { useTheme } from "../contexts/theme";
 
 function cn(...parts) {
   return parts.filter(Boolean).join(" ");
@@ -46,7 +47,10 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [entering, setEntering] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const boot = useBoot();
+  const { theme } = useTheme();
+  const dark = theme === "dark";
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -66,9 +70,9 @@ export default function Login() {
     setLoading(true);
     try {
       await login(email, password);
-      // Branded splash, then transition into the app
-      setEntering(true);
-      setTimeout(() => navigate("/dashboard"), 1300);
+      // Recede the login into the blooming orb, then hand off to the app.
+      setLeaving(true);
+      boot({ onCovered: () => navigate("/dashboard") });
     } catch (err) {
       toast.error(err.message || "Invalid credentials");
       setLoading(false);
@@ -77,17 +81,27 @@ export default function Login() {
 
   const inputCls = cn(
     "w-full pl-11 pr-4 py-3 rounded-xl text-sm",
-    "bg-white text-[#111318]",
-    "border border-black/10 shadow-sm",
-    "placeholder:text-black/30",
+    dark
+      ? "bg-white/[0.05] text-white border border-white/15"
+      : "bg-white text-[#111318] border border-black/10 shadow-sm",
+    dark ? "placeholder:text-white/30" : "placeholder:text-black/30",
     "focus:outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/20",
     "transition-all duration-200"
   );
 
   return (
-    <div className="login-canvas relative min-h-screen flex overflow-hidden">
-      {/* Post-login branded splash → transitions into the app */}
-      {entering && <LoadingScreen message="Signing you in…" />}
+    <div
+      className="login-canvas relative min-h-screen flex overflow-hidden"
+      style={{
+        transform: leaving ? "scale(0.94)" : "scale(1)",
+        opacity: leaving ? 0 : 1,
+        filter: leaving ? "blur(4px)" : "none",
+        transformOrigin: "center center",
+        transition:
+          "transform 760ms cubic-bezier(0.4,0,1,1), opacity 640ms cubic-bezier(0.4,0,1,1), filter 760ms ease",
+        pointerEvents: leaving ? "none" : "auto",
+      }}
+    >
       {/* ── Page-wide decorative layers (one canvas, no boundaries) ── */}
       {/* Grid texture, fading out as the canvas turns white */}
       <div
@@ -255,26 +269,26 @@ export default function Login() {
         <div
           className={cn(
             "w-full max-w-[400px]",
-            "max-lg:rounded-3xl max-lg:p-7",
-            "max-lg:bg-white/[0.55] max-lg:backdrop-blur-2xl max-lg:backdrop-saturate-150",
-            "max-lg:border max-lg:border-white/50",
-            "max-lg:shadow-[0_24px_80px_rgba(20,3,5,0.35),inset_0_1px_0_rgba(255,255,255,0.65)]"
+            "max-lg:rounded-3xl max-lg:p-7 max-lg:backdrop-blur-2xl max-lg:backdrop-saturate-150 max-lg:border",
+            dark
+              ? "max-lg:bg-white/[0.04] max-lg:border-white/10 max-lg:shadow-[0_24px_80px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(255,255,255,0.07)]"
+              : "max-lg:bg-white/[0.55] max-lg:border-white/50 max-lg:shadow-[0_24px_80px_rgba(20,3,5,0.35),inset_0_1px_0_rgba(255,255,255,0.65)]"
           )}
         >
           {/* Mobile-only brand */}
           <div className="lg:hidden flex flex-col items-center mb-8 animate-fade-up">
             <VodafoneLogo size={56} className="drop-shadow-[0_4px_18px_rgba(230,0,0,0.35)]" />
-            <p className="mt-3 text-sm font-semibold text-[#111318]">Vodafone Fiji</p>
-            <p className="text-[11px] text-black/40 uppercase tracking-wide">
+            <p className={cn("mt-3 text-sm font-semibold", dark ? "text-white" : "text-[#111318]")}>Vodafone Fiji</p>
+            <p className={cn("text-[11px] uppercase tracking-wide", dark ? "text-white/40" : "text-black/40")}>
               Service Desk
             </p>
           </div>
 
           <div className="animate-fade-up" style={{ animationDelay: "80ms" }}>
-            <h2 className="text-3xl font-semibold tracking-tight text-[#111318]">
+            <h2 className={cn("text-3xl font-semibold tracking-tight", dark ? "text-white" : "text-[#111318]")}>
               Welcome back
             </h2>
-            <p className="mt-2 text-sm text-black/45">
+            <p className={cn("mt-2 text-sm", dark ? "text-white/50" : "text-black/45")}>
               Sign in to your Service Desk account
             </p>
           </div>
@@ -284,7 +298,7 @@ export default function Login() {
             <div className="group animate-fade-up" style={{ animationDelay: "160ms" }}>
               <label
                 htmlFor="login-email"
-                className="block text-[13px] font-medium text-black/55 mb-2 transition-colors duration-200 group-focus-within:text-[var(--accent)]"
+                className={cn("block text-[13px] font-medium mb-2 transition-colors duration-200 group-focus-within:text-[var(--accent)]", dark ? "text-white/60" : "text-black/55")}
               >
                 Email address
               </label>
@@ -292,7 +306,7 @@ export default function Login() {
                 <Icon
                   name="mail"
                   size={17}
-                  className="absolute left-3.5 top-1/2 -translate-y-1/2 text-black/30 pointer-events-none transition-colors duration-200 group-focus-within:text-[var(--accent)]"
+                  className={cn("absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none transition-colors duration-200 group-focus-within:text-[var(--accent)]", dark ? "text-white/30" : "text-black/30")}
                 />
                 <input
                   id="login-email"
@@ -310,7 +324,7 @@ export default function Login() {
             <div className="group animate-fade-up" style={{ animationDelay: "220ms" }}>
               <label
                 htmlFor="login-password"
-                className="block text-[13px] font-medium text-black/55 mb-2 transition-colors duration-200 group-focus-within:text-[var(--accent)]"
+                className={cn("block text-[13px] font-medium mb-2 transition-colors duration-200 group-focus-within:text-[var(--accent)]", dark ? "text-white/60" : "text-black/55")}
               >
                 Password
               </label>
@@ -318,7 +332,7 @@ export default function Login() {
                 <Icon
                   name="lock"
                   size={17}
-                  className="absolute left-3.5 top-1/2 -translate-y-1/2 text-black/30 pointer-events-none transition-colors duration-200 group-focus-within:text-[var(--accent)]"
+                  className={cn("absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none transition-colors duration-200 group-focus-within:text-[var(--accent)]", dark ? "text-white/30" : "text-black/30")}
                 />
                 <input
                   id="login-password"
@@ -335,9 +349,10 @@ export default function Login() {
                   tabIndex={-1}
                   aria-label={showPassword ? "Hide password" : "Show password"}
                   className={cn(
-                    "absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-lg",
-                    "text-black/35 hover:text-[#111318]",
-                    "hover:bg-black/[0.05] transition-all duration-150"
+                    "absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-lg transition-all duration-150",
+                    dark
+                      ? "text-white/40 hover:text-white hover:bg-white/[0.08]"
+                      : "text-black/35 hover:text-[#111318] hover:bg-black/[0.05]"
                   )}
                 >
                   <Icon name={showPassword ? "eyeOff" : "eye"} size={16} />
@@ -355,27 +370,28 @@ export default function Login() {
           {/* Help + trust */}
           <div className="animate-fade-up" style={{ animationDelay: "340ms" }}>
             <div className="my-7 flex items-center gap-4">
-              <div className="flex-1 h-px bg-black/[0.08]" />
-              <span className="text-[11px] uppercase tracking-wider text-black/35">
+              <div className={cn("flex-1 h-px", dark ? "bg-white/[0.12]" : "bg-black/[0.08]")} />
+              <span className={cn("text-[11px] uppercase tracking-wider", dark ? "text-white/40" : "text-black/35")}>
                 Need help?
               </span>
-              <div className="flex-1 h-px bg-black/[0.08]" />
+              <div className={cn("flex-1 h-px", dark ? "bg-white/[0.12]" : "bg-black/[0.08]")} />
             </div>
 
             <a
               href="mailto:it.support@vodafone.com.fj"
               className={cn(
-                "flex items-center justify-center gap-2 w-full py-2.5 rounded-xl text-sm font-medium",
-                "text-black/55 border border-black/10 bg-white/60",
-                "hover:text-[var(--accent)] hover:border-[var(--accent)]/40 hover:bg-[var(--accent)]/[0.05]",
-                "transition-all duration-200"
+                "flex items-center justify-center gap-2 w-full py-2.5 rounded-xl text-sm font-medium border transition-all duration-200",
+                dark
+                  ? "text-white/60 border-white/[0.12] bg-white/[0.04]"
+                  : "text-black/55 border-black/10 bg-white/60",
+                "hover:text-[var(--accent)] hover:border-[var(--accent)]/40 hover:bg-[var(--accent)]/[0.05]"
               )}
             >
               <Icon name="mail" size={15} />
               Contact IT Support
             </a>
 
-            <p className="mt-6 flex items-center justify-center gap-1.5 text-[11px] text-black/35">
+            <p className={cn("mt-6 flex items-center justify-center gap-1.5 text-[11px]", dark ? "text-white/40" : "text-black/35")}>
               <Icon name="lock" size={11} />
               Vodafone Fiji internal system — use your corporate credentials
             </p>

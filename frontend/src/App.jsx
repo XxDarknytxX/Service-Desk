@@ -3,6 +3,7 @@ import { AuthProvider, useAuth } from "./contexts/auth";
 import { MetaProvider } from "./contexts/meta";
 import { ThemeProvider } from "./contexts/theme";
 import { ToastProvider } from "./contexts/toast";
+import { BootProvider } from "./contexts/boot";
 import AppLayout from "./components/AppLayout";
 import LoadingScreen from "./components/ui/LoadingScreen";
 import Login from "./pages/login";
@@ -55,6 +56,7 @@ export default function App() {
         <AuthProvider>
           <ToastProvider>
           <MetaProvider>
+            <BootProvider>
             <Routes>
               <Route path="/login" element={<Login />} />
               {/* Public customer form — the token in the URL is the credential */}
@@ -290,6 +292,7 @@ export default function App() {
               />
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Routes>
+            </BootProvider>
           </MetaProvider>
           </ToastProvider>
         </AuthProvider>
