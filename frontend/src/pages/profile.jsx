@@ -56,15 +56,20 @@ export default function Profile() {
 
       {/* ===== HERO IDENTITY CARD ===== */}
       <div className="relative overflow-hidden rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-card)] animate-fade-up">
-        {/* Banner */}
-        <div className="relative h-24 bg-gradient-to-r from-[var(--accent)]/20 via-[var(--accent)]/8 to-transparent">
-          <div className="absolute inset-0 bg-grid opacity-50" />
-          <div className="pointer-events-none absolute -top-12 right-10 h-40 w-40 rounded-full bg-[var(--accent)] opacity-[0.12] blur-3xl" />
-        </div>
+        {/* Brand glow — fades smoothly down into the card (no hard banner seam) */}
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-48 bg-gradient-to-b from-[var(--accent)]/[0.16] via-[var(--accent)]/[0.05] to-transparent" />
+        <div
+          className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-grid opacity-40"
+          style={{
+            maskImage: "linear-gradient(to bottom, black, transparent)",
+            WebkitMaskImage: "linear-gradient(to bottom, black, transparent)",
+          }}
+        />
+        <div className="pointer-events-none absolute -top-16 right-8 h-52 w-52 rounded-full bg-[var(--accent)] opacity-[0.13] blur-3xl" />
 
         {/* Body */}
-        <div className="px-6 pb-6">
-          <div className="flex flex-col sm:flex-row sm:items-end gap-4 -mt-12">
+        <div className="relative px-6 pt-12 pb-6">
+          <div className="flex flex-col sm:flex-row sm:items-end gap-4">
             <div
               className={cn(
                 "h-24 w-24 rounded-2xl flex items-center justify-center flex-shrink-0",
