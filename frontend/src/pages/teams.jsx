@@ -1,6 +1,15 @@
 /**
- * Teams Page
- * Linear/Modern Design System
+ * Teams Page — Vodafone Service Desk
+ *
+ * Premium team-management experience: branded header, an elevated toolbar with
+ * search + refresh, a polished card grid (tinted identity tiles, member counts,
+ * manager-aware footers, hover-lift, reveal-on-hover action menu), shimmer
+ * loading, and a consistent EmptyState. The create/edit, member-management, and
+ * module-privilege modals are reorganised into grouped, tinted sections.
+ *
+ * Fully token-driven (dark & light) and responsive. Every piece of state, every
+ * handler, API call, the team-hierarchy mini-org-chart, the privilege module
+ * grid, and the member tools are preserved exactly — visual changes only.
  */
 
 import { useEffect, useState } from "react";
@@ -11,7 +20,9 @@ import Icon from "../components/ui/Icon";
 import Modal from "../components/ui/Modal";
 import Input, { Textarea } from "../components/ui/Input";
 import Badge from "../components/ui/Badge";
-import Card from "../components/ui/Card";
+import PageHeader from "../components/ui/PageHeader";
+import EmptyState from "../components/ui/EmptyState";
+import Skeleton from "../components/ui/Skeleton";
 import useConfirm from "../components/ui/useConfirm";
 import { useAuth } from "../contexts/auth";
 import { useToast } from "../contexts/toast";
@@ -156,8 +167,17 @@ function TeamHierarchy({ members }) {
   );
 }
 
-// Rotating tints for team cards
-const teamTints = ["violet", "blue", "cyan", "teal", "emerald", "indigo", "purple", "pink"];
+// Rotating tints for team cards — full static class strings (no dynamic Tailwind)
+const TEAM_TINTS = [
+  { tile: "bg-violet-500/10 text-violet-500 border-violet-500/15", ring: "var(--accent)", glow: "bg-violet-500" },
+  { tile: "bg-blue-500/10 text-blue-500 border-blue-500/15", ring: "var(--accent)", glow: "bg-blue-500" },
+  { tile: "bg-cyan-500/10 text-cyan-500 border-cyan-500/15", ring: "var(--accent)", glow: "bg-cyan-500" },
+  { tile: "bg-teal-500/10 text-teal-500 border-teal-500/15", ring: "var(--accent)", glow: "bg-teal-500" },
+  { tile: "bg-emerald-500/10 text-emerald-500 border-emerald-500/15", ring: "var(--accent)", glow: "bg-emerald-500" },
+  { tile: "bg-indigo-500/10 text-indigo-500 border-indigo-500/15", ring: "var(--accent)", glow: "bg-indigo-500" },
+  { tile: "bg-purple-500/10 text-purple-500 border-purple-500/15", ring: "var(--accent)", glow: "bg-purple-500" },
+  { tile: "bg-pink-500/10 text-pink-500 border-pink-500/15", ring: "var(--accent)", glow: "bg-pink-500" },
+];
 
 function cn(...parts) {
   return parts.filter(Boolean).join(" ");
@@ -420,153 +440,234 @@ export default function Teams() {
     (t.description || "").toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  // ── Derived summary metrics for the header subtitle ──
+  const totalMembers = teams.reduce((sum, t) => sum + (Number(t.member_count) || 0), 0);
+
+  // Reusable header control button (mirrors tickets.jsx)
+  const ControlButton = ({ active, title, onClick, children }) => (
+    <button
+      onClick={onClick}
+      title={title}
+      className={cn(
+        "h-10 w-10 inline-flex items-center justify-center rounded-lg transition-all duration-150",
+        "bg-[var(--bg-elevated)] border",
+        active
+          ? "border-[var(--accent)] text-[var(--accent)]"
+          : "border-[var(--border-default)] text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)] hover:border-[var(--border-hover)]"
+      )}
+    >
+      {children}
+    </button>
+  );
+
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-5">
       {/* Header */}
-      <div className="rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] px-6 py-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-semibold text-[var(--fg-primary)] tracking-tight">
-              Teams
-            </h1>
-            <p className="text-[var(--fg-secondary)] mt-1 text-sm">Organize agents by department or expertise</p>
+      <PageHeader
+        icon="teams"
+        title="Teams"
+        subtitle={
+          loading
+            ? "Organize agents by department or expertise"
+            : `${teams.length} ${teams.length === 1 ? "team" : "teams"} · ${totalMembers} ${totalMembers === 1 ? "member" : "members"} across your organization`
+        }
+        actions={
+          <>
+            <ControlButton title="Refresh" onClick={() => { setLoading(true); loadTeams(); }}>
+              <Icon name="refresh" size={16} className={cn(loading && "animate-spin")} />
+            </ControlButton>
+            {isAdmin && (
+              <Button onClick={openCreateModal} icon={<Icon name="plus" size={16} />}>
+                Create Team
+              </Button>
+            )}
+          </>
+        }
+      />
+
+      {/* Toolbar: search + count */}
+      <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] p-4">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="relative flex-1 sm:max-w-md">
+            <Icon name="search" className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--fg-muted)] pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Search teams by name or description..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className={cn(
+                "w-full pl-10 pr-4 py-2.5 rounded-lg text-sm",
+                "bg-[var(--bg-base)]",
+                "text-[var(--fg-primary)] placeholder:text-[var(--fg-muted)]",
+                "border border-[var(--border-default)]",
+                "focus:outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/20",
+                "transition-all duration-200"
+              )}
+            />
           </div>
-          {isAdmin && (
-            <Button onClick={openCreateModal} icon={<Icon name="plus" size={16} />}>Create Team</Button>
-          )}
+          <div className="flex items-center gap-2 sm:ml-auto">
+            <Badge tone="slate" size="md">
+              {filtered.length} {filtered.length === 1 ? "team" : "teams"}
+            </Badge>
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-[var(--fg-muted)] hover:text-[var(--fg-primary)] transition-colors"
+              >
+                <Icon name="close" size={13} />
+                Clear
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Search */}
-      <div className="flex flex-wrap items-center gap-4">
-        <div className="flex-1 max-w-sm">
-          <Input icon="search" placeholder="Search teams..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
-        </div>
-        <Badge tone="slate">{filtered.length} teams</Badge>
-      </div>
-
+      {/* Grid / states */}
       {loading ? (
-        <div className={cn(
-          "flex items-center justify-center py-20 rounded-xl",
-          "bg-[var(--bg-elevated)]",
-          "border border-[var(--border-default)]",
-          "shadow-[var(--shadow-card)]"
-        )}>
-          <div className="text-center">
-            <div className={cn(
-              "w-16 h-16 rounded-xl flex items-center justify-center mx-auto mb-4",
-              "bg-[var(--bg-base)] border border-[var(--border-default)]"
-            )}>
-              <div className="animate-spin rounded-full h-8 w-8 border-4 border-[var(--border-default)] border-t-[var(--accent)]" />
+        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div
+              key={i}
+              className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] p-5"
+            >
+              <div className="flex items-start justify-between mb-4">
+                <Skeleton className="h-12 w-12" rounded="rounded-xl" />
+                <Skeleton className="h-5 w-16" rounded="rounded-full" />
+              </div>
+              <Skeleton className="h-4 w-2/3 mb-3" rounded="rounded-md" />
+              <Skeleton className="h-3 w-full mb-2" rounded="rounded-md" />
+              <Skeleton className="h-3 w-4/5" rounded="rounded-md" />
+              <div className="mt-5 pt-4 border-t border-[var(--border-default)] flex items-center justify-between">
+                <Skeleton className="h-4 w-24" rounded="rounded-md" />
+                <Skeleton className="h-4 w-16" rounded="rounded-md" />
+              </div>
             </div>
-            <p className="text-sm font-medium text-[var(--fg-secondary)]">Loading teams...</p>
-          </div>
+          ))}
         </div>
       ) : filtered.length === 0 ? (
-        <div className={cn(
-          "text-center py-20 rounded-xl",
-          "bg-[var(--bg-elevated)]",
-          "border border-[var(--border-default)]",
-          "shadow-[var(--shadow-card)]"
-        )}>
-          <div className={cn(
-            "flex items-center justify-center w-20 h-20 mx-auto mb-5 rounded-xl",
-            "bg-[var(--bg-base)] border border-[var(--border-default)]"
-          )}>
-            <Icon name="teams" size={36} className="text-[var(--fg-muted)]" />
-          </div>
-          <h3 className="text-lg font-semibold text-[var(--fg-primary)] mb-2">
-            No teams found
-          </h3>
-          <p className="text-sm text-[var(--fg-secondary)]">
-            {searchQuery ? "Try a different search term" : "Create your first team to get started"}
-          </p>
+        <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]">
+          <EmptyState
+            icon="teams"
+            title={searchQuery ? "No teams match your search" : "No teams yet"}
+            description={
+              searchQuery
+                ? "Try a different name or description, or clear the search to see all teams."
+                : "Create your first team to start organizing agents by department or expertise."
+            }
+            action={
+              searchQuery ? (
+                <Button variant="secondary" onClick={() => setSearchQuery("")} icon={<Icon name="close" size={14} />}>
+                  Clear search
+                </Button>
+              ) : (
+                isAdmin && (
+                  <Button onClick={openCreateModal} icon={<Icon name="plus" size={16} />}>
+                    Create Team
+                  </Button>
+                )
+              )
+            }
+          />
         </div>
       ) : (
-        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
           {filtered.map((team, idx) => {
-            const tint = teamTints[idx % teamTints.length];
-            const iconColors = {
-              violet: "bg-violet-500/10 text-violet-400",
-              blue: "bg-blue-500/10 text-blue-400",
-              cyan: "bg-cyan-500/10 text-cyan-400",
-              teal: "bg-teal-500/10 text-teal-400",
-              emerald: "bg-emerald-500/10 text-emerald-400",
-              indigo: "bg-indigo-500/10 text-indigo-400",
-              purple: "bg-purple-500/10 text-purple-400",
-              pink: "bg-pink-500/10 text-pink-400",
-            };
+            const tint = TEAM_TINTS[idx % TEAM_TINTS.length];
+            const memberCount = team.member_count || 0;
             return (
-              <Card key={team.id} tint={tint} spotlight hover className="group">
-                <div className="flex items-start justify-between mb-4">
-                  <div className={cn(
-                    "h-12 w-12 rounded-xl flex items-center justify-center",
-                    iconColors[tint]
-                  )}>
-                    <Icon name="teams" size={24} />
+              <div
+                key={team.id}
+                onClick={() => openMembersModal(team)}
+                className={cn(
+                  "group relative flex flex-col text-left overflow-hidden rounded-2xl p-5 cursor-pointer",
+                  "bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]",
+                  "transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--border-hover)] hover:shadow-[var(--shadow-card-hover)]",
+                  "animate-fade-up"
+                )}
+                style={{ animationDelay: `${Math.min(idx, 8) * 50}ms` }}
+              >
+                {/* decorative tint glow */}
+                <div className={cn("pointer-events-none absolute -top-16 -right-12 h-40 w-40 rounded-full opacity-[0.07] blur-3xl", tint.glow)} />
+
+                <div className="relative flex items-start justify-between mb-4">
+                  <div
+                    className={cn(
+                      "h-12 w-12 rounded-xl flex items-center justify-center border transition-transform duration-200 group-hover:scale-110",
+                      tint.tile
+                    )}
+                  >
+                    <Icon name="teams" size={22} />
                   </div>
                   {isAdmin && (
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all duration-200">
+                    <div
+                      className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <button
                         onClick={() => openPrivilegesModal(team)}
                         className={cn(
-                          "p-2 rounded-lg transition-all duration-200",
-                          "text-[var(--fg-muted)] hover:text-amber-400",
+                          "p-2 rounded-lg transition-all duration-150",
+                          "text-[var(--fg-muted)] hover:text-amber-500",
                           "hover:bg-amber-500/10"
                         )}
                         title="Team Privileges"
                       >
-                        <Icon name="shield" size={14} />
+                        <Icon name="shield" size={15} />
                       </button>
                       <button
                         onClick={() => openEditModal(team)}
                         className={cn(
-                          "p-2 rounded-lg transition-all duration-200",
+                          "p-2 rounded-lg transition-all duration-150",
                           "text-[var(--fg-muted)] hover:text-[var(--accent)]",
-                          "hover:bg-[var(--bg-base)]"
+                          "hover:bg-[var(--bg-surface)]"
                         )}
+                        title="Edit team"
                       >
-                        <Icon name="pencil" size={14} />
+                        <Icon name="pencil" size={15} />
                       </button>
                       <button
                         onClick={() => handleDelete(team)}
                         title="Delete team"
                         className={cn(
-                          "p-2 rounded-lg transition-all duration-200",
-                          "text-[var(--fg-muted)] hover:text-rose-400",
+                          "p-2 rounded-lg transition-all duration-150",
+                          "text-[var(--fg-muted)] hover:text-rose-500",
                           "hover:bg-rose-500/10"
                         )}
                       >
-                        <Icon name="trash" size={14} />
+                        <Icon name="trash" size={15} />
                       </button>
                     </div>
                   )}
                 </div>
 
-                <h3 className="text-base font-semibold text-[var(--fg-primary)] mb-2 line-clamp-1">
+                <h3 className="relative text-base font-semibold text-[var(--fg-primary)] mb-1.5 line-clamp-1 group-hover:text-[var(--accent)] transition-colors">
                   {team.name}
                 </h3>
-                <p className="text-sm text-[var(--fg-secondary)] line-clamp-2 mb-4 min-h-[40px]">
+                <p className="relative text-sm text-[var(--fg-secondary)] line-clamp-2 mb-4 min-h-[40px] leading-relaxed">
                   {team.description || "No description provided"}
                 </p>
 
-                <div className="pt-4 border-t border-[var(--border-default)] flex items-center justify-between">
-                  <button
-                    onClick={() => openMembersModal(team)}
-                    className={cn(
-                      "flex items-center gap-2 text-xs font-medium transition-colors",
-                      "text-[var(--fg-secondary)] hover:text-[var(--accent)]"
-                    )}
-                  >
-                    <Icon name="users" size={14} />
-                    <span>{team.member_count || 0} members</span>
-                  </button>
-                  <div className="flex items-center gap-2 text-xs text-[var(--fg-muted)]">
+                <div className="relative mt-auto pt-4 border-t border-[var(--border-default)] flex items-center justify-between">
+                  <span className="inline-flex items-center gap-2 text-xs font-medium text-[var(--fg-secondary)]">
+                    <span className="h-7 w-7 rounded-lg bg-[var(--bg-surface)] flex items-center justify-center text-[var(--fg-muted)]">
+                      <Icon name="users" size={14} />
+                    </span>
+                    <span className="tabular-nums">
+                      {memberCount} {memberCount === 1 ? "member" : "members"}
+                    </span>
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 text-xs text-[var(--fg-muted)]">
                     <Icon name="calendar" size={12} />
-                    <span>{new Date(team.created_at).toLocaleDateString()}</span>
-                  </div>
+                    <span>{team.created_at ? new Date(team.created_at).toLocaleDateString() : "—"}</span>
+                  </span>
                 </div>
-              </Card>
+
+                {/* hover affordance */}
+                <div className="relative mt-3 flex items-center gap-1 text-xs font-medium text-[var(--accent)] opacity-0 group-hover:opacity-100 transition-all">
+                  Manage members
+                  <Icon name="arrowRight" size={13} className="transition-transform group-hover:translate-x-0.5" />
+                </div>
+              </div>
             );
           })}
         </div>
@@ -588,21 +689,27 @@ export default function Teams() {
         }
       >
         <form onSubmit={handleSubmit} className="space-y-5">
-          <Input
-            label="Team Name"
-            placeholder="Support Team"
-            value={formData.name}
-            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-            required
-            icon="teams"
-          />
-          <Textarea
-            label="Description"
-            placeholder="Describe the team's responsibilities and purpose..."
-            value={formData.description}
-            onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-            rows={4}
-          />
+          <div>
+            <p className="text-label mb-3">Team details</p>
+            <div className="space-y-4">
+              <Input
+                label="Team Name"
+                placeholder="Support Team"
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                required
+                icon="teams"
+              />
+              <Textarea
+                label="Description"
+                placeholder="Describe the team's responsibilities and purpose..."
+                value={formData.description}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                rows={4}
+                helperText="Optional — appears on the team card to help others understand its focus."
+              />
+            </div>
+          </div>
         </form>
       </Modal>
 
@@ -623,10 +730,13 @@ export default function Teams() {
         }
       >
         {loadingPrivileges ? (
-          <div className="flex items-center justify-center py-16">
-            <div className="text-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-4 border-[var(--border-default)] border-t-[var(--accent)] mx-auto mb-3" />
-              <p className="text-sm text-[var(--fg-secondary)]">Loading module configuration...</p>
+          <div className="space-y-4">
+            <Skeleton className="h-20 w-full" rounded="rounded-xl" />
+            <Skeleton className="h-4 w-32" rounded="rounded-md" />
+            <div className="space-y-2">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-14 w-full" rounded="rounded-lg" />
+              ))}
             </div>
           </div>
         ) : (
@@ -643,8 +753,8 @@ export default function Teams() {
                 <div className={cn(
                   "w-10 h-10 rounded-lg flex items-center justify-center",
                   privilegesRestricted
-                    ? "bg-amber-500/15 text-amber-400"
-                    : "bg-emerald-500/15 text-emerald-400"
+                    ? "bg-amber-500/15 text-amber-500"
+                    : "bg-emerald-500/15 text-emerald-500"
                 )}>
                   <Icon name={privilegesRestricted ? "lock" : "lockOpen"} size={18} />
                 </div>
@@ -687,9 +797,9 @@ export default function Teams() {
                   const noneSelected = modules.every(m => !privilegesModules.includes(m.key));
 
                   const sectionColors = {
-                    Main: { bg: "bg-blue-500/8", border: "border-blue-500/20", text: "text-blue-400", dot: "bg-blue-500" },
-                    Administration: { bg: "bg-violet-500/8", border: "border-violet-500/20", text: "text-violet-400", dot: "bg-violet-500" },
-                    Operations: { bg: "bg-emerald-500/8", border: "border-emerald-500/20", text: "text-emerald-400", dot: "bg-emerald-500" },
+                    Main: { bg: "bg-blue-500/8", border: "border-blue-500/20", text: "text-blue-500", dot: "bg-blue-500" },
+                    Administration: { bg: "bg-violet-500/8", border: "border-violet-500/20", text: "text-violet-500", dot: "bg-violet-500" },
+                    Operations: { bg: "bg-emerald-500/8", border: "border-emerald-500/20", text: "text-emerald-500", dot: "bg-emerald-500" },
                   };
                   const sc = sectionColors[section] || sectionColors.Main;
 
@@ -799,7 +909,7 @@ export default function Teams() {
                   "flex items-start gap-3 p-3 rounded-lg",
                   "bg-blue-500/5 border border-blue-500/20"
                 )}>
-                  <Icon name="info" size={16} className="text-blue-400 flex-shrink-0 mt-0.5" />
+                  <Icon name="info" size={16} className="text-blue-500 flex-shrink-0 mt-0.5" />
                   <div className="text-xs text-[var(--fg-secondary)] leading-relaxed">
                     <strong className="text-[var(--fg-primary)]">Note:</strong> Module access works alongside role permissions.
                     A user still needs the correct role (Admin, Agent) to see admin-only modules.
@@ -824,11 +934,17 @@ export default function Teams() {
         }
       >
         {loadingMembers ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="text-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-4 border-[var(--border-default)] border-t-[var(--accent)] mx-auto mb-3" />
-              <p className="text-sm text-[var(--fg-secondary)]">Loading members...</p>
-            </div>
+          <div className="space-y-3">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-3 p-3 rounded-lg border border-[var(--border-default)]">
+                <Skeleton className="h-9 w-9" rounded="rounded-lg" />
+                <div className="flex-1 space-y-2">
+                  <Skeleton className="h-3.5 w-40" rounded="rounded-md" />
+                  <Skeleton className="h-3 w-56" rounded="rounded-md" />
+                </div>
+                <Skeleton className="h-6 w-16" rounded="rounded-full" />
+              </div>
+            ))}
           </div>
         ) : (
           <div className="space-y-6">
@@ -836,11 +952,13 @@ export default function Teams() {
             {teamMembers.length > 0 && (
               <div>
                 <h4 className="text-sm font-semibold text-[var(--fg-primary)] mb-3 flex items-center gap-2">
-                  <Icon name="organization" size={14} className="text-[var(--fg-muted)]" />
+                  <span className="h-7 w-7 rounded-lg bg-indigo-500/10 text-indigo-500 flex items-center justify-center">
+                    <Icon name="organization" size={14} />
+                  </span>
                   Team Hierarchy
                 </h4>
                 <div className={cn(
-                  "p-4 rounded-lg",
+                  "p-4 rounded-xl",
                   "bg-[var(--bg-base)] border border-[var(--border-default)]"
                 )}>
                   <TeamHierarchy members={teamMembers} />
@@ -853,8 +971,13 @@ export default function Teams() {
               {/* Section header with Add Member button */}
               <div className="flex items-center justify-between mb-3">
                 <h4 className="text-sm font-semibold text-[var(--fg-primary)] flex items-center gap-2">
-                  <Icon name="users" size={14} className="text-[var(--fg-muted)]" />
+                  <span className="h-7 w-7 rounded-lg bg-[var(--accent)]/10 text-[var(--accent)] flex items-center justify-center">
+                    <Icon name="users" size={14} />
+                  </span>
                   All Members
+                  {teamMembers.length > 0 && (
+                    <Badge tone="slate" size="sm">{teamMembers.length}</Badge>
+                  )}
                 </h4>
                 {isAdmin && (
                   <button
@@ -866,7 +989,7 @@ export default function Teams() {
                         : "bg-[var(--bg-base)] text-[var(--fg-secondary)] border border-[var(--border-default)] hover:text-[var(--accent)] hover:border-[var(--accent)]/40"
                     )}
                   >
-                    <Icon name="plus" size={12} />
+                    <Icon name="userPlus" size={13} />
                     Add Member
                   </button>
                 )}
@@ -875,19 +998,22 @@ export default function Teams() {
               {/* Inline Add Member search */}
               {showAddMember && isAdmin && (
                 <div className="mb-3 relative">
-                  <input
-                    type="text"
-                    autoFocus
-                    placeholder="Search users to add..."
-                    value={addMemberSearch}
-                    onChange={(e) => setAddMemberSearch(e.target.value)}
-                    className={cn(
-                      "w-full px-3 py-2 rounded-lg text-sm",
-                      "bg-[var(--bg-base)] border border-[var(--accent)]/40",
-                      "text-[var(--fg-primary)] placeholder:text-[var(--fg-muted)]",
-                      "focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/30 focus:border-[var(--accent)]"
-                    )}
-                  />
+                  <div className="relative">
+                    <Icon name="search" className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--fg-muted)] pointer-events-none" />
+                    <input
+                      type="text"
+                      autoFocus
+                      placeholder="Search users to add..."
+                      value={addMemberSearch}
+                      onChange={(e) => setAddMemberSearch(e.target.value)}
+                      className={cn(
+                        "w-full pl-10 pr-3 py-2.5 rounded-lg text-sm",
+                        "bg-[var(--bg-base)] border border-[var(--accent)]/40",
+                        "text-[var(--fg-primary)] placeholder:text-[var(--fg-muted)]",
+                        "focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/30 focus:border-[var(--accent)]"
+                      )}
+                    />
+                  </div>
                   {addMemberSearch.trim() && (() => {
                     const memberIds = new Set(teamMembers.map(m => m.id));
                     const q = addMemberSearch.toLowerCase();
@@ -900,7 +1026,7 @@ export default function Teams() {
                       <div className={cn(
                         "absolute z-10 w-full mt-1 rounded-lg py-3 text-center text-sm",
                         "bg-[var(--bg-elevated)] border border-[var(--border-default)]",
-                        "text-[var(--fg-muted)] shadow-lg"
+                        "text-[var(--fg-muted)] shadow-[var(--shadow-elevated)]"
                       )}>
                         No users found
                       </div>
@@ -908,7 +1034,7 @@ export default function Teams() {
                     return (
                       <div className={cn(
                         "absolute z-10 w-full mt-1 rounded-lg overflow-hidden",
-                        "bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-lg"
+                        "bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-elevated)]"
                       )}>
                         {suggestions.map(u => (
                           <button
@@ -916,7 +1042,7 @@ export default function Teams() {
                             onClick={() => addMember(u)}
                             className={cn(
                               "w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors",
-                              "hover:bg-[var(--bg-base)]"
+                              "hover:bg-[var(--bg-surface)]"
                             )}
                           >
                             <div className={cn(
@@ -931,6 +1057,7 @@ export default function Teams() {
                               </p>
                               <p className="text-xs text-[var(--fg-muted)] truncate">{u.email}</p>
                             </div>
+                            <Icon name="plus" size={14} className="text-[var(--fg-muted)] shrink-0" />
                           </button>
                         ))}
                       </div>
@@ -940,25 +1067,19 @@ export default function Teams() {
               )}
 
               {teamMembers.length === 0 ? (
-                <div className="text-center py-10">
-                  <div className={cn(
-                    "w-14 h-14 rounded-xl flex items-center justify-center mx-auto mb-4",
-                    "bg-[var(--bg-base)] border border-[var(--border-default)]"
-                  )}>
-                    <Icon name="users" size={24} className="text-[var(--fg-muted)]" />
-                  </div>
-                  <h3 className="text-sm font-semibold text-[var(--fg-primary)] mb-1">No members yet</h3>
-                  <p className="text-xs text-[var(--fg-secondary)]">
-                    Use the Add Member button above to add people to this team
-                  </p>
-                </div>
+                <EmptyState
+                  icon="users"
+                  title="No members yet"
+                  description="Use the Add Member button above to add people to this team."
+                  compact
+                />
               ) : (
-                <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
                   {teamMembers.map((member) => (
                     <div
                       key={member.id}
                       className={cn(
-                        "flex items-center gap-3 p-3 rounded-lg",
+                        "flex items-center gap-3 p-3 rounded-xl",
                         "bg-[var(--bg-base)] border border-[var(--border-default)]",
                         "hover:border-[var(--border-hover)] transition-colors"
                       )}
@@ -970,15 +1091,18 @@ export default function Teams() {
                         {(member.full_name || member.email || "?")[0].toUpperCase()}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-[var(--fg-primary)] truncate">
+                        <p className="text-sm font-medium text-[var(--fg-primary)] truncate flex items-center gap-1.5">
                           {member.full_name || "Unnamed"}
+                          {member.is_lead && (
+                            <Icon name="star" size={12} className="text-amber-500 shrink-0" />
+                          )}
                         </p>
                         <div className="flex items-center gap-2 text-xs text-[var(--fg-muted)]">
                           <span className="truncate">{member.email}</span>
                           {member.manager && (
                             <>
                               <span>•</span>
-                              <span className="flex items-center gap-1">
+                              <span className="flex items-center gap-1 whitespace-nowrap">
                                 <Icon name="arrowUp" size={10} />
                                 Reports to {member.manager.full_name}
                               </span>
@@ -1010,8 +1134,8 @@ export default function Teams() {
                               togglingLead === member.id
                                 ? "opacity-50 cursor-not-allowed"
                                 : member.is_lead
-                                  ? "bg-amber-500/15 text-amber-400 border border-amber-400/40 hover:bg-amber-500/25"
-                                  : "bg-[var(--bg-elevated)] text-[var(--fg-muted)] border border-[var(--border-default)] hover:text-amber-400 hover:border-amber-400/40"
+                                  ? "bg-amber-500/15 text-amber-500 border border-amber-400/40 hover:bg-amber-500/25"
+                                  : "bg-[var(--bg-elevated)] text-[var(--fg-muted)] border border-[var(--border-default)] hover:text-amber-500 hover:border-amber-400/40"
                             )}
                           >
                             {togglingLead === member.id ? (
@@ -1030,7 +1154,7 @@ export default function Teams() {
                             title="Remove from team"
                             className={cn(
                               "p-1.5 rounded-md transition-all duration-200",
-                              "text-[var(--fg-muted)] hover:text-rose-400",
+                              "text-[var(--fg-muted)] hover:text-rose-500",
                               "hover:bg-rose-500/10 border border-transparent hover:border-rose-400/30"
                             )}
                           >

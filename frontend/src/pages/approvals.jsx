@@ -12,16 +12,25 @@ import { useToast } from "../contexts/toast";
 import Button from "../components/ui/Button";
 import Badge from "../components/ui/Badge";
 import Icon from "../components/ui/Icon";
-import Card from "../components/ui/Card";
+import PageHeader from "../components/ui/PageHeader";
+import Tabs from "../components/ui/Tabs";
+import EmptyState from "../components/ui/EmptyState";
+import Skeleton, { SkeletonTable } from "../components/ui/Skeleton";
 import Modal from "../components/ui/Modal";
-import Input, { Textarea } from "../components/ui/Input";
+import { Textarea } from "../components/ui/Input";
 import useConfirm from "../components/ui/useConfirm";
 
 function cn(...parts) {
   return parts.filter(Boolean).join(" ");
 }
 
-const cardTints = ["violet", "blue", "cyan", "teal", "indigo", "emerald"];
+// Per-priority accent for the request-card rail (full static classes — no dynamic Tailwind)
+const PRIORITY_RAIL = {
+  low: "bg-slate-500",
+  normal: "bg-blue-500",
+  high: "bg-amber-500",
+  urgent: "bg-rose-500",
+};
 
 export default function Approvals() {
   const navigate = useNavigate();
@@ -380,147 +389,167 @@ export default function Approvals() {
   );
 
   const tabs = [
-    { key: "pending", label: "Pending Approvals", count: approvals.length },
-    { key: "delegations", label: "My Delegations" },
+    { value: "pending", label: "Pending Approvals", icon: "clock", count: approvals.length },
+    { value: "delegations", label: "My Delegations", icon: "share" },
   ];
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-5">
       {/* Header */}
-      <div className="rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] px-6 py-5">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-semibold text-[var(--fg-primary)] tracking-tight">
-              Approvals
-            </h1>
-            <p className="text-sm text-[var(--fg-secondary)] mt-1">
-              Manage approvals and delegations
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
+      <PageHeader
+        icon="checkCircle"
+        title="Approvals"
+        subtitle={
+          activeTab === "pending"
+            ? `${approvals.length} ${approvals.length === 1 ? "request" : "requests"} awaiting your decision`
+            : "Manage who can act on your approvals"
+        }
+        actions={
+          <>
+            <button
+              onClick={() => { loadApprovals(); if (activeTab === "delegations") loadDelegations(); }}
+              title="Refresh"
+              className="h-10 w-10 inline-flex items-center justify-center rounded-lg transition-all duration-150 bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)] hover:border-[var(--border-hover)]"
+            >
+              <Icon
+                name="refresh"
+                size={16}
+                className={cn((loading || delegationsLoading) && "animate-spin")}
+              />
+            </button>
             {activeTab === "delegations" && (
               <Button onClick={openNewDelegationModal} icon={<Icon name="plus" size={16} />}>
                 New Delegation
               </Button>
             )}
-            <Button variant="secondary" onClick={() => { loadApprovals(); if (activeTab === "delegations") loadDelegations(); }} icon={<Icon name="refreshCw" size={16} />}>
-              Refresh
-            </Button>
-          </div>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {/* Tabs */}
-      <div className="flex gap-1 p-1 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)] w-fit">
-        {tabs.map(tab => (
-          <button
-            key={tab.key}
-            onClick={() => setActiveTab(tab.key)}
-            className={cn(
-              "px-4 py-2 rounded-md text-sm font-medium transition-all",
-              activeTab === tab.key
-                ? "bg-[var(--accent)] text-white shadow-sm"
-                : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-base)]"
-            )}
-          >
-            {tab.label}
-            {tab.count !== undefined && (
-              <span className={cn(
-                "ml-2 px-1.5 py-0.5 rounded text-xs",
-                activeTab === tab.key ? "bg-white/20" : "bg-[var(--bg-base)]"
-              )}>
-                {tab.count}
-              </span>
-            )}
-          </button>
-        ))}
-      </div>
+      <Tabs
+        variant="pills"
+        tabs={tabs}
+        value={activeTab}
+        onChange={setActiveTab}
+      />
 
       {/* ====== PENDING APPROVALS TAB ====== */}
       {activeTab === "pending" && (
         <>
           {/* Stats */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className={cn(
-              "rounded-xl p-5",
-              "bg-[var(--bg-elevated)]",
-              "border border-[var(--border-default)]"
-            )}>
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-amber-500/10 flex items-center justify-center">
-                  <Icon name="clock" size={20} className="text-amber-400" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold text-[var(--fg-primary)]">{approvals.length}</p>
-                  <p className="text-xs text-[var(--fg-muted)]">Pending Approvals</p>
-                </div>
+            <div
+              className={cn(
+                "group relative overflow-hidden rounded-2xl p-5",
+                "bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]",
+                "transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--border-hover)] hover:shadow-[var(--shadow-card-hover)]",
+                "animate-kpi-rise"
+              )}
+            >
+              <div className="flex items-start justify-between mb-4">
+                <span className="text-label">Pending Approvals</span>
+                <span className="h-9 w-9 rounded-xl flex items-center justify-center border bg-amber-500/10 text-amber-500 border-amber-500/15 transition-transform duration-200 group-hover:scale-110">
+                  <Icon name="clock" size={16} />
+                </span>
               </div>
+              <p className="text-[32px] leading-none font-semibold tracking-tight text-[var(--fg-primary)] tabular-nums">
+                {approvals.length}
+              </p>
+              <p className="mt-3 text-[11px] text-[var(--fg-muted)]">
+                Requests awaiting your decision
+              </p>
             </div>
           </div>
 
           {/* Approvals List */}
           {loading ? (
-            <div className="flex items-center justify-center py-20">
-              <div className="text-center">
-                <div className="inline-block animate-spin rounded-full h-10 w-10 border-4 border-[var(--border-default)] border-t-[var(--accent)] mb-3" />
-                <p className="text-sm text-[var(--fg-secondary)]">Loading approvals...</p>
-              </div>
+            <div className="space-y-4">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] p-5"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 min-w-0 space-y-3">
+                      <div className="flex items-center gap-2.5">
+                        <Skeleton className="h-5 w-24" rounded="rounded-md" />
+                        <Skeleton className="h-5 w-16" rounded="rounded-full" />
+                        <Skeleton className="h-5 w-20" rounded="rounded-full" />
+                      </div>
+                      <Skeleton className="h-4 w-2/3" rounded="rounded-md" />
+                      <Skeleton className="h-3 w-1/3" rounded="rounded-md" />
+                    </div>
+                    <div className="hidden sm:flex items-center gap-2 shrink-0">
+                      <Skeleton className="h-9 w-16" rounded="rounded-lg" />
+                      <Skeleton className="h-9 w-24" rounded="rounded-lg" />
+                      <Skeleton className="h-9 w-24" rounded="rounded-lg" />
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           ) : approvals.length === 0 ? (
-            <div className={cn(
-              "text-center py-20 rounded-xl",
-              "bg-[var(--bg-elevated)]",
-              "border border-[var(--border-default)]",
-              "shadow-[var(--shadow-card)]"
-            )}>
-              <div className={cn(
-                "inline-flex items-center justify-center w-16 h-16 rounded-xl mb-4",
-                "bg-emerald-500/10 border border-emerald-500/20"
-              )}>
-                <Icon name="check" size={32} className="text-emerald-400" />
-              </div>
-              <p className="text-sm font-semibold text-[var(--fg-primary)] mb-1">All caught up!</p>
-              <p className="text-sm text-[var(--fg-secondary)]">
-                You have no pending approvals at the moment
-              </p>
+            <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]">
+              <EmptyState
+                icon="checkCircle"
+                tone="emerald"
+                title="All caught up!"
+                description="You have no pending approvals at the moment."
+              />
             </div>
           ) : (
             <div className="space-y-4">
               {approvals.map((approval, idx) => (
-                <Card
+                <div
                   key={approval.id}
-                  tint={cardTints[idx % cardTints.length]}
-                  spotlight
-                  hover
+                  className={cn(
+                    "group relative overflow-hidden rounded-2xl",
+                    "bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]",
+                    "transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--border-hover)] hover:shadow-[var(--shadow-card-hover)]",
+                    "animate-fade-up"
+                  )}
+                  style={{ animationDelay: `${idx * 60}ms` }}
                 >
-                  <div className="flex items-start justify-between gap-4">
+                  {/* Priority accent rail */}
+                  <span
+                    className={cn(
+                      "absolute inset-y-0 left-0 w-1",
+                      PRIORITY_RAIL[approval.priority_key] || PRIORITY_RAIL.low
+                    )}
+                  />
+
+                  <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 p-5 pl-6">
                     <div className="flex-1 min-w-0">
                       {/* Ticket Info */}
-                      <div className="flex items-center gap-2.5 mb-2 flex-wrap">
-                        <span className={cn(
-                          "text-xs font-mono font-medium px-2 py-1 rounded",
-                          "bg-[var(--bg-base)] text-[var(--fg-muted)]"
-                        )}>
+                      <div className="flex items-center gap-2 mb-2 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/tickets/${approval.ticket_id}`)}
+                          className="text-xs font-mono font-semibold text-[var(--accent)] hover:underline"
+                        >
                           {approval.ticket_number}
-                        </span>
+                        </button>
                         {getPriorityBadge(approval.priority_key)}
-                        <Badge tone="violet">Level {approval.approval_level}/{approval.total_levels}</Badge>
+                        <Badge tone="violet" size="sm">Level {approval.approval_level}/{approval.total_levels}</Badge>
                         {approval.rule_name && (
-                          <Badge tone="slate">{approval.rule_name}</Badge>
+                          <Badge tone="slate" size="sm">{approval.rule_name}</Badge>
                         )}
                         {approval.is_delegated === 1 && (
-                          <Badge tone="cyan">Delegated from {approval.delegator_name}</Badge>
+                          <Badge tone="cyan" size="sm" icon={<Icon name="share" size={11} />}>
+                            Delegated from {approval.delegator_name}
+                          </Badge>
                         )}
                       </div>
 
                       <h3
-                        className="text-base font-semibold text-[var(--fg-primary)] mb-2 cursor-pointer hover:text-[var(--accent)] transition-colors"
+                        className="text-base font-semibold text-[var(--fg-primary)] mb-2 cursor-pointer hover:text-[var(--accent)] transition-colors line-clamp-2"
                         onClick={() => navigate(`/tickets/${approval.ticket_id}`)}
                       >
                         {approval.subject}
                       </h3>
 
-                      <div className="flex items-center gap-4 text-xs text-[var(--fg-muted)]">
+                      <div className="flex items-center gap-4 text-xs text-[var(--fg-muted)] flex-wrap">
                         <span className="flex items-center gap-1.5">
                           <Icon name="user" size={12} />
                           Requested by {approval.requester_name}
@@ -533,11 +562,12 @@ export default function Approvals() {
                     </div>
 
                     {/* Actions */}
-                    <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="flex items-center gap-2 flex-wrap lg:flex-nowrap lg:justify-end shrink-0">
                       <Button
-                        variant="secondary"
+                        variant="ghost"
                         size="sm"
                         onClick={() => navigate(`/tickets/${approval.ticket_id}`)}
+                        icon={<Icon name="eye" size={14} />}
                       >
                         View
                       </Button>
@@ -546,30 +576,29 @@ export default function Approvals() {
                         size="sm"
                         onClick={() => openDelegateApprovalModal(approval)}
                         title="Delegate this approval"
+                        icon={<Icon name="share" size={14} />}
                       >
-                        <Icon name="share" size={14} className="mr-1.5" />
                         Delegate
                       </Button>
                       <Button
+                        variant="success"
                         size="sm"
                         onClick={() => openApproveModal(approval)}
-                        className="bg-emerald-600 hover:bg-emerald-500"
+                        icon={<Icon name="check" size={14} />}
                       >
-                        <Icon name="check" size={14} className="mr-1.5" />
                         Approve
                       </Button>
                       <Button
-                        variant="secondary"
+                        variant="danger"
                         size="sm"
                         onClick={() => openRejectModal(approval)}
-                        className="text-rose-400 hover:bg-rose-500/10"
+                        icon={<Icon name="close" size={14} />}
                       >
-                        <Icon name="close" size={14} className="mr-1.5" />
                         Reject
                       </Button>
                     </div>
                   </div>
-                </Card>
+                </div>
               ))}
             </div>
           )}
@@ -580,108 +609,99 @@ export default function Approvals() {
       {activeTab === "delegations" && (
         <>
           {delegationsLoading ? (
-            <div className="flex items-center justify-center py-20">
-              <div className="text-center">
-                <div className="inline-block animate-spin rounded-full h-10 w-10 border-4 border-[var(--border-default)] border-t-[var(--accent)] mb-3" />
-                <p className="text-sm text-[var(--fg-secondary)]">Loading delegations...</p>
-              </div>
-            </div>
+            <SkeletonTable rows={5} cols={7} />
           ) : delegations.length === 0 ? (
-            <div className={cn(
-              "text-center py-20 rounded-xl",
-              "bg-[var(--bg-elevated)]",
-              "border border-[var(--border-default)]",
-              "shadow-[var(--shadow-card)]"
-            )}>
-              <div className={cn(
-                "inline-flex items-center justify-center w-16 h-16 rounded-xl mb-4",
-                "bg-blue-500/10 border border-blue-500/20"
-              )}>
-                <Icon name="share" size={32} className="text-blue-400" />
-              </div>
-              <p className="text-sm font-semibold text-[var(--fg-primary)] mb-1">No delegations yet</p>
-              <p className="text-sm text-[var(--fg-secondary)] mb-4">
-                Create a delegation to let someone else handle your approvals
-              </p>
-              <Button onClick={openNewDelegationModal} icon={<Icon name="plus" size={16} />}>
-                New Delegation
-              </Button>
+            <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]">
+              <EmptyState
+                icon="share"
+                tone="blue"
+                title="No delegations yet"
+                description="Create a delegation to let someone else handle your approvals."
+                action={
+                  <Button onClick={openNewDelegationModal} icon={<Icon name="plus" size={16} />}>
+                    New Delegation
+                  </Button>
+                }
+              />
             </div>
           ) : (
-            <div className={cn(
-              "rounded-xl overflow-hidden overflow-x-auto",
-              "bg-[var(--bg-elevated)]",
-              "border border-[var(--border-default)]"
-            )}>
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-[var(--border-default)]">
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">Direction</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">User</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">Type</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">Date Range</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">Status</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">Reason</th>
-                    <th className="px-4 py-3 text-right text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border-default)]">
-                  {delegations.map(d => {
-                    const isGiven = d.delegator_id === user?.id;
-                    return (
-                      <tr key={d.id} className="hover:bg-[var(--bg-base)] transition-colors">
-                        <td className="px-4 py-3">
-                          <Badge tone={isGiven ? "amber" : "cyan"}>
-                            {isGiven ? "Given" : "Received"}
-                          </Badge>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div>
-                            <p className="text-sm font-medium text-[var(--fg-primary)]">
-                              {isGiven ? d.delegate_name : d.delegator_name}
-                            </p>
-                            <p className="text-xs text-[var(--fg-muted)]">
-                              {isGiven ? d.delegate_email : d.delegator_email}
-                            </p>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <Badge tone={d.delegation_type === "permanent" ? "violet" : d.delegation_type === "temporary" ? "blue" : "teal"}>
-                            {d.delegation_type}
-                          </Badge>
-                        </td>
-                        <td className="px-4 py-3 text-sm text-[var(--fg-secondary)]">
-                          {d.delegation_type === "temporary"
-                            ? `${formatDateShort(d.start_date)} - ${formatDateShort(d.end_date)}`
-                            : d.delegation_type === "specific_ticket"
-                              ? `Ticket #${d.ticket_id}`
-                              : "Always"}
-                        </td>
-                        <td className="px-4 py-3">
-                          <Badge tone={d.is_active ? "emerald" : "slate"}>
-                            {d.is_active ? "Active" : "Revoked"}
-                          </Badge>
-                        </td>
-                        <td className="px-4 py-3 text-sm text-[var(--fg-secondary)] max-w-[200px] truncate">
-                          {d.reason || "-"}
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          {isGiven && d.is_active ? (
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              onClick={() => handleRevokeDelegation(d)}
-                              className="text-rose-400 hover:bg-rose-500/10"
-                            >
-                              Revoke
-                            </Button>
-                          ) : null}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-[var(--bg-surface)]/60 border-b border-[var(--border-default)]">
+                      <th className="px-4 py-3 text-left text-label">Direction</th>
+                      <th className="px-4 py-3 text-left text-label">User</th>
+                      <th className="px-4 py-3 text-left text-label">Type</th>
+                      <th className="px-4 py-3 text-left text-label">Date Range</th>
+                      <th className="px-4 py-3 text-left text-label">Status</th>
+                      <th className="px-4 py-3 text-left text-label">Reason</th>
+                      <th className="px-4 py-3 text-right text-label">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border-default)]">
+                    {delegations.map(d => {
+                      const isGiven = d.delegator_id === user?.id;
+                      return (
+                        <tr key={d.id} className="hover:bg-[var(--bg-surface)] transition-colors">
+                          <td className="px-4 py-3.5 whitespace-nowrap">
+                            <Badge tone={isGiven ? "amber" : "cyan"} size="sm" dot>
+                              {isGiven ? "Given" : "Received"}
+                            </Badge>
+                          </td>
+                          <td className="px-4 py-3.5">
+                            <div className="flex items-center gap-2.5">
+                              <span className="h-8 w-8 rounded-full bg-[var(--accent)]/10 text-[var(--accent)] text-xs font-semibold flex items-center justify-center shrink-0">
+                                {((isGiven ? d.delegate_name : d.delegator_name) || "?").charAt(0).toUpperCase()}
+                              </span>
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium text-[var(--fg-primary)] truncate">
+                                  {isGiven ? d.delegate_name : d.delegator_name}
+                                </p>
+                                <p className="text-xs text-[var(--fg-muted)] truncate">
+                                  {isGiven ? d.delegate_email : d.delegator_email}
+                                </p>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3.5 whitespace-nowrap">
+                            <Badge tone={d.delegation_type === "permanent" ? "violet" : d.delegation_type === "temporary" ? "blue" : "teal"} size="sm">
+                              {d.delegation_type}
+                            </Badge>
+                          </td>
+                          <td className="px-4 py-3.5 text-sm text-[var(--fg-secondary)] whitespace-nowrap">
+                            {d.delegation_type === "temporary"
+                              ? `${formatDateShort(d.start_date)} - ${formatDateShort(d.end_date)}`
+                              : d.delegation_type === "specific_ticket"
+                                ? `Ticket #${d.ticket_id}`
+                                : "Always"}
+                          </td>
+                          <td className="px-4 py-3.5 whitespace-nowrap">
+                            <Badge tone={d.is_active ? "emerald" : "slate"} size="sm" dot={!!d.is_active}>
+                              {d.is_active ? "Active" : "Revoked"}
+                            </Badge>
+                          </td>
+                          <td className="px-4 py-3.5 text-sm text-[var(--fg-secondary)] max-w-[200px] truncate">
+                            {d.reason || "—"}
+                          </td>
+                          <td className="px-4 py-3.5 text-right">
+                            {isGiven && d.is_active ? (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleRevokeDelegation(d)}
+                                className="text-rose-500 hover:bg-rose-500/10"
+                              >
+                                Revoke
+                              </Button>
+                            ) : null}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </>
@@ -700,11 +720,11 @@ export default function Approvals() {
               Cancel
             </Button>
             <Button
+              variant="success"
               onClick={handleApprove}
               loading={submitting}
-              className="bg-emerald-600 hover:bg-emerald-500"
+              icon={<Icon name="check" size={14} />}
             >
-              <Icon name="check" size={14} className="mr-1.5" />
               Approve
             </Button>
           </>
@@ -753,11 +773,11 @@ export default function Approvals() {
               Cancel
             </Button>
             <Button
+              variant="danger"
               onClick={handleReject}
               loading={submitting}
-              className="bg-rose-600 hover:bg-rose-500"
+              icon={<Icon name="close" size={14} />}
             >
-              <Icon name="close" size={14} className="mr-1.5" />
               Reject
             </Button>
           </>
@@ -816,8 +836,8 @@ export default function Approvals() {
             <Button
               onClick={handleCreateDelegation}
               loading={submitting}
+              icon={<Icon name="share" size={14} />}
             >
-              <Icon name="share" size={14} className="mr-1.5" />
               Create Delegation
             </Button>
           </>
@@ -911,8 +931,8 @@ export default function Approvals() {
             <Button
               onClick={handleDelegateApproval}
               loading={submitting}
+              icon={<Icon name="share" size={14} />}
             >
-              <Icon name="share" size={14} className="mr-1.5" />
               Delegate
             </Button>
           </>

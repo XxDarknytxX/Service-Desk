@@ -1,6 +1,8 @@
 /**
- * Organizations Page
- * Linear/Modern Design System
+ * Organizations Page — Vodafone Service Desk
+ * Premium directory of customer accounts: branded header, search toolbar,
+ * elevated table with avatar tiles, skeleton loading, empty state.
+ * All data flows (load / create / edit / delete) preserved.
  */
 
 import { useEffect, useState } from "react";
@@ -10,7 +12,9 @@ import Icon from "../components/ui/Icon";
 import Modal from "../components/ui/Modal";
 import Input, { Textarea } from "../components/ui/Input";
 import Badge from "../components/ui/Badge";
-import Card from "../components/ui/Card";
+import PageHeader from "../components/ui/PageHeader";
+import EmptyState from "../components/ui/EmptyState";
+import { SkeletonTable } from "../components/ui/Skeleton";
 import useConfirm from "../components/ui/useConfirm";
 import { useAuth } from "../contexts/auth";
 import { useToast } from "../contexts/toast";
@@ -101,158 +105,114 @@ export default function Organizations() {
   );
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      {/* Header */}
-      <div className="rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] px-6 py-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-semibold text-[var(--fg-primary)] tracking-tight">
-              Organizations
-            </h1>
-            <p className="text-[var(--fg-secondary)] mt-1 text-sm">Manage customer accounts and companies</p>
-          </div>
-          {isAdmin && (
-            <Button onClick={openCreateModal} icon={<Icon name="plus" size={16} />}>Add Organization</Button>
-          )}
-        </div>
-      </div>
+    <div className="space-y-5">
+      <PageHeader
+        icon="building"
+        title="Organizations"
+        subtitle="Manage customer accounts and companies"
+        actions={
+          isAdmin && (
+            <Button onClick={openCreateModal} icon={<Icon name="plus" size={16} />}>
+              Add Organization
+            </Button>
+          )
+        }
+      />
 
-      {/* Search */}
-      <div className="flex flex-wrap items-center gap-4">
-        <div className="flex-1 max-w-sm">
+      {/* Search toolbar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] p-4">
+        <div className="w-full sm:max-w-sm">
           <Input icon="search" placeholder="Search organizations..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
         </div>
-        <Badge tone="slate">{filtered.length} organizations</Badge>
+        <Badge tone="slate">{filtered.length} {filtered.length === 1 ? "organization" : "organizations"}</Badge>
       </div>
 
       {loading ? (
-        <div className={cn(
-          "flex items-center justify-center py-20 rounded-xl",
-          "bg-[var(--bg-elevated)]",
-          "border border-[var(--border-default)]",
-          "shadow-[var(--shadow-card)]"
-        )}>
-          <div className="text-center">
-            <div className={cn(
-              "w-16 h-16 rounded-xl flex items-center justify-center mx-auto mb-4",
-              "bg-[var(--bg-base)] border border-[var(--border-default)]"
-            )}>
-              <div className="animate-spin rounded-full h-8 w-8 border-4 border-[var(--border-default)] border-t-[var(--accent)]" />
-            </div>
-            <p className="text-sm font-medium text-[var(--fg-secondary)]">Loading organizations...</p>
-          </div>
-        </div>
+        <SkeletonTable rows={6} cols={4} />
       ) : filtered.length === 0 ? (
-        <div className={cn(
-          "text-center py-20 rounded-xl",
-          "bg-[var(--bg-elevated)]",
-          "border border-[var(--border-default)]",
-          "shadow-[var(--shadow-card)]"
-        )}>
-          <div className={cn(
-            "flex items-center justify-center w-20 h-20 mx-auto mb-5 rounded-xl",
-            "bg-[var(--bg-base)] border border-[var(--border-default)]"
-          )}>
-            <Icon name="organization" size={36} className="text-[var(--fg-muted)]" />
-          </div>
-          <h3 className="text-lg font-semibold text-[var(--fg-primary)] mb-2">
-            No organizations found
-          </h3>
-          <p className="text-sm text-[var(--fg-secondary)]">
-            {searchQuery ? "Try a different search term" : "Add your first organization to get started"}
-          </p>
+        <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]">
+          <EmptyState
+            icon="building"
+            title="No organizations found"
+            description={searchQuery ? "Try a different search term." : "Add your first organization to get started."}
+            action={
+              isAdmin && !searchQuery && (
+                <Button onClick={openCreateModal} icon={<Icon name="plus" size={16} />}>Add Organization</Button>
+              )
+            }
+          />
         </div>
       ) : (
-        <Card tint="cyan" padding={false} hover={false}>
+        <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] overflow-hidden animate-fade-up">
           <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="bg-[var(--bg-base)] border-b border-[var(--border-default)]">
-                <th className="text-left px-6 py-4 text-[11px] font-medium text-[var(--fg-muted)] uppercase tracking-wider">Organization</th>
-                <th className="text-left px-6 py-4 text-[11px] font-medium text-[var(--fg-muted)] uppercase tracking-wider">Domain</th>
-                <th className="text-left px-6 py-4 text-[11px] font-medium text-[var(--fg-muted)] uppercase tracking-wider">Industry</th>
-                <th className="text-left px-6 py-4 text-[11px] font-medium text-[var(--fg-muted)] uppercase tracking-wider">Created</th>
-                {isAdmin && (
-                  <th className="text-right px-6 py-4 text-[11px] font-medium text-[var(--fg-muted)] uppercase tracking-wider">Actions</th>
-                )}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--border-default)]">
-              {filtered.map((org) => (
-                <tr key={org.id} className="hover:bg-[var(--bg-base)] transition-all duration-200 group">
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-4">
-                      <div className={cn(
-                        "h-10 w-10 rounded-lg flex items-center justify-center text-sm font-bold flex-shrink-0",
-                        "bg-cyan-500/10 text-cyan-400"
-                      )}>
-                        {(org.name || "?")[0].toUpperCase()}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-[var(--fg-primary)] truncate">
-                          {org.name}
-                        </p>
-                        {org.notes && (
-                          <p className="text-xs text-[var(--fg-muted)] truncate max-w-[250px]">{org.notes}</p>
-                        )}
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    {org.domain ? (
-                      <div className="flex items-center gap-2">
-                        <Icon name="link" size={14} className="text-[var(--fg-muted)]" />
-                        <span className="text-sm text-[var(--fg-secondary)] font-mono">{org.domain}</span>
-                      </div>
-                    ) : (
-                      <span className="text-sm text-[var(--fg-muted)]">-</span>
-                    )}
-                  </td>
-                  <td className="px-6 py-4">
-                    {org.industry ? (
-                      <Badge tone="blue">{org.industry}</Badge>
-                    ) : (
-                      <span className="text-sm text-[var(--fg-muted)]">-</span>
-                    )}
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="text-sm text-[var(--fg-secondary)]">
-                      {new Date(org.created_at).toLocaleDateString()}
-                    </span>
-                  </td>
-                  {isAdmin && (
-                    <td className="px-6 py-4 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          onClick={() => openEditModal(org)}
-                          className={cn(
-                            "inline-flex items-center justify-center p-2.5 rounded-lg transition-all duration-200",
-                            "text-[var(--fg-muted)] hover:text-[var(--accent)]",
-                            "hover:bg-[var(--bg-base)]"
+            <table className="w-full">
+              <thead>
+                <tr className="bg-[var(--bg-surface)]/60 border-b border-[var(--border-default)]">
+                  <th className="text-left px-5 py-3 text-label">Organization</th>
+                  <th className="text-left px-5 py-3 text-label">Domain</th>
+                  <th className="text-left px-5 py-3 text-label">Industry</th>
+                  <th className="text-left px-5 py-3 text-label">Created</th>
+                  {isAdmin && <th className="text-right px-5 py-3 text-label">Actions</th>}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border-default)]">
+                {filtered.map((org) => (
+                  <tr key={org.id} className="hover:bg-[var(--bg-surface)] transition-colors duration-150 group">
+                    <td className="px-5 py-3.5">
+                      <div className="flex items-center gap-3.5">
+                        <div className="h-10 w-10 rounded-xl flex items-center justify-center text-sm font-bold flex-shrink-0 bg-cyan-500/10 text-cyan-500 border border-cyan-500/15">
+                          {(org.name || "?")[0].toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-[var(--fg-primary)] truncate">{org.name}</p>
+                          {org.notes && (
+                            <p className="text-xs text-[var(--fg-muted)] truncate max-w-[250px]">{org.notes}</p>
                           )}
-                        >
-                          <Icon name="pencil" size={14} />
-                        </button>
-                        <button
-                          onClick={() => handleDelete(org)}
-                          title="Delete organization"
-                          className={cn(
-                            "inline-flex items-center justify-center p-2.5 rounded-lg transition-all duration-200",
-                            "text-[var(--fg-muted)] hover:text-rose-400",
-                            "hover:bg-rose-500/10"
-                          )}
-                        >
-                          <Icon name="trash" size={14} />
-                        </button>
+                        </div>
                       </div>
                     </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    <td className="px-5 py-3.5">
+                      {org.domain ? (
+                        <div className="flex items-center gap-2">
+                          <Icon name="link" size={14} className="text-[var(--fg-muted)]" />
+                          <span className="text-sm text-[var(--fg-secondary)] font-mono">{org.domain}</span>
+                        </div>
+                      ) : (
+                        <span className="text-sm text-[var(--fg-muted)]">—</span>
+                      )}
+                    </td>
+                    <td className="px-5 py-3.5">
+                      {org.industry ? <Badge tone="blue">{org.industry}</Badge> : <span className="text-sm text-[var(--fg-muted)]">—</span>}
+                    </td>
+                    <td className="px-5 py-3.5">
+                      <span className="text-sm text-[var(--fg-secondary)]">{new Date(org.created_at).toLocaleDateString()}</span>
+                    </td>
+                    {isAdmin && (
+                      <td className="px-5 py-3.5 text-right">
+                        <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={() => openEditModal(org)}
+                            title="Edit organization"
+                            className="inline-flex items-center justify-center p-2 rounded-lg transition-colors text-[var(--fg-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-surface-hover)]"
+                          >
+                            <Icon name="pencil" size={14} />
+                          </button>
+                          <button
+                            onClick={() => handleDelete(org)}
+                            title="Delete organization"
+                            className="inline-flex items-center justify-center p-2 rounded-lg transition-colors text-[var(--fg-muted)] hover:text-rose-500 hover:bg-rose-500/10"
+                          >
+                            <Icon name="trash" size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </Card>
+        </div>
       )}
 
       <Modal
@@ -276,9 +236,9 @@ export default function Organizations() {
             value={formData.name}
             onChange={(e) => setFormData({ ...formData, name: e.target.value })}
             required
-            icon="organization"
+            icon="building"
           />
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input
               label="Domain"
               placeholder="acme.com"

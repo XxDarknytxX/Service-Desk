@@ -1,6 +1,14 @@
 /**
- * Ticket Detail Page
- * JIRA-inspired Modern Design
+ * Ticket Detail Page — Vodafone Service Desk
+ *
+ * Premium workspace experience: a branded ticket header (mono ticket number,
+ * subject, status/priority badges, key actions), a two-column layout with a
+ * tabbed conversation/activity/SLA/approvals timeline and a sticky properties
+ * sidebar of clean labeled panels. Fully token-driven (dark & light), with
+ * skeleton loading and EmptyState surfaces.
+ *
+ * All state, effects, handlers, API calls, modals, and features are preserved
+ * exactly — this is a visual / layout redesign only.
  */
 
 import { useEffect, useState } from "react";
@@ -11,8 +19,11 @@ import { useAuth } from "../contexts/auth";
 import { useToast } from "../contexts/toast";
 import Modal from "../components/ui/Modal";
 import Icon from "../components/ui/Icon";
-import Badge from "../components/ui/Badge";
+import Badge, { TagBadge } from "../components/ui/Badge";
 import Button from "../components/ui/Button";
+import Tabs from "../components/ui/Tabs";
+import EmptyState from "../components/ui/EmptyState";
+import Skeleton from "../components/ui/Skeleton";
 import TemplateRenderer from "../components/templates/TemplateRenderer";
 
 function cn(...parts) {
@@ -702,20 +713,51 @@ export default function TicketDetail() {
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-4 animate-fade-in">
-        <div className="h-10 w-10 rounded-full border-3 border-[var(--border-default)] border-t-[var(--accent)] animate-spin" />
-        <p className="text-sm text-[var(--fg-secondary)]">Loading...</p>
+      <div className="space-y-5 animate-fade-in">
+        {/* Breadcrumb */}
+        <div className="flex items-center gap-2">
+          <Skeleton className="h-4 w-20" rounded="rounded-md" />
+          <Skeleton className="h-4 w-24" rounded="rounded-md" />
+        </div>
+        {/* Header */}
+        <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-card)] p-6 space-y-4">
+          <div className="flex items-center gap-2">
+            <Skeleton className="h-5 w-20" rounded="rounded-full" />
+            <Skeleton className="h-5 w-20" rounded="rounded-full" />
+            <Skeleton className="h-5 w-16" rounded="rounded-full" />
+          </div>
+          <Skeleton className="h-7 w-2/3" rounded="rounded-lg" />
+          <Skeleton className="h-9 w-72" rounded="rounded-lg" />
+        </div>
+        {/* Two-column body */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          <div className="lg:col-span-2 space-y-5">
+            <Skeleton className="h-32" rounded="rounded-2xl" />
+            <Skeleton className="h-64" rounded="rounded-2xl" />
+          </div>
+          <div className="space-y-5">
+            <Skeleton className="h-72" rounded="rounded-2xl" />
+            <Skeleton className="h-40" rounded="rounded-2xl" />
+          </div>
+        </div>
       </div>
     );
   }
 
   if (!ticket) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center animate-fade-in">
-        <Icon name="alert" size={48} className="text-[var(--fg-muted)] mb-4" />
-        <h2 className="text-lg font-semibold text-[var(--fg-primary)] mb-2">Ticket not found</h2>
-        <p className="text-sm text-[var(--fg-secondary)] mb-6">The ticket doesn't exist or you don't have access.</p>
-        <Button variant="secondary" onClick={() => navigate("/tickets")}>Back to Tickets</Button>
+      <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-card)] animate-fade-in">
+        <EmptyState
+          icon="alertTriangle"
+          tone="rose"
+          title="Ticket not found"
+          description="The ticket doesn't exist or you don't have access to it."
+          action={
+            <Button variant="secondary" onClick={() => navigate("/tickets")} icon={<Icon name="arrowLeft" size={15} />}>
+              Back to Tickets
+            </Button>
+          }
+        />
       </div>
     );
   }
@@ -723,50 +765,54 @@ export default function TicketDetail() {
   const canSendForApproval = !ticket.approval_status || ticket.approval_status === "not_required" || ticket.approval_status === "rejected";
 
   return (
-    <div className="animate-fade-in">
-      {/* Breadcrumb Header */}
-      <div className="flex items-center gap-2 text-sm mb-5">
-        <button
-          onClick={() => navigate("/tickets")}
-          className="flex items-center gap-1.5 text-[var(--fg-muted)] hover:text-[var(--fg-primary)] transition-colors"
-        >
-          <Icon name="arrowLeft" size={14} />
-          Tickets
-        </button>
-        <Icon name="chevronRight" size={13} className="text-[var(--fg-subtle)]" />
-        <span className="text-[12px] font-mono font-medium px-2 py-0.5 rounded-md bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[var(--fg-secondary)]">
-          {ticket.ticket_number}
-        </span>
-      </div>
+    <div className="space-y-5">
+      {/* ── Branded Ticket Header ── */}
+      <div className="relative overflow-hidden rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-card)] animate-fade-up">
+        {/* decorative brand accents */}
+        <div className="pointer-events-none absolute -top-24 -right-16 h-56 w-56 rounded-full bg-[var(--accent)] opacity-[0.08] blur-3xl" />
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[var(--accent)] to-transparent opacity-40" />
 
-      {/* Main Layout */}
-      <div className="flex flex-col-reverse gap-6 xl:flex-row">
-        {/* Left: Main Content */}
-        <div className="flex-1 min-w-0">
-          {/* Title & Badges */}
-          <div className="mb-6">
-            <div className="flex items-center gap-2 mb-3 flex-wrap">
-              <Badge tone={STATUS_COLORS[ticket.status_key] || "slate"} size="sm" dot>
-                {ticket.status_label}
-              </Badge>
-              <Badge tone={PRIORITY_COLORS[ticket.priority_key] || "slate"} size="sm" dot>
-                {ticket.priority_label}
-              </Badge>
-              {ticket.type_label && (
-                <Badge tone="slate" size="sm">{ticket.type_label}</Badge>
-              )}
-              <span className="text-xs text-[var(--fg-muted)] ml-1">
-                Opened {getTimeAgo(ticket.created_at)} by{" "}
-                <span className="text-[var(--fg-secondary)] font-medium">{ticket.requester_name}</span>
-              </span>
+        <div className="relative p-6">
+          {/* Breadcrumb */}
+          <div className="flex items-center gap-2 text-sm mb-4">
+            <button
+              onClick={() => navigate("/tickets")}
+              className="flex items-center gap-1.5 text-[var(--fg-muted)] hover:text-[var(--fg-primary)] transition-colors"
+            >
+              <Icon name="arrowLeft" size={14} />
+              Tickets
+            </button>
+            <Icon name="chevronRight" size={13} className="text-[var(--fg-subtle)]" />
+            <span className="text-[12px] font-mono font-semibold px-2 py-0.5 rounded-md bg-[var(--accent)]/10 border border-[var(--accent)]/20 text-[var(--accent)]">
+              {ticket.ticket_number}
+            </span>
+          </div>
+
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 mb-3 flex-wrap">
+                <Badge tone={STATUS_COLORS[ticket.status_key] || "slate"} size="sm" dot>
+                  {ticket.status_label}
+                </Badge>
+                <Badge tone={PRIORITY_COLORS[ticket.priority_key] || "slate"} size="sm" dot>
+                  {ticket.priority_label}
+                </Badge>
+                {ticket.type_label && (
+                  <Badge tone="slate" size="sm">{ticket.type_label}</Badge>
+                )}
+                <span className="text-xs text-[var(--fg-muted)] ml-1">
+                  Opened {getTimeAgo(ticket.created_at)} by{" "}
+                  <span className="text-[var(--fg-secondary)] font-medium">{ticket.requester_name}</span>
+                </span>
+              </div>
+              <h1 className="text-2xl font-semibold text-[var(--fg-primary)] leading-snug tracking-tight">
+                {ticket.subject}
+              </h1>
             </div>
-            <h1 className="text-[22px] font-semibold text-[var(--fg-primary)] leading-snug tracking-tight mb-4">
-              {ticket.subject}
-            </h1>
 
             {/* Quick Actions — one cohesive toolbar */}
             {isAgent && (
-              <div className="inline-flex items-center flex-wrap rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)] p-1 gap-0.5">
+              <div className="inline-flex items-center flex-wrap rounded-xl bg-[var(--bg-surface)] border border-[var(--border-default)] p-1 gap-0.5 shrink-0">
                 {ticket.assignee_id !== user?.id && (
                   <ToolbarAction
                     icon="userPlus"
@@ -810,18 +856,31 @@ export default function TicketDetail() {
               </div>
             )}
           </div>
+        </div>
+      </div>
 
+      {/* ── Two-column workspace ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        {/* Left / main: conversation + timeline */}
+        <div className="lg:col-span-2 min-w-0 space-y-5">
           {/* Description Section */}
-          <div className="mb-5">
+          <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] overflow-hidden animate-fade-up" style={{ animationDelay: "60ms" }}>
             <button
               onClick={() => setShowDescription(!showDescription)}
-              className="flex items-center gap-2 text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider mb-2.5 hover:text-[var(--fg-secondary)] transition-colors"
+              className="w-full flex items-center gap-2.5 px-5 py-4 hover:bg-[var(--bg-surface)] transition-colors"
             >
-              <Icon name={showDescription ? "chevronDown" : "chevronRight"} size={13} />
-              Description
+              <span className="h-8 w-8 rounded-lg bg-blue-500/10 text-blue-500 flex items-center justify-center shrink-0">
+                <Icon name="fileText" size={16} />
+              </span>
+              <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">Description</h2>
+              <Icon
+                name="chevronDown"
+                size={16}
+                className={cn("ml-auto text-[var(--fg-muted)] transition-transform duration-200", !showDescription && "-rotate-90")}
+              />
             </button>
             {showDescription && (
-              <div className="rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)] px-4 py-3.5 text-sm text-[var(--fg-secondary)] leading-relaxed whitespace-pre-wrap">
+              <div className="px-5 pb-5 -mt-1 text-sm text-[var(--fg-secondary)] leading-relaxed whitespace-pre-wrap">
                 {ticket.description || <span className="text-[var(--fg-muted)] italic">No description provided</span>}
               </div>
             )}
@@ -829,19 +888,25 @@ export default function TicketDetail() {
 
           {/* Template Response Data */}
           {templateResponse && (
-            <div className="mb-5">
+            <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] overflow-hidden animate-fade-up" style={{ animationDelay: "90ms" }}>
               <button
                 onClick={() => setShowTemplateData(!showTemplateData)}
-                className="flex items-center gap-2 text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider mb-2.5 hover:text-[var(--fg-secondary)] transition-colors"
+                className="w-full flex items-center gap-2.5 px-5 py-4 hover:bg-[var(--bg-surface)] transition-colors"
               >
-                <Icon name={showTemplateData ? "chevronDown" : "chevronRight"} size={13} />
-                {ticket.template_name ? `${ticket.template_name} Data` : "Template Data"}
-                {ticket.template_icon && (
-                  <Icon name={ticket.template_icon} size={13} className="ml-1" />
-                )}
+                <span className="h-8 w-8 rounded-lg bg-indigo-500/10 text-indigo-500 flex items-center justify-center shrink-0">
+                  <Icon name={ticket.template_icon || "clipboard"} size={16} />
+                </span>
+                <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">
+                  {ticket.template_name ? `${ticket.template_name} Data` : "Template Data"}
+                </h2>
+                <Icon
+                  name="chevronDown"
+                  size={16}
+                  className={cn("ml-auto text-[var(--fg-muted)] transition-transform duration-200", !showTemplateData && "-rotate-90")}
+                />
               </button>
               {showTemplateData && (
-                <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-elevated)] p-4">
+                <div className="px-5 pb-5 -mt-1">
                   <TemplateRenderer
                     schema={templateResponse.schema_snapshot || []}
                     values={templateResponse.response_data || {}}
@@ -853,17 +918,20 @@ export default function TicketDetail() {
           )}
 
           {/* Tags */}
-          <div className="mb-6">
+          {(tags.length > 0 || isAgent) && (
             <div className="flex items-center gap-2 flex-wrap">
+              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-[var(--fg-muted)]">
+                <Icon name="tag" size={13} />
+                Tags
+              </span>
               {tags.map((tag) => (
-                <span key={tag.id} className="inline-flex items-center gap-1 px-2 py-0.5 bg-violet-500/10 text-violet-400 rounded text-xs font-medium">
+                <TagBadge
+                  key={tag.id}
+                  tone="violet"
+                  onRemove={isAgent ? () => handleRemoveTag(tag.id) : undefined}
+                >
                   {tag.name}
-                  {isAgent && (
-                    <button onClick={() => handleRemoveTag(tag.id)} className="hover:text-violet-300 ml-0.5">
-                      <Icon name="close" size={10} />
-                    </button>
-                  )}
-                </span>
+                </TagBadge>
               ))}
               {isAgent && (
                 <form onSubmit={handleAddTag} className="inline-flex">
@@ -877,48 +945,29 @@ export default function TicketDetail() {
                 </form>
               )}
             </div>
-          </div>
+          )}
 
-          {/* Activity Section */}
-          <div className="border-t border-[var(--border-default)] pt-6">
-            {/* Tab Buttons */}
-            <div className="inline-flex items-center gap-1 p-1 mb-5 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)] overflow-x-auto max-w-full">
-              {[
-                { key: "comments", label: "Comments", count: comments.length },
-                { key: "history", label: "Activity", count: auditTrail.length },
-                { key: "sla", label: "SLA", count: null },
-                ...(ticket.approval_status && ticket.approval_status !== "not_required"
-                  ? [{ key: "approvals", label: "Approvals", count: approvalData?.length || null }]
-                  : []),
-                { key: "all", label: "All", count: null },
-              ].map((t) => (
-                <button
-                  key={t.key}
-                  onClick={() => setActiveTab(t.key)}
-                  className={cn(
-                    "px-3.5 py-1.5 rounded-md text-[13px] font-medium transition-all whitespace-nowrap",
-                    activeTab === t.key
-                      ? "bg-[var(--accent)] text-white shadow-[0_0_10px_rgba(230,0,0,0.25)]"
-                      : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)]"
-                  )}
-                >
-                  {t.label}
-                  {t.count > 0 && (
-                    <span
-                      className={cn(
-                        "ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-semibold",
-                        activeTab === t.key
-                          ? "bg-white/20 text-white"
-                          : "bg-[var(--bg-surface)] text-[var(--fg-muted)]"
-                      )}
-                    >
-                      {t.count}
-                    </span>
-                  )}
-                </button>
-              ))}
+          {/* Activity / Conversation Section */}
+          <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] overflow-hidden animate-fade-up" style={{ animationDelay: "120ms" }}>
+            {/* Tabs */}
+            <div className="px-2 sm:px-3">
+              <Tabs
+                variant="underline"
+                value={activeTab}
+                onChange={setActiveTab}
+                tabs={[
+                  { value: "comments", label: "Conversation", icon: "messageCircle", count: comments.length || null },
+                  { value: "history", label: "Activity", icon: "activity", count: auditTrail.length || null },
+                  { value: "sla", label: "SLA", icon: "sla" },
+                  ...(ticket.approval_status && ticket.approval_status !== "not_required"
+                    ? [{ value: "approvals", label: "Approvals", icon: "shield", count: approvalData?.length || null }]
+                    : []),
+                  { value: "all", label: "All", icon: "list" },
+                ]}
+              />
             </div>
 
+            <div className="p-5">
             {/* Comment Input */}
             <form onSubmit={handleSubmitComment} className="mb-6">
               <div className="flex gap-3">
@@ -932,11 +981,11 @@ export default function TicketDetail() {
                     placeholder="Add a comment..."
                     rows={2}
                     className={cn(
-                      "w-full px-3 py-2 rounded-lg text-sm resize-none transition-all",
-                      "bg-[var(--bg-elevated)] text-[var(--fg-primary)]",
+                      "w-full px-3.5 py-2.5 rounded-xl text-sm resize-none transition-all",
+                      "bg-[var(--bg-base)] text-[var(--fg-primary)]",
                       "placeholder:text-[var(--fg-muted)]",
                       "border border-[var(--border-default)]",
-                      "focus:outline-none focus:border-[var(--accent)]"
+                      "focus:outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/20"
                     )}
                   />
                   {commentBody.trim() && (
@@ -956,7 +1005,7 @@ export default function TicketDetail() {
                         <Button type="button" size="sm" variant="ghost" onClick={() => { setCommentBody(""); setIsInternalNote(false); }}>
                           Cancel
                         </Button>
-                        <Button type="submit" size="sm" loading={submittingComment}>
+                        <Button type="submit" size="sm" loading={submittingComment} icon={<Icon name={isInternalNote ? "lock" : "send"} size={14} />}>
                           {isInternalNote ? "Save Note" : "Send"}
                         </Button>
                       </div>
@@ -980,12 +1029,14 @@ export default function TicketDetail() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-sm font-medium text-[var(--fg-primary)]">{c.author_name}</span>
-                        {!c.is_public && <Badge tone="amber" className="text-xs py-0">Internal</Badge>}
+                        {!c.is_public && <Badge tone="amber" size="sm" icon={<Icon name="lock" size={10} />}>Internal</Badge>}
                         <span className="text-xs text-[var(--fg-muted)]">{getTimeAgo(c.created_at)}</span>
                       </div>
                       <div className={cn(
-                        "text-sm text-[var(--fg-secondary)] whitespace-pre-wrap rounded-lg p-3",
-                        c.is_public ? "bg-[var(--bg-elevated)]" : "bg-amber-500/5 border border-amber-500/10"
+                        "text-sm whitespace-pre-wrap rounded-xl px-3.5 py-3 border",
+                        c.is_public
+                          ? "bg-[var(--bg-base)] border-[var(--border-default)] text-[var(--fg-secondary)]"
+                          : "bg-amber-500/5 border-amber-500/15 text-[var(--fg-secondary)]"
                       )}>
                         {c.body}
                       </div>
@@ -993,7 +1044,12 @@ export default function TicketDetail() {
                   </div>
                 ))}
                 {activeTab === "comments" && comments.length === 0 && (
-                  <p className="text-sm text-[var(--fg-muted)] text-center py-8">No comments yet</p>
+                  <EmptyState
+                    icon="messageCircle"
+                    title="No comments yet"
+                    description="Start the conversation by adding the first comment above."
+                    compact
+                  />
                 )}
               </div>
             )}
@@ -1030,10 +1086,10 @@ export default function TicketDetail() {
                         placeholder="Filter history..."
                         className={cn(
                           "w-full pl-9 pr-3 py-2 rounded-lg text-sm",
-                          "bg-[var(--bg-elevated)] text-[var(--fg-primary)]",
+                          "bg-[var(--bg-base)] text-[var(--fg-primary)]",
                           "border border-[var(--border-default)]",
                           "placeholder:text-[var(--fg-muted)]",
-                          "focus:outline-none focus:border-[var(--accent)]"
+                          "focus:outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/20"
                         )}
                       />
                     </div>
@@ -1044,7 +1100,7 @@ export default function TicketDetail() {
                     <div key={dateLabel} className="mb-6">
                       {/* Date Header */}
                       <div className="flex items-center gap-3 mb-3">
-                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)]">
+                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)]">
                           <Icon name="calendar" size={12} className="text-[var(--fg-muted)]" />
                           <span className="text-xs font-semibold text-[var(--fg-secondary)]">{dateLabel}</span>
                         </div>
@@ -1066,7 +1122,7 @@ export default function TicketDetail() {
                               )} />
 
                               {/* Event Card */}
-                              <div className="rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)] p-3 hover:border-[var(--border-hover)] transition-colors">
+                              <div className="rounded-xl bg-[var(--bg-base)] border border-[var(--border-default)] p-3 hover:border-[var(--border-hover)] transition-colors">
                                 {/* Header */}
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <span className="text-xs text-[var(--fg-muted)] font-mono w-16 flex-shrink-0">{time}</span>
@@ -1126,9 +1182,12 @@ export default function TicketDetail() {
                   ))}
 
                   {filteredTrail.length === 0 && (
-                    <p className="text-sm text-[var(--fg-muted)] text-center py-8">
-                      {historyFilter ? "No matching history entries" : "No history recorded"}
-                    </p>
+                    <EmptyState
+                      icon="activity"
+                      title={historyFilter ? "No matching history" : "No history recorded"}
+                      description={historyFilter ? "Try a different search term." : "Ticket events will appear here as they happen."}
+                      compact
+                    />
                   )}
                 </div>
               );
@@ -1138,14 +1197,16 @@ export default function TicketDetail() {
             {activeTab === "sla" && (
               <div className="space-y-5">
                 {!slaData ? (
-                  <div className="text-center py-12">
-                    <Icon name="sla" size={32} className="text-[var(--fg-muted)] mx-auto mb-3" />
-                    <p className="text-sm text-[var(--fg-muted)]">No SLA policy assigned to this ticket</p>
-                  </div>
+                  <EmptyState
+                    icon="sla"
+                    title="No SLA policy assigned"
+                    description="This ticket isn't covered by an SLA policy."
+                    compact
+                  />
                 ) : (
                   <>
                     {/* SLA Policy Header */}
-                    <div className="rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)] p-4">
+                    <div className="rounded-xl bg-[var(--bg-base)] border border-[var(--border-default)] p-4">
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-lg bg-[var(--accent)]/10 border border-[var(--accent)]/20 flex items-center justify-center flex-shrink-0">
                           <Icon name="sla" size={20} className="text-[var(--accent)]" />
@@ -1171,10 +1232,10 @@ export default function TicketDetail() {
                         const remaining = getSlaRemaining(slaData.response_due_at, slaData.response_remaining_ms);
                         return (
                           <div className={cn(
-                            "rounded-lg border p-4",
+                            "rounded-xl border p-4",
                             breached ? "border-rose-500/30 bg-rose-500/5"
                               : met ? "border-emerald-500/30 bg-emerald-500/5"
-                              : "border-[var(--border-default)] bg-[var(--bg-elevated)]"
+                              : "border-[var(--border-default)] bg-[var(--bg-base)]"
                           )}>
                             <div className="flex items-center justify-between mb-4">
                               <span className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">Response SLA</span>
@@ -1219,10 +1280,10 @@ export default function TicketDetail() {
                         const remaining = getSlaRemaining(slaData.resolve_due_at, slaData.resolve_remaining_ms);
                         return (
                           <div className={cn(
-                            "rounded-lg border p-4",
+                            "rounded-xl border p-4",
                             breached ? "border-rose-500/30 bg-rose-500/5"
                               : met ? "border-emerald-500/30 bg-emerald-500/5"
-                              : "border-[var(--border-default)] bg-[var(--bg-elevated)]"
+                              : "border-[var(--border-default)] bg-[var(--bg-base)]"
                           )}>
                             <div className="flex items-center justify-between mb-4">
                               <span className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">Resolution SLA</span>
@@ -1262,7 +1323,7 @@ export default function TicketDetail() {
                     </div>
 
                     {/* SLA Timeline */}
-                    <div className="rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)] overflow-hidden">
+                    <div className="rounded-xl bg-[var(--bg-base)] border border-[var(--border-default)] overflow-hidden">
                       <div className="px-4 py-3 border-b border-[var(--border-default)]">
                         <h3 className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">SLA Timeline</h3>
                       </div>
@@ -1312,10 +1373,12 @@ export default function TicketDetail() {
             {activeTab === "approvals" && (
               <div className="space-y-5">
                 {!approvalData || approvalData.length === 0 ? (
-                  <div className="text-center py-12">
-                    <Icon name="checkCircle" size={32} className="text-[var(--fg-muted)] mx-auto mb-3" />
-                    <p className="text-sm text-[var(--fg-muted)]">No approval data available</p>
-                  </div>
+                  <EmptyState
+                    icon="shield"
+                    title="No approval data"
+                    description="This ticket has no approval workflow records."
+                    compact
+                  />
                 ) : (() => {
                   const sorted = [...approvalData].sort((a, b) => a.approval_level - b.approval_level);
                   const levels = {};
@@ -1331,7 +1394,7 @@ export default function TicketDetail() {
                     <>
                       {/* Overall Status Banner */}
                       <div className={cn(
-                        "rounded-lg border p-4 flex items-center gap-3",
+                        "rounded-xl border p-4 flex items-center gap-3",
                         allApproved ? "border-emerald-500/30 bg-emerald-500/5"
                           : anyRejected ? "border-rose-500/30 bg-rose-500/5"
                           : "border-amber-500/30 bg-amber-500/5"
@@ -1363,7 +1426,7 @@ export default function TicketDetail() {
                           const levelRejected = approvers.some(a => a.status === "rejected");
                           const levelPending = approvers.some(a => a.status === "pending");
                           return (
-                            <div key={level} className="rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] overflow-hidden">
+                            <div key={level} className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-base)] overflow-hidden">
                               <div className="px-4 py-3 border-b border-[var(--border-default)] flex items-center justify-between">
                                 <div className="flex items-center gap-2">
                                   <div className={cn(
@@ -1452,17 +1515,20 @@ export default function TicketDetail() {
                 })()}
               </div>
             )}
+            </div>
           </div>
         </div>
 
-        {/* Right: Sidebar */}
-        <div className="w-full xl:w-[300px] flex-shrink-0">
-          <div className="xl:sticky xl:top-6 space-y-3">
+        {/* Right: Properties Sidebar */}
+        <div className="min-w-0">
+          <div className="lg:sticky lg:top-6 space-y-4">
             {/* Details Panel */}
-            <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-sm)] overflow-hidden">
-              <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--border-default)]">
-                <Icon name="info" size={13} className="text-[var(--fg-muted)]" />
-                <h3 className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">Details</h3>
+            <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-card)] overflow-hidden animate-fade-up" style={{ animationDelay: "150ms" }}>
+              <div className="flex items-center gap-2.5 px-5 py-4 border-b border-[var(--border-default)]">
+                <span className="h-8 w-8 rounded-lg bg-[var(--accent)]/10 text-[var(--accent)] flex items-center justify-center">
+                  <Icon name="info" size={16} />
+                </span>
+                <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">Details</h2>
               </div>
               <div className="py-1.5">
 
@@ -1547,15 +1613,17 @@ export default function TicketDetail() {
 
             {/* SLA Panel */}
             {slaData && (
-              <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-sm)] overflow-hidden">
-                <div className="px-4 py-2.5 border-b border-[var(--border-default)] flex items-center justify-between gap-2">
-                  <span className="flex items-center gap-2 min-w-0">
-                    <Icon name="sla" size={13} className="text-[var(--fg-muted)] shrink-0" />
-                    <h3 className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">SLA</h3>
+              <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-card)] overflow-hidden animate-fade-up" style={{ animationDelay: "180ms" }}>
+                <div className="px-5 py-4 border-b border-[var(--border-default)] flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-2.5 min-w-0">
+                    <span className="h-8 w-8 rounded-lg bg-amber-500/10 text-amber-500 flex items-center justify-center shrink-0">
+                      <Icon name="sla" size={16} />
+                    </span>
+                    <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">SLA</h2>
                   </span>
                   <span className="text-[11px] text-[var(--fg-muted)] truncate">{slaData.policy_name}</span>
                 </div>
-                <div className="p-3 space-y-2">
+                <div className="p-4 space-y-2.5">
                   {(() => {
                     const r = getSlaRemaining(slaData.response_due_at, slaData.response_remaining_ms);
                     const met = !!slaData.response_met_at;
@@ -1598,11 +1666,13 @@ export default function TicketDetail() {
 
             {/* Teams Panel */}
             {isAgent && (
-              <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-sm)] overflow-hidden">
-                <div className={`px-4 py-2.5 flex items-center justify-between${ticketTeams.length > 0 ? " border-b border-[var(--border-default)]" : ""}`}>
-                  <span className="flex items-center gap-2">
-                    <Icon name="teams" size={13} className="text-[var(--fg-muted)]" />
-                    <h3 className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">Teams</h3>
+              <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-card)] overflow-hidden animate-fade-up" style={{ animationDelay: "210ms" }}>
+                <div className={`px-5 py-4 flex items-center justify-between${ticketTeams.length > 0 ? " border-b border-[var(--border-default)]" : ""}`}>
+                  <span className="flex items-center gap-2.5">
+                    <span className="h-8 w-8 rounded-lg bg-indigo-500/10 text-indigo-500 flex items-center justify-center">
+                      <Icon name="teams" size={16} />
+                    </span>
+                    <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">Teams</h2>
                   </span>
                   <button
                     onClick={() => setShowAddTeamModal(true)}
@@ -1696,11 +1766,13 @@ export default function TicketDetail() {
 
             {/* Customer Forms Panel */}
             {isAgent && (
-              <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-sm)] overflow-hidden">
-                <div className={`px-4 py-2.5 flex items-center justify-between${ticketForms.length > 0 ? " border-b border-[var(--border-default)]" : ""}`}>
-                  <span className="flex items-center gap-2">
-                    <Icon name="send" size={13} className="text-[var(--fg-muted)]" />
-                    <h3 className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">Customer Forms</h3>
+              <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-card)] overflow-hidden animate-fade-up" style={{ animationDelay: "240ms" }}>
+                <div className={`px-5 py-4 flex items-center justify-between${ticketForms.length > 0 ? " border-b border-[var(--border-default)]" : ""}`}>
+                  <span className="flex items-center gap-2.5">
+                    <span className="h-8 w-8 rounded-lg bg-cyan-500/10 text-cyan-500 flex items-center justify-center">
+                      <Icon name="send" size={16} />
+                    </span>
+                    <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">Customer Forms</h2>
                   </span>
                   <button
                     onClick={handleOpenSendForm}
@@ -1754,25 +1826,31 @@ export default function TicketDetail() {
 
             {/* Approval Panel */}
             {ticket.approval_status && ticket.approval_status !== "not_required" && (
-              <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-sm)] overflow-hidden">
-                <div className="px-4 py-2.5 border-b border-[var(--border-default)] flex items-center justify-between">
-                  <h3 className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">Approval</h3>
+              <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-card)] overflow-hidden animate-fade-up" style={{ animationDelay: "270ms" }}>
+                <div className="px-5 py-4 border-b border-[var(--border-default)] flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-2.5">
+                    <span className="h-8 w-8 rounded-lg bg-violet-500/10 text-violet-500 flex items-center justify-center">
+                      <Icon name="shield" size={16} />
+                    </span>
+                    <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">Approval</h2>
+                  </span>
                   <Badge
                     tone={ticket.approval_status === "approved" ? "emerald" : ticket.approval_status === "rejected" ? "rose" : "amber"}
-                    className="text-xs capitalize"
+                    size="sm"
+                    className="capitalize"
                   >
                     {ticket.approval_status}
                   </Badge>
                 </div>
                 {approvalData && approvalData.length > 0 && (
-                  <div className="p-3 space-y-2">
+                  <div className="p-4 space-y-2">
                     {[...approvalData].sort((a, b) => a.approval_level - b.approval_level).map((approval, idx, arr) => {
                       const prevApproved = arr.slice(0, idx).every(a => a.status === "approved" || a.status === "auto_approved");
                       const isActive = approval.status === "pending" && prevApproved;
                       return (
                         <div key={approval.id} className={cn(
-                          "flex items-center justify-between text-xs rounded px-2 py-1.5",
-                          isActive && "bg-amber-500/10 border border-amber-500/20"
+                          "flex items-center justify-between text-xs rounded-lg px-2.5 py-2",
+                          isActive ? "bg-amber-500/10 border border-amber-500/20" : "bg-[var(--bg-base)] border border-[var(--border-default)]"
                         )}>
                           <div className="flex items-center gap-2">
                             <span className={cn(
@@ -1799,10 +1877,12 @@ export default function TicketDetail() {
             )}
             {/* CSAT Rating Panel - shown for solved/closed tickets */}
             {(ticket.status_key === "solved" || ticket.status_key === "closed") && (
-              <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-sm)] overflow-hidden">
-                <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--border-default)]">
-                  <Icon name="star" size={13} className="text-[var(--fg-muted)]" />
-                  <h3 className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">Satisfaction Rating</h3>
+              <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-card)] overflow-hidden animate-fade-up" style={{ animationDelay: "300ms" }}>
+                <div className="flex items-center gap-2.5 px-5 py-4 border-b border-[var(--border-default)]">
+                  <span className="h-8 w-8 rounded-lg bg-amber-500/10 text-amber-500 flex items-center justify-center">
+                    <Icon name="star" size={16} />
+                  </span>
+                  <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">Satisfaction Rating</h2>
                 </div>
                 <div className="p-4 space-y-3">
                   {csatExisting && !isAgent ? (
@@ -2610,12 +2690,12 @@ function ToolbarAction({ icon, label, onClick, loading, tone }) {
       onClick={onClick}
       disabled={loading}
       className={cn(
-        "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[13px] font-medium",
-        "transition-colors duration-150 whitespace-nowrap",
+        "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium",
+        "transition-all duration-150 whitespace-nowrap",
         "disabled:opacity-60",
         tone === "success"
-          ? "text-emerald-400 hover:bg-emerald-500/10"
-          : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)]"
+          ? "text-emerald-500 hover:bg-emerald-500/10"
+          : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-elevated)] hover:shadow-[var(--shadow-sm)]"
       )}
     >
       {loading ? (

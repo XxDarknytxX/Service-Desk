@@ -1,7 +1,13 @@
 /**
- * Organizational Hierarchy Page
- * Linear/Modern Design System
- * Visual Org Chart and Manager Assignment
+ * Organizational Hierarchy Page — Vodafone Service Desk
+ *
+ * Premium org experience: branded header, tinted KPI cards, a segmented
+ * Org-Chart / List switcher, a clean search + team toolbar, an elevated chart
+ * canvas with a subtle grid backdrop, and refined people cards.
+ *
+ * Visual / layout redesign only — every piece of state, effect, handler, API
+ * call, the hierarchy lookups, tree-building data flow, and the edit modal are
+ * preserved exactly.
  */
 
 import { useEffect, useState } from "react";
@@ -11,7 +17,9 @@ import Icon from "../components/ui/Icon";
 import Modal from "../components/ui/Modal";
 import Input, { Select, SearchableSelect } from "../components/ui/Input";
 import Badge from "../components/ui/Badge";
-import Card from "../components/ui/Card";
+import PageHeader from "../components/ui/PageHeader";
+import EmptyState from "../components/ui/EmptyState";
+import Skeleton, { SkeletonKpis } from "../components/ui/Skeleton";
 import useConfirm from "../components/ui/useConfirm";
 import { useAuth } from "../contexts/auth";
 import OrgChart from "../components/OrgChart";
@@ -19,6 +27,15 @@ import { useToast } from "../contexts/toast";
 
 function cn(...parts) {
   return parts.filter(Boolean).join(" ");
+}
+
+function initials(name) {
+  return (name || "?")
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
 }
 
 export default function Hierarchy() {
@@ -218,98 +235,139 @@ export default function Hierarchy() {
     return matchesSearch && matchesTeam;
   });
 
+  // ── Derived metrics for KPI cards ──────────────────────────────
+  const inHierarchyCount = new Set(hierarchy.map(h => h.user_id)).size;
+  const maxLevels = Math.max(0, ...hierarchy.map(h => h.level));
+  const unassignedCount = users.filter(
+    (u) => u.is_active !== false && !getManager(u.id)
+  ).length;
+
+  const kpis = [
+    {
+      label: "Total Users",
+      value: users.length,
+      icon: "users",
+      iconCls: "bg-blue-500/10 text-blue-500 border-blue-500/15",
+      hint: "People in the directory",
+    },
+    {
+      label: "In Hierarchy",
+      value: inHierarchyCount,
+      icon: "sitemap",
+      iconCls: "bg-emerald-500/10 text-emerald-500 border-emerald-500/15",
+      hint: "Users with a reporting line",
+    },
+    {
+      label: "Unassigned",
+      value: unassignedCount,
+      icon: "userPlus",
+      iconCls: "bg-amber-500/10 text-amber-500 border-amber-500/15",
+      hint: "Active users without a manager",
+    },
+    {
+      label: "Max Levels",
+      value: maxLevels,
+      icon: "layers",
+      iconCls: "bg-violet-500/10 text-violet-500 border-violet-500/15",
+      hint: "Depth of the reporting chain",
+    },
+  ];
+
+  const VIEWS = [
+    { key: "tree", label: "Org Chart", icon: "sitemap" },
+    { key: "list", label: "List View", icon: "list" },
+  ];
+
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-5">
       {/* Header */}
-      <div className="rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] px-6 py-5">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-semibold text-[var(--fg-primary)] tracking-tight">
-            Organizational Hierarchy
-          </h1>
-          <p className="text-[var(--fg-secondary)] mt-1 text-sm">Click Edit (✏) on any person to assign their reporting manager</p>
+      <PageHeader
+        icon="sitemap"
+        title="Organizational Hierarchy"
+        subtitle="Visualize reporting lines and assign each person's manager and team."
+        actions={
+          <button
+            onClick={() => loadData()}
+            title="Refresh"
+            className={cn(
+              "h-10 w-10 inline-flex items-center justify-center rounded-lg transition-all duration-150",
+              "bg-[var(--bg-elevated)] border border-[var(--border-default)]",
+              "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)] hover:border-[var(--border-hover)]"
+            )}
+          >
+            <Icon name="refresh" size={16} className={cn(loading && "animate-spin")} />
+          </button>
+        }
+      />
+
+      {/* KPI cards */}
+      {loading ? (
+        <SkeletonKpis count={4} />
+      ) : (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {kpis.map((kpi, i) => (
+            <div
+              key={kpi.label}
+              title={kpi.hint}
+              className={cn(
+                "group relative overflow-hidden rounded-2xl p-5",
+                "bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]",
+                "transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--border-hover)] hover:shadow-[var(--shadow-card-hover)]",
+                "animate-kpi-rise"
+              )}
+              style={{ animationDelay: `${i * 70}ms` }}
+            >
+              <div className="flex items-start justify-between mb-4">
+                <span className="text-label">{kpi.label}</span>
+                <span
+                  className={cn(
+                    "h-9 w-9 rounded-xl flex items-center justify-center border transition-transform duration-200 group-hover:scale-110",
+                    kpi.iconCls
+                  )}
+                >
+                  <Icon name={kpi.icon} size={16} />
+                </span>
+              </div>
+              <p className="text-[32px] leading-none font-semibold tracking-tight text-[var(--fg-primary)] tabular-nums">
+                {kpi.value}
+              </p>
+              <p className="mt-3 text-[11px] text-[var(--fg-muted)]">{kpi.hint}</p>
+            </div>
+          ))}
         </div>
-      </div>
+      )}
 
-      {/* Stats */}
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card tint="blue" hover>
-          <div className="flex items-center gap-4">
-            <div className="h-12 w-12 rounded-xl bg-blue-500/10 text-blue-400 flex items-center justify-center flex-shrink-0">
-              <Icon name="users" size={24} />
-            </div>
-            <div>
-              <p className="text-sm text-[var(--fg-secondary)]">Total Users</p>
-              <p className="text-2xl font-semibold text-[var(--fg-primary)]">{users.length}</p>
-            </div>
-          </div>
-        </Card>
-
-        <Card tint="emerald" hover>
-          <div className="flex items-center gap-4">
-            <div className="h-12 w-12 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center flex-shrink-0">
-              <Icon name="user" size={24} />
-            </div>
-            <div>
-              <p className="text-sm text-[var(--fg-secondary)]">In Hierarchy</p>
-              <p className="text-2xl font-semibold text-[var(--fg-primary)]">
-                {new Set(hierarchy.map(h => h.user_id)).size}
-              </p>
-            </div>
-          </div>
-        </Card>
-
-        <Card tint="violet" hover>
-          <div className="flex items-center gap-4">
-            <div className="h-12 w-12 rounded-xl bg-violet-500/10 text-violet-400 flex items-center justify-center flex-shrink-0">
-              <Icon name="sitemap" size={24} />
-            </div>
-            <div>
-              <p className="text-sm text-[var(--fg-secondary)]">Max Levels</p>
-              <p className="text-2xl font-semibold text-[var(--fg-primary)]">
-                {Math.max(0, ...hierarchy.map(h => h.level))}
-              </p>
-            </div>
-          </div>
-        </Card>
-      </div>
-
-      {/* View Toggle & Search */}
-      <div className="flex flex-wrap items-center gap-4">
-        {/* View Mode Toggle */}
-        <div className="flex items-center gap-2 p-1 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)]">
-          <button
-            onClick={() => setViewMode("tree")}
-            className={cn(
-              "px-4 py-2 rounded-md text-sm font-medium transition-all",
-              viewMode === "tree"
-                ? "bg-[var(--accent)] text-white"
-                : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
-            )}
-          >
-            <div className="flex items-center gap-2">
-              <Icon name="sitemap" size={16} />
-              <span>Org Chart</span>
-            </div>
-          </button>
-          <button
-            onClick={() => setViewMode("list")}
-            className={cn(
-              "px-4 py-2 rounded-md text-sm font-medium transition-all",
-              viewMode === "list"
-                ? "bg-[var(--accent)] text-white"
-                : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
-            )}
-          >
-            <div className="flex items-center gap-2">
-              <Icon name="list" size={16} />
-              <span>List View</span>
-            </div>
-          </button>
+      {/* View switcher & toolbar */}
+      <div className="flex flex-wrap items-center gap-3">
+        {/* Segmented view switcher */}
+        <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-default)]">
+          {VIEWS.map((v) => {
+            const active = viewMode === v.key;
+            return (
+              <button
+                key={v.key}
+                onClick={() => setViewMode(v.key)}
+                className={cn(
+                  "inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all duration-200",
+                  active
+                    ? "bg-[var(--bg-elevated)] text-[var(--fg-primary)] shadow-[var(--shadow-sm)]"
+                    : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
+                )}
+              >
+                <Icon
+                  name={v.icon}
+                  size={15}
+                  className={active ? "text-[var(--accent)]" : "text-[var(--fg-muted)]"}
+                />
+                {v.label}
+              </button>
+            );
+          })}
         </div>
 
         {viewMode === "list" && (
           <>
-            <div className="flex-1 max-w-sm">
+            <div className="flex-1 min-w-[200px] max-w-sm">
               <Input
                 icon="search"
                 placeholder="Search users..."
@@ -330,59 +388,88 @@ export default function Hierarchy() {
                 ))}
               </Select>
             </div>
-            <Badge tone="slate">{filtered.length} users</Badge>
+            <Badge tone="slate" className="ml-auto">
+              {filtered.length} {filtered.length === 1 ? "user" : "users"}
+            </Badge>
           </>
         )}
       </div>
 
+      {/* Content */}
       {loading ? (
-        <div className={cn(
-          "flex items-center justify-center py-20 rounded-xl",
-          "bg-[var(--bg-elevated)]",
-          "border border-[var(--border-default)]",
-          "shadow-[var(--shadow-card)]"
-        )}>
-          <div className="text-center">
-            <div className={cn(
-              "w-16 h-16 rounded-xl flex items-center justify-center mx-auto mb-4",
-              "bg-[var(--bg-base)] border border-[var(--border-default)]"
-            )}>
-              <div className="animate-spin rounded-full h-8 w-8 border-4 border-[var(--border-default)] border-t-[var(--accent)]" />
+        viewMode === "tree" ? (
+          <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] p-6">
+            <div className="flex items-center gap-2.5 mb-8">
+              <Skeleton className="h-9 w-28" rounded="rounded-lg" />
+              <Skeleton className="h-9 w-28" rounded="rounded-lg" />
             </div>
-            <p className="text-sm font-medium text-[var(--fg-secondary)]">Loading hierarchy...</p>
+            <div className="flex justify-center gap-16">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} className="h-28 w-56" rounded="rounded-2xl" />
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <Skeleton key={i} className="h-52" rounded="rounded-2xl" />
+            ))}
+          </div>
+        )
+      ) : viewMode === "tree" ? (
+        <div
+          className={cn(
+            "relative overflow-hidden rounded-2xl animate-fade-up",
+            "bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]"
+          )}
+        >
+          {/* Subtle grid backdrop + brand glow for the canvas */}
+          <div className="pointer-events-none absolute inset-0 bg-grid opacity-60" />
+          <div className="pointer-events-none absolute -top-24 -right-16 h-64 w-64 rounded-full bg-[var(--accent)] opacity-[0.05] blur-3xl" />
+          <div className="relative p-5 sm:p-6">
+            <OrgChart users={users} hierarchy={hierarchy} onEditUser={openEditModal} />
           </div>
         </div>
-      ) : viewMode === "tree" ? (
-        <div className={cn(
-          "rounded-xl p-6",
-          "bg-[var(--bg-elevated)]",
-          "border border-[var(--border-default)]",
-          "shadow-[var(--shadow-card)]"
-        )}>
-          <OrgChart users={users} hierarchy={hierarchy} onEditUser={openEditModal} />
+      ) : filtered.length === 0 ? (
+        <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]">
+          <EmptyState
+            icon="users"
+            title="No people found"
+            description={
+              searchQuery || teamFilter
+                ? "Try adjusting your search or team filter."
+                : "Once users are added to the directory they will appear here."
+            }
+          />
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((u) => {
+          {filtered.map((u, i) => {
             const manager = getManager(u.id);
             const reports = getDirectReports(u.id);
             const userHierarchyChain = hierarchyMap[u.id] || [];
 
             return (
-              <Card key={u.id} tint="slate" hover className="group">
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex items-center gap-3">
-                    <div className={cn(
-                      "h-12 w-12 rounded-xl flex items-center justify-center",
-                      "bg-[var(--accent)]/10 text-[var(--accent)]"
-                    )}>
-                      <Icon name="user" size={24} />
+              <div
+                key={u.id}
+                className={cn(
+                  "group relative flex flex-col rounded-2xl p-5 animate-fade-up",
+                  "bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]",
+                  "transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--border-hover)] hover:shadow-[var(--shadow-card-hover)]"
+                )}
+                style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}
+              >
+                {/* Person header */}
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="h-11 w-11 shrink-0 rounded-xl flex items-center justify-center bg-[var(--accent)]/10 text-[var(--accent)] ring-1 ring-[var(--accent)]/15 font-semibold text-sm">
+                      {initials(u.full_name || u.email)}
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-base font-semibold text-[var(--fg-primary)] line-clamp-1">
+                    <div className="min-w-0">
+                      <h3 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight line-clamp-1">
                         {u.full_name || u.email}
                       </h3>
-                      <p className="text-sm text-[var(--fg-secondary)] line-clamp-1">
+                      <p className="text-sm text-[var(--fg-muted)] line-clamp-1">
                         {u.title || "No title"}
                       </p>
                     </div>
@@ -390,12 +477,12 @@ export default function Hierarchy() {
                   {isAdmin && (
                     <button
                       onClick={() => openEditModal(u)}
-                      className={cn(
-                        "p-2 rounded-lg transition-all duration-200",
-                        "text-[var(--fg-muted)] hover:text-[var(--accent)]",
-                        "hover:bg-[var(--bg-base)]"
-                      )}
                       title="Edit user"
+                      className={cn(
+                        "shrink-0 p-2 rounded-lg transition-all duration-150",
+                        "text-[var(--fg-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-surface)]",
+                        "opacity-0 group-hover:opacity-100 focus:opacity-100"
+                      )}
                     >
                       <Icon name="pencil" size={14} />
                     </button>
@@ -404,46 +491,53 @@ export default function Hierarchy() {
 
                 {/* Team Badge */}
                 {u.team_name && (
-                  <div className="mb-3">
+                  <div className="mt-3.5">
                     <Badge tone="emerald" size="sm">
-                      <Icon name="teams" size={12} className="mr-1" />
+                      <Icon name="teams" size={11} className="shrink-0" />
                       {u.team_name}
                     </Badge>
                   </div>
                 )}
 
                 {/* Manager Info */}
-                {manager ? (
-                  <div className="space-y-2 mb-4">
-                    <div className="flex items-center gap-2 text-sm">
-                      <Icon name="arrow-up" size={14} className="text-[var(--fg-muted)]" />
-                      <span className="text-[var(--fg-secondary)]">Reports to:</span>
-                      <span className="text-[var(--fg-primary)] font-medium">
-                        {manager.full_name || manager.email}
-                      </span>
-                    </div>
-                    {userHierarchyChain.length > 1 && (
-                      <div className="flex items-center gap-2 text-xs text-[var(--fg-muted)]">
-                        <Icon name="sitemap" size={12} />
-                        <span>{userHierarchyChain.length} levels in hierarchy</span>
+                <div className="mt-3.5">
+                  {manager ? (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="h-6 w-6 shrink-0 rounded-md bg-[var(--bg-surface)] text-[var(--fg-muted)] flex items-center justify-center">
+                          <Icon name="arrow-up" size={13} />
+                        </span>
+                        <span className="text-[var(--fg-secondary)]">Reports to</span>
+                        <span className="text-[var(--fg-primary)] font-medium truncate">
+                          {manager.full_name || manager.email}
+                        </span>
                       </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="mb-4 flex items-center gap-2 text-sm text-[var(--fg-muted)]">
-                    <Icon name="alert" size={14} />
-                    <span>No manager assigned</span>
-                  </div>
-                )}
+                      {userHierarchyChain.length > 1 && (
+                        <div className="flex items-center gap-2 text-xs text-[var(--fg-muted)] pl-8">
+                          <Icon name="sitemap" size={12} />
+                          <span>{userHierarchyChain.length} levels in hierarchy</span>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 text-sm text-[var(--fg-muted)]">
+                      <span className="h-6 w-6 shrink-0 rounded-md bg-amber-500/10 text-amber-500 flex items-center justify-center">
+                        <Icon name="alert" size={13} />
+                      </span>
+                      <span>No manager assigned</span>
+                    </div>
+                  )}
+                </div>
 
                 {/* Direct Reports */}
                 {reports.length > 0 && (
-                  <div className="mb-4 pt-4 border-t border-[var(--border-default)]">
-                    <div className="flex items-center gap-2 text-sm text-[var(--fg-secondary)] mb-2">
-                      <Icon name="arrow-down" size={14} />
-                      <span>{reports.length} Direct Report{reports.length > 1 ? 's' : ''}</span>
+                  <div className="mt-4 pt-4 border-t border-[var(--border-default)]">
+                    <div className="flex items-center gap-2 text-sm text-[var(--fg-secondary)] mb-2.5">
+                      <Icon name="arrow-down" size={14} className="text-[var(--fg-muted)]" />
+                      <span className="font-medium text-[var(--fg-primary)]">{reports.length}</span>
+                      <span>Direct Report{reports.length > 1 ? "s" : ""}</span>
                     </div>
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-1.5">
                       {reports.slice(0, 3).map(r => (
                         <Badge key={r.id} tone="slate" size="sm">
                           {r.full_name || r.email}
@@ -456,22 +550,22 @@ export default function Hierarchy() {
                   </div>
                 )}
 
+                {/* Spacer pushes the destructive action to the card bottom */}
+                <div className="flex-1" />
+
                 {/* Actions */}
                 {isAdmin && manager && (
-                  <div className="pt-4 border-t border-[var(--border-default)]">
+                  <div className="mt-4 pt-4 border-t border-[var(--border-default)]">
                     <button
                       onClick={() => handleRemoveManager(u)}
-                      className={cn(
-                        "text-sm text-rose-400 hover:text-rose-300 transition-colors",
-                        "flex items-center gap-2"
-                      )}
+                      className="inline-flex items-center gap-2 text-sm font-medium text-rose-500 hover:text-rose-400 transition-colors"
                     >
                       <Icon name="trash" size={14} />
                       <span>Remove from hierarchy</span>
                     </button>
                   </div>
                 )}
-              </Card>
+              </div>
             );
           })}
         </div>
@@ -493,7 +587,7 @@ export default function Hierarchy() {
         }
       >
         <form onSubmit={handleSubmit} className="space-y-5">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input
               label="Full Name"
               placeholder="John Smith"
@@ -517,7 +611,7 @@ export default function Hierarchy() {
           />
 
           {/* Manager and Team Selection */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <SearchableSelect
               label="Manager"
               value={formData.manager_id}
@@ -580,11 +674,11 @@ export default function Hierarchy() {
           </div>
 
           <div className={cn(
-            "flex items-start gap-3 p-4 rounded-lg",
+            "flex items-start gap-3 p-4 rounded-xl",
             "bg-blue-500/10 border border-blue-500/20"
           )}>
-            <Icon name="info" size={16} className="text-blue-400 flex-shrink-0 mt-0.5" />
-            <p className="text-sm text-blue-400">
+            <Icon name="info" size={16} className="text-blue-500 flex-shrink-0 mt-0.5" />
+            <p className="text-sm text-blue-500/90">
               The system will automatically build the full reporting chain including all levels above the selected manager.
             </p>
           </div>

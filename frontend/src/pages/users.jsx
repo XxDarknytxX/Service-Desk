@@ -1,16 +1,25 @@
 /**
- * Users Page
- * Linear/Modern Design System
+ * Users Page — Vodafone Service Desk
+ *
+ * Premium directory experience: branded header, a clean search + role filter
+ * toolbar, and an elevated data table with avatar initials, role/status badges,
+ * hover rows and per-row quick actions. Skeleton loading, empty states, and
+ * polished create/edit, generated-password, and bulk-import modals.
+ *
+ * All state, effects, handlers, API calls, and features are preserved exactly —
+ * this is a visual / layout redesign only.
  */
 
 import { useEffect, useState } from "react";
 import { api } from "../services/api";
 import Button from "../components/ui/Button";
 import Icon from "../components/ui/Icon";
+import PageHeader from "../components/ui/PageHeader";
 import Modal from "../components/ui/Modal";
 import Input, { Select } from "../components/ui/Input";
 import Badge from "../components/ui/Badge";
-import Card from "../components/ui/Card";
+import EmptyState from "../components/ui/EmptyState";
+import { SkeletonTable } from "../components/ui/Skeleton";
 import useConfirm from "../components/ui/useConfirm";
 import { useAuth } from "../contexts/auth";
 import { useToast } from "../contexts/toast";
@@ -23,6 +32,13 @@ const roleBadgeColors = {
   admin: "brand",
   agent: "blue",
   requester: "slate",
+};
+
+// Avatar tint per role — static class strings (no dynamic Tailwind).
+const roleAvatarStyles = {
+  admin: "bg-[var(--accent)]/10 text-[var(--accent)]",
+  agent: "bg-blue-500/10 text-blue-500",
+  requester: "bg-slate-500/10 text-slate-400",
 };
 
 const API_URL = import.meta.env.VITE_API_URL || "/api";
@@ -327,187 +343,224 @@ export default function Users() {
     return matchesSearch && matchesRole;
   });
 
+  const hasFilters = !!searchQuery || !!roleFilter;
+
+  const ROLE_FILTERS = [
+    { value: "", label: "All", icon: "users" },
+    { value: "admin", label: "Admins", icon: "shield" },
+    { value: "agent", label: "Agents", icon: "userCheck" },
+    { value: "requester", label: "Requesters", icon: "user" },
+  ];
+
   return (
-    <div className="space-y-6 animate-fade-in">
-      {/* Header */}
-      <div className="rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] px-6 py-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-semibold text-[var(--fg-primary)] tracking-tight">
-              Users
-            </h1>
-            <p className="text-[var(--fg-secondary)] mt-1 text-sm">Manage team members and their roles</p>
-          </div>
-          {isAdmin && (
-            <div className="flex items-center gap-3">
-              <Button variant="secondary" onClick={() => { setShowImportModal(true); setImportFile(null); setImportResults(null); }} icon={<Icon name="upload" size={16} />}>
-                Import
-              </Button>
-              <Button onClick={openCreateModal} icon={<Icon name="plus" size={16} />}>
-                Add User
-              </Button>
-            </div>
-          )}
-        </div>
-      </div>
+    <>
+      <div className="space-y-5">
+        {/* Header */}
+        <PageHeader
+          icon="users"
+          title="Users"
+          subtitle={`${users.length} ${users.length === 1 ? "member" : "members"} in the directory`}
+          actions={
+            isAdmin && (
+              <>
+                <Button
+                  variant="secondary"
+                  onClick={() => { setShowImportModal(true); setImportFile(null); setImportResults(null); }}
+                  icon={<Icon name="upload" size={16} />}
+                >
+                  Import
+                </Button>
+                <Button onClick={openCreateModal} icon={<Icon name="plus" size={16} />}>
+                  Add User
+                </Button>
+              </>
+            )
+          }
+        />
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-4">
-        <div className="flex-1 max-w-sm">
-          <Input
-            icon="search"
-            placeholder="Search users..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-        </div>
-        <div className={cn(
-          "flex items-center gap-1 p-1 rounded-lg",
-          "bg-[var(--bg-elevated)]",
-          "border border-[var(--border-default)]"
-        )}>
-          {["", "admin", "agent", "requester"].map((role) => (
-            <button
-              key={role}
-              onClick={() => setRoleFilter(role)}
-              className={cn(
-                "px-4 py-2 text-xs font-medium rounded-md transition-all duration-200",
-                roleFilter === role
-                  ? "bg-[var(--accent)] text-white shadow-[0_0_12px_rgba(230,0,0,0.3)]"
-                  : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-base)]"
-              )}
-            >
-              {role || "All"}
-            </button>
-          ))}
-        </div>
-        <Badge tone="slate">{filteredUsers.length} users</Badge>
-      </div>
-
-      {/* Users Table */}
-      {loading ? (
-        <div className={cn(
-          "flex items-center justify-center py-20 rounded-xl",
-          "bg-[var(--bg-elevated)]",
-          "border border-[var(--border-default)]",
-          "shadow-[var(--shadow-card)]"
-        )}>
-          <div className="text-center">
-            <div className={cn(
-              "w-16 h-16 rounded-xl flex items-center justify-center mx-auto mb-4",
-              "bg-[var(--bg-base)] border border-[var(--border-default)]"
-            )}>
-              <div className="animate-spin rounded-full h-8 w-8 border-4 border-[var(--border-default)] border-t-[var(--accent)]" />
-            </div>
-            <p className="text-sm font-medium text-[var(--fg-secondary)]">Loading users...</p>
-          </div>
-        </div>
-      ) : filteredUsers.length === 0 ? (
-        <div className={cn(
-          "text-center py-20 rounded-xl",
-          "bg-[var(--bg-elevated)]",
-          "border border-[var(--border-default)]",
-          "shadow-[var(--shadow-card)]"
-        )}>
-          <div className={cn(
-            "flex items-center justify-center w-20 h-20 mx-auto mb-5 rounded-xl",
-            "bg-[var(--bg-base)] border border-[var(--border-default)]"
-          )}>
-            <Icon name="users" size={36} className="text-[var(--fg-muted)]" />
-          </div>
-          <h3 className="text-lg font-semibold text-[var(--fg-primary)] mb-2">
-            No users found
-          </h3>
-          <p className="text-sm text-[var(--fg-secondary)]">
-            {searchQuery || roleFilter ? "Try adjusting your filters" : "Get started by adding your first user"}
-          </p>
-        </div>
-      ) : (
-        <Card tint="indigo" padding={false} hover={false}>
-          <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="bg-[var(--bg-base)] border-b border-[var(--border-default)]">
-                <th className="text-left px-6 py-4 text-[11px] font-medium text-[var(--fg-muted)] uppercase tracking-wider">User</th>
-                <th className="text-left px-6 py-4 text-[11px] font-medium text-[var(--fg-muted)] uppercase tracking-wider">Title</th>
-                <th className="text-left px-6 py-4 text-[11px] font-medium text-[var(--fg-muted)] uppercase tracking-wider">Roles</th>
-                <th className="text-left px-6 py-4 text-[11px] font-medium text-[var(--fg-muted)] uppercase tracking-wider">Status</th>
-                {isAdmin && (
-                  <th className="text-right px-6 py-4 text-[11px] font-medium text-[var(--fg-muted)] uppercase tracking-wider">Actions</th>
+        {/* Filter / search toolbar */}
+        <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="relative w-full lg:max-w-sm">
+              <Icon name="search" className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--fg-muted)] pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Search by name or email..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className={cn(
+                  "w-full pl-10 pr-4 py-2.5 rounded-lg text-sm",
+                  "bg-[var(--bg-base)]",
+                  "text-[var(--fg-primary)] placeholder:text-[var(--fg-muted)]",
+                  "border border-[var(--border-default)]",
+                  "focus:outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/20",
+                  "transition-all duration-200"
                 )}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--border-default)]">
-              {filteredUsers.map((u) => (
-                <tr key={u.id} className="hover:bg-[var(--bg-base)] transition-all duration-200 group">
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-4">
-                      <div className={cn(
-                        "h-10 w-10 rounded-lg flex items-center justify-center text-sm font-bold flex-shrink-0",
-                        "bg-[var(--accent)]/10 text-[var(--accent)]"
-                      )}>
-                        {(u.full_name || u.email || "?")[0].toUpperCase()}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-[var(--fg-primary)] truncate">
-                          {u.full_name || "Unnamed"}
-                        </p>
-                        <p className="text-xs text-[var(--fg-muted)] truncate">{u.email}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="text-sm text-[var(--fg-secondary)]">{u.title || "-"}</span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex gap-2 flex-wrap">
-                      {(u.roles || []).map((role) => (
-                        <Badge key={role} tone={roleBadgeColors[role] || "slate"}>
-                          {role}
-                        </Badge>
-                      ))}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <Badge tone={u.is_active ? "green" : "slate"}>
-                      {u.is_active ? "Active" : "Inactive"}
-                    </Badge>
-                  </td>
-                  {isAdmin && (
-                    <td className="px-6 py-4 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <button
-                          onClick={() => openEditModal(u)}
-                          className={cn(
-                            "inline-flex items-center justify-center p-2.5 rounded-lg transition-all duration-200",
-                            "text-[var(--fg-muted)] hover:text-[var(--accent)]",
-                            "hover:bg-[var(--bg-base)]"
-                          )}
-                          title="Edit user"
-                        >
-                          <Icon name="pencil" size={16} />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteUser(u.id, u.full_name || u.email)}
-                          className={cn(
-                            "inline-flex items-center justify-center p-2.5 rounded-lg transition-all duration-200",
-                            "text-[var(--fg-muted)] hover:text-rose-400",
-                            "hover:bg-rose-500/10"
-                          )}
-                          title="Delete user"
-                        >
-                          <Icon name="trash" size={16} />
-                        </button>
-                      </div>
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+              />
+            </div>
+
+            <div className="flex items-center gap-3 flex-wrap">
+              {/* Role segmented filter */}
+              <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-default)]">
+                {ROLE_FILTERS.map((r) => {
+                  const active = roleFilter === r.value;
+                  return (
+                    <button
+                      key={r.value || "all"}
+                      onClick={() => setRoleFilter(r.value)}
+                      className={cn(
+                        "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-all duration-200",
+                        active
+                          ? "bg-[var(--bg-elevated)] text-[var(--fg-primary)] shadow-[var(--shadow-sm)]"
+                          : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
+                      )}
+                    >
+                      <Icon
+                        name={r.icon}
+                        size={14}
+                        className={active ? "text-[var(--accent)]" : "text-[var(--fg-muted)]"}
+                      />
+                      {r.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <Badge tone="slate" size="md">
+                {filteredUsers.length} {filteredUsers.length === 1 ? "user" : "users"}
+              </Badge>
+            </div>
           </div>
-        </Card>
-      )}
+        </div>
+
+        {/* Users table / states */}
+        {loading ? (
+          <SkeletonTable rows={8} cols={5} />
+        ) : filteredUsers.length === 0 ? (
+          <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]">
+            <EmptyState
+              icon="users"
+              title="No users found"
+              description={
+                hasFilters
+                  ? "Try adjusting your search or role filter."
+                  : "Get started by adding your first user."
+              }
+              action={
+                isAdmin && !hasFilters ? (
+                  <Button onClick={openCreateModal} icon={<Icon name="plus" size={16} />}>
+                    Add User
+                  </Button>
+                ) : undefined
+              }
+            />
+          </div>
+        ) : (
+          <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] overflow-hidden animate-fade-up" style={{ animationDelay: "120ms" }}>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="bg-[var(--bg-surface)]/60 border-b border-[var(--border-default)]">
+                    <th className="px-4 py-3 text-left text-label">User</th>
+                    <th className="px-4 py-3 text-left text-label hidden md:table-cell">Title</th>
+                    <th className="px-4 py-3 text-left text-label hidden lg:table-cell">Phone</th>
+                    <th className="px-4 py-3 text-left text-label">Roles</th>
+                    <th className="px-4 py-3 text-left text-label">Status</th>
+                    {isAdmin && (
+                      <th className="px-4 py-3 text-right text-label">Actions</th>
+                    )}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border-default)]">
+                  {filteredUsers.map((u) => {
+                    const primaryRole = (u.roles || [])[0] || "requester";
+                    return (
+                      <tr
+                        key={u.id}
+                        onClick={isAdmin ? () => openEditModal(u) : undefined}
+                        className={cn(
+                          "transition-colors duration-150 group",
+                          isAdmin && "hover:bg-[var(--bg-surface)] cursor-pointer"
+                        )}
+                      >
+                        {/* User */}
+                        <td className="px-4 py-3.5">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <span
+                              className={cn(
+                                "h-9 w-9 rounded-full text-xs font-semibold flex items-center justify-center shrink-0",
+                                roleAvatarStyles[primaryRole] || roleAvatarStyles.requester
+                              )}
+                            >
+                              {(u.full_name || u.email || "?")[0].toUpperCase()}
+                            </span>
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-[var(--fg-primary)] truncate group-hover:text-[var(--accent)] transition-colors">
+                                {u.full_name || "Unnamed"}
+                              </p>
+                              <p className="text-xs text-[var(--fg-muted)] truncate">{u.email}</p>
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Title */}
+                        <td className="px-4 py-3.5 hidden md:table-cell whitespace-nowrap">
+                          <span className="text-sm text-[var(--fg-secondary)]">{u.title || "—"}</span>
+                        </td>
+
+                        {/* Phone */}
+                        <td className="px-4 py-3.5 hidden lg:table-cell whitespace-nowrap">
+                          <span className="text-sm text-[var(--fg-secondary)]">{u.phone || "—"}</span>
+                        </td>
+
+                        {/* Roles */}
+                        <td className="px-4 py-3.5">
+                          <div className="flex gap-1.5 flex-wrap">
+                            {(u.roles || []).map((role) => (
+                              <Badge key={role} tone={roleBadgeColors[role] || "slate"} size="sm">
+                                {role}
+                              </Badge>
+                            ))}
+                          </div>
+                        </td>
+
+                        {/* Status */}
+                        <td className="px-4 py-3.5 whitespace-nowrap">
+                          <Badge tone={u.is_active ? "emerald" : "slate"} size="sm" dot={!!u.is_active}>
+                            {u.is_active ? "Active" : "Inactive"}
+                          </Badge>
+                        </td>
+
+                        {/* Actions */}
+                        {isAdmin && (
+                          <td className="px-4 py-3.5 text-right" onClick={(e) => e.stopPropagation()}>
+                            <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                              <button
+                                onClick={() => openEditModal(u)}
+                                className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-surface-hover)] transition-colors"
+                                title="Edit user"
+                              >
+                                <Icon name="pencil" size={15} />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteUser(u.id, u.full_name || u.email)}
+                                className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
+                                title="Delete user"
+                              >
+                                <Icon name="trash" size={15} />
+                              </button>
+                            </div>
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Generated Password Modal */}
       {generatedPassword && (
@@ -518,30 +571,31 @@ export default function Users() {
           subtitle="Save this password - it won't be shown again"
           actions={
             <>
-              <Button variant="secondary" onClick={() => copyToClipboard(generatedPassword)}>
+              <Button variant="secondary" onClick={() => copyToClipboard(generatedPassword)} icon={<Icon name="copy" size={15} />}>
                 Copy Password
               </Button>
               <Button onClick={closePasswordModal}>Done</Button>
             </>
           }
         >
-          <div className={cn(
-            "p-6 rounded-lg",
-            "bg-[var(--bg-base)]",
-            "border border-[var(--border-default)]"
-          )}>
-            <p className="text-sm text-[var(--fg-secondary)] mb-3">
-              The user has been created with the following auto-generated password:
-            </p>
+          <div className="space-y-4">
+            <div className="flex items-start gap-3 rounded-xl border border-emerald-500/15 bg-emerald-500/10 px-4 py-3">
+              <span className="h-8 w-8 rounded-lg bg-emerald-500/15 text-emerald-500 flex items-center justify-center shrink-0">
+                <Icon name="checkCircle" size={16} />
+              </span>
+              <p className="text-sm text-[var(--fg-secondary)] leading-relaxed pt-0.5">
+                The user has been created with the following auto-generated password.
+              </p>
+            </div>
             <div className={cn(
-              "p-4 rounded-lg font-mono text-lg text-center",
-              "bg-[var(--bg-elevated)]",
-              "border-2 border-dashed border-[var(--accent)]",
+              "p-4 rounded-xl font-mono text-lg text-center tracking-wide",
+              "bg-[var(--bg-base)]",
+              "border-2 border-dashed border-[var(--accent)]/40",
               "text-[var(--accent)]"
             )}>
               {generatedPassword}
             </div>
-            <p className="text-xs text-[var(--fg-muted)] mt-3">
+            <p className="text-xs text-[var(--fg-muted)] leading-relaxed">
               Make sure to share this password securely with the user. They should change it after their first login.
             </p>
           </div>
@@ -558,7 +612,7 @@ export default function Users() {
           !importResults ? (
             <>
               <Button variant="secondary" onClick={() => setShowImportModal(false)}>Cancel</Button>
-              <Button onClick={handleImport} loading={importing} disabled={!importFile}>
+              <Button onClick={handleImport} loading={importing} disabled={!importFile} icon={<Icon name="upload" size={15} />}>
                 Import Users
               </Button>
             </>
@@ -570,24 +624,25 @@ export default function Users() {
         {!importResults ? (
           <div className="space-y-5">
             {/* Download template */}
-            <div className={cn(
-              "p-4 rounded-lg",
-              "bg-[var(--bg-base)]",
-              "border border-[var(--border-default)]"
-            )}>
-              <p className="text-sm text-[var(--fg-secondary)] mb-3">
-                Download the template, fill in user data, then upload it here.
-              </p>
+            <div className="flex items-center justify-between gap-4 rounded-xl border border-[var(--border-default)] bg-[var(--bg-base)] px-4 py-3.5">
+              <div className="flex items-start gap-3 min-w-0">
+                <span className="h-8 w-8 rounded-lg bg-blue-500/10 text-blue-500 flex items-center justify-center shrink-0">
+                  <Icon name="fileText" size={16} />
+                </span>
+                <p className="text-sm text-[var(--fg-secondary)] leading-relaxed">
+                  Download the template, fill in user data, then upload it here.
+                </p>
+              </div>
               <button
                 onClick={downloadTemplate}
                 className={cn(
-                  "inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium",
+                  "inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium shrink-0",
                   "text-[var(--accent)] border border-[var(--accent)]/30",
                   "hover:bg-[var(--accent)]/10 transition-colors"
                 )}
               >
-                <Icon name="download" size={16} />
-                Download Template
+                <Icon name="download" size={15} />
+                Template
               </button>
             </div>
 
@@ -597,13 +652,13 @@ export default function Users() {
                 Upload Excel File
               </label>
               <label className={cn(
-                "flex flex-col items-center justify-center p-8 rounded-lg cursor-pointer transition-all",
+                "flex flex-col items-center justify-center p-8 rounded-xl cursor-pointer transition-all",
                 "border-2 border-dashed",
                 importFile
                   ? "border-[var(--accent)] bg-[var(--accent)]/5"
                   : "border-[var(--border-default)] hover:border-[var(--border-hover)] bg-[var(--bg-base)]"
               )}>
-                <Icon name={importFile ? "check-circle" : "upload"} size={32} className={importFile ? "text-[var(--accent)]" : "text-[var(--fg-muted)]"} />
+                <Icon name={importFile ? "checkCircle" : "upload"} size={32} className={importFile ? "text-[var(--accent)]" : "text-[var(--fg-muted)]"} />
                 <p className="mt-2 text-sm font-medium text-[var(--fg-primary)]">
                   {importFile ? importFile.name : "Click to select file"}
                 </p>
@@ -620,9 +675,9 @@ export default function Users() {
             </div>
 
             {/* Instructions */}
-            <div className="text-xs text-[var(--fg-muted)] space-y-1">
-              <p>Columns: <strong>Full Name</strong> (required), <strong>Email</strong> (required), <strong>Title</strong>, <strong>Roles</strong></p>
-              <p>Roles can be comma-separated: <code className="px-1 py-0.5 rounded bg-[var(--bg-base)]">admin, agent</code></p>
+            <div className="text-xs text-[var(--fg-muted)] space-y-1.5 leading-relaxed">
+              <p>Columns: <strong className="text-[var(--fg-secondary)]">Full Name</strong> (required), <strong className="text-[var(--fg-secondary)]">Email</strong> (required), <strong className="text-[var(--fg-secondary)]">Title</strong>, <strong className="text-[var(--fg-secondary)]">Roles</strong></p>
+              <p>Roles can be comma-separated: <code className="px-1.5 py-0.5 rounded bg-[var(--bg-surface)] text-[var(--fg-secondary)]">admin, agent</code></p>
               <p>Passwords are auto-generated and shown in the results.</p>
             </div>
           </div>
@@ -631,41 +686,38 @@ export default function Users() {
             {/* Summary */}
             <div className="grid grid-cols-3 gap-3">
               {[
-                { label: "Created", value: importResults.summary.created, color: "text-emerald-400" },
-                { label: "Skipped", value: importResults.summary.skipped, color: "text-amber-400" },
-                { label: "Failed", value: importResults.summary.failed, color: "text-rose-400" },
+                { label: "Created", value: importResults.summary.created, valueCls: "text-emerald-500", iconCls: "bg-emerald-500/10 text-emerald-500", icon: "checkCircle" },
+                { label: "Skipped", value: importResults.summary.skipped, valueCls: "text-amber-500", iconCls: "bg-amber-500/10 text-amber-500", icon: "alertCircle" },
+                { label: "Failed", value: importResults.summary.failed, valueCls: "text-rose-500", iconCls: "bg-rose-500/10 text-rose-500", icon: "xCircle" },
               ].map((s) => (
-                <div key={s.label} className={cn(
-                  "text-center p-3 rounded-lg",
-                  "bg-[var(--bg-base)] border border-[var(--border-default)]"
-                )}>
-                  <p className={cn("text-2xl font-bold", s.color)}>{s.value}</p>
-                  <p className="text-xs text-[var(--fg-muted)]">{s.label}</p>
+                <div key={s.label} className="rounded-xl bg-[var(--bg-base)] border border-[var(--border-default)] p-3.5 text-center">
+                  <span className={cn("inline-flex h-8 w-8 rounded-lg items-center justify-center mb-2", s.iconCls)}>
+                    <Icon name={s.icon} size={16} />
+                  </span>
+                  <p className={cn("text-2xl font-semibold tabular-nums", s.valueCls)}>{s.value}</p>
+                  <p className="text-[11px] text-[var(--fg-muted)] uppercase tracking-wide mt-0.5">{s.label}</p>
                 </div>
               ))}
             </div>
 
             {/* Results table */}
-            <div className={cn(
-              "rounded-lg overflow-hidden border border-[var(--border-default)]",
-              "max-h-72 overflow-y-auto"
-            )}>
+            <div className="rounded-xl overflow-hidden border border-[var(--border-default)] max-h-72 overflow-y-auto">
               <table className="w-full text-sm">
-                <thead className="bg-[var(--bg-base)] sticky top-0">
+                <thead className="bg-[var(--bg-surface)]/80 sticky top-0 backdrop-blur-sm">
                   <tr>
-                    <th className="text-left px-3 py-2 text-[11px] font-medium text-[var(--fg-muted)] uppercase">Row</th>
-                    <th className="text-left px-3 py-2 text-[11px] font-medium text-[var(--fg-muted)] uppercase">Email</th>
-                    <th className="text-left px-3 py-2 text-[11px] font-medium text-[var(--fg-muted)] uppercase">Status</th>
-                    <th className="text-left px-3 py-2 text-[11px] font-medium text-[var(--fg-muted)] uppercase">Password</th>
+                    <th className="text-left px-3 py-2.5 text-label">Row</th>
+                    <th className="text-left px-3 py-2.5 text-label">Email</th>
+                    <th className="text-left px-3 py-2.5 text-label">Status</th>
+                    <th className="text-left px-3 py-2.5 text-label">Password</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--border-default)]">
                   {importResults.results.map((r) => (
-                    <tr key={r.row || r.email} className="hover:bg-[var(--bg-base)]">
-                      <td className="px-3 py-2 text-[var(--fg-secondary)]">{r.row}</td>
+                    <tr key={r.row || r.email} className="hover:bg-[var(--bg-surface)] transition-colors">
+                      <td className="px-3 py-2 text-[var(--fg-secondary)] tabular-nums">{r.row}</td>
                       <td className="px-3 py-2 text-[var(--fg-primary)]">{r.email}</td>
                       <td className="px-3 py-2">
-                        <Badge tone={r.status === "created" ? "green" : r.status === "skipped" ? "amber" : "red"}>
+                        <Badge tone={r.status === "created" ? "emerald" : r.status === "skipped" ? "amber" : "red"} size="sm">
                           {r.status}
                         </Badge>
                       </td>
@@ -706,63 +758,66 @@ export default function Users() {
           </>
         }
       >
-        <form onSubmit={handleSubmit} className="space-y-5">
-          <div className="grid grid-cols-2 gap-4">
-            <Input
-              label="Full Name"
-              placeholder="John Smith"
-              value={formData.full_name}
-              onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
-              required
-            />
-            <Input
-              label="Email"
-              type="email"
-              placeholder="john@company.com"
-              value={formData.email}
-              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-              required
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Identity */}
+          <div className="space-y-4">
+            <p className="text-label">Profile</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Input
-                label={editingUser ? "New Password (leave blank to keep)" : "Password (leave blank to auto-generate)"}
-                type="password"
-                placeholder="Min 6 characters"
-                value={formData.password}
-                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                label="Full Name"
+                placeholder="John Smith"
+                value={formData.full_name}
+                onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
+                required
               />
-              {!editingUser && (
-                <button
-                  type="button"
-                  onClick={generateRandomPassword}
-                  className={cn(
-                    "mt-2 text-xs font-medium text-[var(--accent)] hover:underline"
-                  )}
-                >
-                  Generate Random Password
-                </button>
-              )}
+              <Input
+                label="Email"
+                type="email"
+                placeholder="john@company.com"
+                value={formData.email}
+                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                required
+              />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <Input
+                  label={editingUser ? "New Password (leave blank to keep)" : "Password (leave blank to auto-generate)"}
+                  type="password"
+                  placeholder="Min 6 characters"
+                  value={formData.password}
+                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                />
+                {!editingUser && (
+                  <button
+                    type="button"
+                    onClick={generateRandomPassword}
+                    className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-[var(--accent)] hover:underline"
+                  >
+                    <Icon name="refresh" size={13} />
+                    Generate Random Password
+                  </button>
+                )}
+              </div>
+              <Input
+                label="Title"
+                placeholder="Support Engineer"
+                value={formData.title}
+                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+              />
             </div>
             <Input
-              label="Title"
-              placeholder="Support Engineer"
-              value={formData.title}
-              onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+              label="Phone"
+              placeholder="+1 555-0123"
+              value={formData.phone}
+              onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
             />
           </div>
-          <Input
-            label="Phone"
-            placeholder="+1 555-0123"
-            value={formData.phone}
-            onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-          />
 
           {/* Active Status Toggle (only shown when editing) */}
           {editingUser && (
-            <div className="flex items-center justify-between">
-              <div>
+            <div className="flex items-center justify-between gap-4 rounded-xl border border-[var(--border-default)] bg-[var(--bg-base)] px-4 py-3.5">
+              <div className="min-w-0">
                 <label className="block text-sm font-medium text-[var(--fg-primary)]">
                   Account Status
                 </label>
@@ -774,7 +829,7 @@ export default function Users() {
                 type="button"
                 onClick={() => setFormData({ ...formData, is_active: !formData.is_active })}
                 className={cn(
-                  "relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200",
+                  "relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 shrink-0",
                   formData.is_active
                     ? "bg-[var(--accent)]"
                     : "bg-[var(--bg-surface)] border border-[var(--border-default)]"
@@ -790,66 +845,78 @@ export default function Users() {
             </div>
           )}
 
-          {/* Manager and Team Selection */}
-          <div className="grid grid-cols-2 gap-4">
-            <Select
-              label="Manager (Optional)"
-              value={formData.manager_id}
-              onChange={(e) => setFormData({ ...formData, manager_id: e.target.value })}
-            >
-              <option value="">No manager</option>
-              {users.filter(u => u.is_active && (!editingUser || u.id !== editingUser.id)).map(u => (
-                <option key={u.id} value={u.id}>
-                  {u.full_name || u.email}
-                </option>
-              ))}
-            </Select>
+          {/* Assignments */}
+          <div className="space-y-4">
+            <p className="text-label">Assignments</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Select
+                label="Manager (Optional)"
+                value={formData.manager_id}
+                onChange={(e) => setFormData({ ...formData, manager_id: e.target.value })}
+              >
+                <option value="">No manager</option>
+                {users.filter(u => u.is_active && (!editingUser || u.id !== editingUser.id)).map(u => (
+                  <option key={u.id} value={u.id}>
+                    {u.full_name || u.email}
+                  </option>
+                ))}
+              </Select>
 
-            <Select
-              label="Team (Optional)"
-              value={formData.team_id}
-              onChange={(e) => setFormData({ ...formData, team_id: e.target.value })}
-            >
-              <option value="">No team</option>
-              {teams.map(t => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </Select>
+              <Select
+                label="Team (Optional)"
+                value={formData.team_id}
+                onChange={(e) => setFormData({ ...formData, team_id: e.target.value })}
+              >
+                <option value="">No team</option>
+                {teams.map(t => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-[var(--fg-primary)] mb-2">
-              Roles
-            </label>
-            <p className="text-xs text-[var(--fg-secondary)] mb-3">Select one or more roles for this user</p>
-            <div className="flex gap-3">
-              {["admin", "agent", "requester"].map((role) => (
-                <button
-                  key={role}
-                  type="button"
-                  onClick={() => toggleRole(role)}
-                  className={cn(
-                    "flex-1 px-4 py-3 text-sm font-medium rounded-lg transition-all duration-200",
-                    formData.roles.includes(role)
-                      ? "bg-[var(--accent)] text-white shadow-[0_0_12px_rgba(230,0,0,0.3)]"
-                      : cn(
-                          "bg-[var(--bg-base)] text-[var(--fg-secondary)]",
-                          "border border-[var(--border-default)]",
-                          "hover:border-[var(--border-hover)] hover:text-[var(--fg-primary)]"
-                        )
-                  )}
-                >
-                  {role.charAt(0).toUpperCase() + role.slice(1)}
-                </button>
-              ))}
+          {/* Roles */}
+          <div className="space-y-3">
+            <div>
+              <p className="text-label">Roles</p>
+              <p className="text-xs text-[var(--fg-secondary)] mt-1">Select one or more roles for this user</p>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              {["admin", "agent", "requester"].map((role) => {
+                const selected = formData.roles.includes(role);
+                return (
+                  <button
+                    key={role}
+                    type="button"
+                    onClick={() => toggleRole(role)}
+                    className={cn(
+                      "flex flex-col items-center gap-1.5 px-3 py-3 rounded-xl text-sm font-medium transition-all duration-200",
+                      selected
+                        ? "bg-[var(--accent)] text-white shadow-[0_0_12px_rgba(230,0,0,0.3)]"
+                        : cn(
+                            "bg-[var(--bg-base)] text-[var(--fg-secondary)]",
+                            "border border-[var(--border-default)]",
+                            "hover:border-[var(--border-hover)] hover:text-[var(--fg-primary)]"
+                          )
+                    )}
+                  >
+                    <Icon
+                      name={role === "admin" ? "shield" : role === "agent" ? "userCheck" : "user"}
+                      size={16}
+                      className={selected ? "text-white" : "text-[var(--fg-muted)]"}
+                    />
+                    {role.charAt(0).toUpperCase() + role.slice(1)}
+                  </button>
+                );
+              })}
             </div>
           </div>
         </form>
       </Modal>
 
       {confirmDialog}
-    </div>
+    </>
   );
 }

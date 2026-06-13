@@ -1,123 +1,156 @@
 /**
- * Organizational Chart Component
- * Visual tree-based hierarchy view using react-organizational-chart
+ * Organizational Chart Component — Vodafone Service Desk
+ *
+ * Visual tree-based hierarchy view using react-organizational-chart.
+ * Premium node cards (avatar/initials, name, role/title, type tint, soft shadow,
+ * hover lift) with refined connector lines and clean expand/collapse controls.
+ *
+ * Visual redesign only — the tree-building logic, root detection, expand/collapse
+ * state, and all props (onEdit / hasReports / isExpanded / onToggle) are preserved.
  */
 
 import { useState } from "react";
 import { Tree, TreeNode } from "react-organizational-chart";
 import Icon from "./ui/Icon";
+import Badge from "./ui/Badge";
+import EmptyState from "./ui/EmptyState";
 
 function cn(...parts) {
   return parts.filter(Boolean).join(" ");
 }
 
+// Role → static class strings (no dynamic Tailwind) for the avatar tile + badge tone
+const ROLE_META = {
+  admin: {
+    label: "Admin",
+    tone: "violet",
+    avatar: "bg-violet-500/15 text-violet-500 ring-violet-500/20",
+    accent: "var(--accent)",
+  },
+  agent: {
+    label: "Agent",
+    tone: "blue",
+    avatar: "bg-blue-500/15 text-blue-500 ring-blue-500/20",
+    accent: "#3B82F6",
+  },
+  requester: {
+    label: "Requester",
+    tone: "slate",
+    avatar: "bg-slate-500/15 text-slate-400 ring-slate-500/20",
+    accent: "#94A3B8",
+  },
+};
+
+function initials(name) {
+  return (name || "?")
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+}
+
 // Employee Node Component
 function EmployeeNode({ employee, onEdit, hasReports, isExpanded, onToggle }) {
-  const roleColors = {
-    admin: "bg-purple-500/20 text-purple-300 border-purple-400/50",
-    agent: "bg-blue-500/20 text-blue-300 border-blue-400/50",
-    requester: "bg-slate-500/20 text-slate-300 border-slate-400/50",
-  };
-
   const primaryRole = employee.roles?.[0] || "requester";
-  const roleColor = roleColors[primaryRole] || roleColors.requester;
+  const role = ROLE_META[primaryRole] || ROLE_META.requester;
+  const displayName = employee.full_name || employee.email;
 
   return (
-    <div className="relative inline-block">
-      {/* Employee Card - Compact & Well-fitted */}
+    <div className="relative inline-block text-left">
+      {/* Employee Card — compact, premium, type-tinted */}
       <div
         className={cn(
-          "group relative rounded-lg p-3",
-          "bg-[var(--bg-elevated)] border-2",
-          "shadow-lg hover:shadow-xl transition-all duration-200",
-          "hover:border-[var(--accent)]",
-          "w-56" // Fixed width, auto height
+          "group/node relative w-56 rounded-2xl p-3.5 pb-4",
+          "bg-[var(--bg-elevated)] border border-[var(--border-default)]",
+          "shadow-[var(--shadow-card)]",
+          "transition-all duration-200",
+          "hover:-translate-y-0.5 hover:border-[var(--border-hover)] hover:shadow-[var(--shadow-card-hover)]"
         )}
-        style={{ borderColor: "rgba(148, 163, 184, 0.5)" }}
       >
-        {/* Header - Compact */}
-        <div className="flex items-center gap-2 mb-2.5">
-          {/* Avatar */}
+        {/* Top accent hairline tinted by role */}
+        <span
+          className="pointer-events-none absolute inset-x-5 top-0 h-px rounded-full opacity-70"
+          style={{
+            background: `linear-gradient(90deg, transparent, ${role.accent}, transparent)`,
+          }}
+        />
+
+        {/* Header */}
+        <div className="flex items-center gap-2.5">
+          {/* Avatar / initials */}
           <div
             className={cn(
-              "h-9 w-9 rounded-full flex items-center justify-center flex-shrink-0",
-              "bg-[var(--accent)]/20 text-[var(--accent)]",
-              "font-semibold text-xs"
+              "h-9 w-9 shrink-0 rounded-xl flex items-center justify-center",
+              "font-semibold text-[11px] tracking-wide ring-1",
+              role.avatar
             )}
           >
-            {(employee.full_name || employee.email)
-              .split(" ")
-              .map((n) => n[0])
-              .join("")
-              .toUpperCase()
-              .slice(0, 2)}
+            {initials(displayName)}
           </div>
 
           {/* Name & Title */}
           <div className="flex-1 min-w-0">
-            <h3 className="text-sm font-semibold text-[var(--fg-primary)] line-clamp-1">
-              {employee.full_name || employee.email}
+            <h3 className="text-[13px] font-semibold text-[var(--fg-primary)] leading-tight line-clamp-1">
+              {displayName}
             </h3>
-            <p className="text-[11px] text-[var(--fg-secondary)] line-clamp-1">
+            <p className="text-[11px] text-[var(--fg-muted)] leading-tight line-clamp-1 mt-0.5">
               {employee.title || "No title"}
             </p>
           </div>
 
-          {/* Edit Button */}
+          {/* Edit Button — reveals on hover */}
           <button
             onClick={() => onEdit(employee)}
+            title="Edit user"
             className={cn(
-              "p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0",
-              "text-[var(--fg-muted)] hover:text-[var(--accent)]",
-              "hover:bg-[var(--bg-base)]"
+              "shrink-0 p-1.5 rounded-lg transition-all duration-150",
+              "opacity-0 group-hover/node:opacity-100",
+              "text-[var(--fg-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-surface)]"
             )}
           >
-            <Icon name="pencil" size={12} />
+            <Icon name="pencil" size={13} />
           </button>
         </div>
 
-        {/* Info - Compact */}
-        <div className="space-y-2">
-          {/* Team Badge, Role Badge & Reports - all on same line */}
-          <div className="flex items-center gap-2 flex-wrap">
-            {/* Team Badge - comes first */}
-            {employee.team_name && (
-              <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-400/50">
-                <Icon name="teams" size={9} />
-                <span className="line-clamp-1">{employee.team_name}</span>
-              </div>
-            )}
+        {/* Meta row: team + role + reports count */}
+        <div className="mt-3 flex items-center gap-1.5 flex-wrap">
+          {employee.team_name && (
+            <Badge tone="emerald" size="sm" className="max-w-full">
+              <Icon name="teams" size={10} className="shrink-0" />
+              <span className="truncate">{employee.team_name}</span>
+            </Badge>
+          )}
 
-            {/* Role Badge */}
-            <div className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border", roleColor)}>
-              <Icon name="user" size={9} />
-              <span className="capitalize">{primaryRole}</span>
-            </div>
+          <Badge tone={role.tone} size="sm">
+            {role.label}
+          </Badge>
 
-            {hasReports ? (
-              <div className="flex items-center gap-1 text-[11px] text-[var(--fg-secondary)]">
-                <Icon name="users" size={11} className="text-[var(--fg-muted)]" />
-                <span>{employee.report_count}</span>
-              </div>
-            ) : null}
-          </div>
+          {hasReports && (
+            <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-medium text-[var(--fg-secondary)] tabular-nums">
+              <Icon name="users" size={11} className="text-[var(--fg-muted)]" />
+              {employee.report_count}
+            </span>
+          )}
         </div>
 
-        {/* Expand/Collapse Button - Only show when has reports */}
-        {hasReports ? (
+        {/* Expand / Collapse — only when the node has reports */}
+        {hasReports && (
           <button
             onClick={() => onToggle(employee.id)}
+            title={isExpanded ? "Collapse" : "Expand"}
             className={cn(
-              "absolute -bottom-2.5 left-1/2 -translate-x-1/2",
-              "w-5 h-5 rounded-full flex items-center justify-center",
+              "absolute -bottom-3 left-1/2 -translate-x-1/2 z-10",
+              "h-6 w-6 rounded-full flex items-center justify-center",
               "bg-[var(--accent)] text-white",
-              "hover:scale-110 transition-transform",
-              "shadow-lg z-10"
+              "ring-2 ring-[var(--bg-elevated)]",
+              "shadow-[0_2px_8px_rgba(230,0,0,0.35)]",
+              "transition-transform duration-150 hover:scale-110 active:scale-95"
             )}
           >
-            <Icon name={isExpanded ? "chevron-up" : "chevron-down"} size={10} />
+            <Icon name={isExpanded ? "chevron-up" : "chevron-down"} size={12} />
           </button>
-        ) : null}
+        )}
       </div>
     </div>
   );
@@ -207,55 +240,63 @@ export default function OrgChart({ users, hierarchy, onEditUser }) {
 
   if (roots.length === 0) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <div className="text-center">
-          <div className="w-16 h-16 rounded-xl bg-[var(--bg-elevated)] border-2 border-[var(--border-default)] flex items-center justify-center mx-auto mb-4">
-            <Icon name="organization" size={32} className="text-[var(--fg-muted)]" />
-          </div>
-          <h3 className="text-lg font-semibold text-[var(--fg-primary)] mb-2">
-            No hierarchy defined
-          </h3>
-          <p className="text-sm text-[var(--fg-secondary)]">
-            Assign managers to users to build the organizational chart
-          </p>
-        </div>
-      </div>
+      <EmptyState
+        icon="sitemap"
+        title="No hierarchy defined"
+        description="Assign managers to users to build the organizational chart."
+      />
     );
   }
 
+  // Connector line color resolves from CSS variables so it tracks dark/light themes
+  const lineColor = "var(--border-strong)";
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Controls */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2.5">
         <button
           onClick={expandAll}
           className={cn(
-            "px-4 py-2 rounded-lg text-sm font-medium transition-colors",
+            "inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium transition-all duration-150",
             "bg-[var(--bg-elevated)] border border-[var(--border-default)]",
-            "text-[var(--fg-primary)] hover:border-[var(--accent)]",
-            "flex items-center gap-2"
+            "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]",
+            "hover:bg-[var(--bg-surface)] hover:border-[var(--border-hover)]"
           )}
         >
           <Icon name="chevron-down" size={14} />
-          Expand All
+          Expand all
         </button>
 
         <button
           onClick={collapseAll}
           className={cn(
-            "px-4 py-2 rounded-lg text-sm font-medium transition-colors",
+            "inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium transition-all duration-150",
             "bg-[var(--bg-elevated)] border border-[var(--border-default)]",
-            "text-[var(--fg-primary)] hover:border-[var(--accent)]",
-            "flex items-center gap-2"
+            "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]",
+            "hover:bg-[var(--bg-surface)] hover:border-[var(--border-hover)]"
           )}
         >
           <Icon name="chevron-up" size={14} />
-          Collapse All
+          Collapse all
         </button>
+
+        {/* Legend */}
+        <div className="ml-auto hidden sm:flex items-center gap-3 text-[11px] text-[var(--fg-muted)]">
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full bg-violet-500" /> Admin
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full bg-blue-500" /> Agent
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full bg-slate-400" /> Requester
+          </span>
+        </div>
       </div>
 
-      {/* Org Chart - Scrollable with custom line styling */}
-      <div className="overflow-x-auto pb-8">
+      {/* Org Chart — scrollable with refined line styling */}
+      <div className="overflow-x-auto pb-6 -mx-1 px-1">
         <style>
           {`
             /* Hide the vertical line going down from the root label to children when no children exist */
@@ -281,10 +322,10 @@ export default function OrgChart({ users, hierarchy, onEditUser }) {
             return (
               <Tree
                 key={root.id}
-                lineWidth="2px"
-                lineColor="rgba(148, 163, 184, 0.6)"
-                lineBorderRadius="10px"
-                nodePadding="16px"
+                lineWidth="1.5px"
+                lineColor={lineColor}
+                lineBorderRadius="12px"
+                nodePadding="18px"
                 label={
                   <EmployeeNode
                     employee={root}
