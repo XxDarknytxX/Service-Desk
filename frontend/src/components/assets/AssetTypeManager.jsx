@@ -8,6 +8,9 @@ import { useToast } from "../../contexts/toast";
 import Badge from "../ui/Badge";
 import Button from "../ui/Button";
 import Icon from "../ui/Icon";
+import Input from "../ui/Input";
+import Skeleton from "../ui/Skeleton";
+import EmptyState from "../ui/EmptyState";
 import useConfirm from "../ui/useConfirm";
 
 function cn(...p) { return p.filter(Boolean).join(" "); }
@@ -53,27 +56,36 @@ function InlineForm({ title, initial = {}, onSave, onCancel }) {
   }
 
   return (
-    <div className="p-4 rounded-xl bg-[var(--bg-surface)] border border-[var(--accent)]/30 space-y-3">
-      <p className="text-sm font-semibold text-[var(--fg-primary)]">{title}</p>
-      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name *"
-        className="w-full px-3 py-2 text-sm rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)] text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent)]" />
-      <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Description (optional)"
-        className="w-full px-3 py-2 text-sm rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)] text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent)]" />
-      <div className="flex flex-wrap gap-1.5">
-        {COLORS.map((c) => (
-          <button key={c} onClick={() => setColor(c)} title={c} aria-label={`Color ${c}`}
-            className={cn("w-6 h-6 rounded-full border-2 transition-all", SWATCH_STYLES[c], color===c ? "border-[var(--fg-primary)] scale-110" : "border-transparent opacity-60 hover:opacity-100")} />
-        ))}
+    <div className="p-4 rounded-2xl bg-[var(--bg-surface)] border border-[var(--accent)]/30 shadow-[var(--shadow-card)] space-y-3.5 animate-fade-up">
+      <div className="flex items-center gap-2">
+        <span className="h-7 w-7 rounded-lg bg-[var(--accent)]/10 text-[var(--accent)] flex items-center justify-center">
+          <Icon name="tag" size={14} />
+        </span>
+        <p className="text-sm font-semibold text-[var(--fg-primary)] tracking-tight">{title}</p>
       </div>
-      <div className="flex flex-wrap gap-1.5">
-        {ICONS.map((ic) => (
-          <button key={ic} onClick={() => setIcon(ic)}
-            className={cn("p-1.5 rounded-lg border transition-all", icon===ic ? "bg-[var(--accent)]/10 border-[var(--accent)]/40 text-[var(--accent)]" : "bg-[var(--bg-base)] border-[var(--border-default)] text-[var(--fg-muted)] hover:text-[var(--fg-primary)]")}>
-            <Icon name={ic} size={14} />
-          </button>
-        ))}
+      <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name *" size="sm" />
+      <Input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Description (optional)" size="sm" />
+      <div>
+        <p className="text-label mb-2">Color</p>
+        <div className="flex flex-wrap gap-1.5">
+          {COLORS.map((c) => (
+            <button key={c} onClick={() => setColor(c)} title={c} aria-label={`Color ${c}`}
+              className={cn("w-6 h-6 rounded-full border-2 transition-all", SWATCH_STYLES[c], color===c ? "border-[var(--fg-primary)] scale-110" : "border-transparent opacity-60 hover:opacity-100")} />
+          ))}
+        </div>
       </div>
-      <div className="flex gap-2">
+      <div>
+        <p className="text-label mb-2">Icon</p>
+        <div className="flex flex-wrap gap-1.5">
+          {ICONS.map((ic) => (
+            <button key={ic} onClick={() => setIcon(ic)}
+              className={cn("p-1.5 rounded-lg border transition-all", icon===ic ? "bg-[var(--accent)]/10 border-[var(--accent)]/40 text-[var(--accent)]" : "bg-[var(--bg-base)] border-[var(--border-default)] text-[var(--fg-muted)] hover:text-[var(--fg-primary)] hover:border-[var(--border-hover)]")}>
+              <Icon name={ic} size={14} />
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="flex gap-2 pt-0.5">
         <Button variant="secondary" size="sm" onClick={onCancel} disabled={saving}>Cancel</Button>
         <Button size="sm" onClick={submit} loading={saving} disabled={!name.trim()}>Save</Button>
       </div>
@@ -96,20 +108,21 @@ function TypeForm({ categoryId, initial = {}, onSave, onCancel }) {
   }
 
   return (
-    <div className="p-3 rounded-lg bg-[var(--bg-surface)] border border-[var(--accent)]/30 space-y-2 mb-2">
-      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Type name *"
-        className="w-full px-2.5 py-1.5 text-sm rounded-md bg-[var(--bg-base)] border border-[var(--border-default)] text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent)]" />
-      <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Description"
-        className="w-full px-2.5 py-1.5 text-sm rounded-md bg-[var(--bg-base)] border border-[var(--border-default)] text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent)]" />
-      <div className="flex flex-wrap gap-1">
-        {ICONS.map((ic) => (
-          <button key={ic} onClick={() => setIcon(ic)}
-            className={cn("p-1 rounded-md border transition-all", icon===ic ? "bg-[var(--accent)]/10 border-[var(--accent)]/40 text-[var(--accent)]" : "bg-[var(--bg-base)] border-[var(--border-default)] text-[var(--fg-muted)] hover:text-[var(--fg-primary)]")}>
-            <Icon name={ic} size={12} />
-          </button>
-        ))}
+    <div className="p-4 rounded-2xl bg-[var(--bg-surface)] border border-[var(--accent)]/30 shadow-[var(--shadow-card)] space-y-3 mb-2 animate-fade-up">
+      <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Type name *" size="sm" />
+      <Input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Description" size="sm" />
+      <div>
+        <p className="text-label mb-2">Icon</p>
+        <div className="flex flex-wrap gap-1.5">
+          {ICONS.map((ic) => (
+            <button key={ic} onClick={() => setIcon(ic)}
+              className={cn("p-1.5 rounded-md border transition-all", icon===ic ? "bg-[var(--accent)]/10 border-[var(--accent)]/40 text-[var(--accent)]" : "bg-[var(--bg-base)] border-[var(--border-default)] text-[var(--fg-muted)] hover:text-[var(--fg-primary)] hover:border-[var(--border-hover)]")}>
+              <Icon name={ic} size={13} />
+            </button>
+          ))}
+        </div>
       </div>
-      <div className="flex gap-2">
+      <div className="flex gap-2 pt-0.5">
         <Button variant="secondary" size="sm" onClick={onCancel} disabled={saving}>Cancel</Button>
         <Button size="sm" onClick={submit} loading={saving} disabled={!name.trim()}>Add</Button>
       </div>
@@ -205,50 +218,64 @@ export default function AssetTypeManager() {
   }
 
   return (
-    <div className="flex h-full gap-4">
+    <div className="flex flex-col lg:flex-row h-full gap-5">
       {/* Left: Categories */}
-      <div className="w-72 shrink-0 flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-[var(--fg-primary)]">Categories</h3>
+      <div className="lg:w-80 shrink-0 flex flex-col rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] overflow-hidden animate-fade-up">
+        <div className="flex items-center justify-between gap-2.5 px-5 py-4 border-b border-[var(--border-default)] shrink-0">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="h-8 w-8 rounded-lg bg-[var(--accent)]/10 text-[var(--accent)] flex items-center justify-center shrink-0">
+              <Icon name="folder" size={16} />
+            </span>
+            <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">Categories</h2>
+            {!loading && <Badge tone="slate" size="sm">{categories.length}</Badge>}
+          </div>
           <Button size="sm" icon={<Icon name="plus" size={13} />} onClick={() => { setAddingCat(true); setEditingCat(null); }}>Add</Button>
         </div>
 
-        {addingCat && !editingCat && (
-          <InlineForm title="New Category" onSave={handleSaveCategory} onCancel={() => setAddingCat(false)} />
-        )}
-        {editingCat && (
-          <InlineForm title="Edit Category" initial={editingCat} onSave={handleSaveCategory} onCancel={() => setEditingCat(null)} />
-        )}
+        <div className="flex-1 overflow-y-auto scrollbar-none p-3 space-y-1.5">
+          {addingCat && !editingCat && (
+            <InlineForm title="New Category" onSave={handleSaveCategory} onCancel={() => setAddingCat(false)} />
+          )}
+          {editingCat && (
+            <InlineForm title="Edit Category" initial={editingCat} onSave={handleSaveCategory} onCancel={() => setEditingCat(null)} />
+          )}
 
-        <div className="flex-1 overflow-y-auto scrollbar-none space-y-1.5">
           {loading ? (
-            <p className="text-sm text-[var(--fg-muted)] text-center py-8">Loading…</p>
+            Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-3 px-3 py-3 rounded-xl border border-[var(--border-default)]">
+                <Skeleton className="h-9 w-9" rounded="rounded-lg" />
+                <div className="flex-1 space-y-2">
+                  <Skeleton className="h-3 w-24" rounded="rounded-md" />
+                  <Skeleton className="h-2.5 w-32" rounded="rounded-md" />
+                </div>
+              </div>
+            ))
           ) : categories.map((cat) => {
             const isActive = selectedCat === cat.id;
             return (
               <div key={cat.id}
                 onClick={() => setSelectedCat(cat.id)}
                 className={cn(
-                  "group flex items-center gap-3 px-3 py-3 rounded-xl border cursor-pointer transition-all",
+                  "group flex items-center gap-3 px-3 py-3 rounded-xl border cursor-pointer transition-all duration-150",
                   isActive
-                    ? "bg-[var(--accent)]/8 border-[var(--accent)]/30 shadow-[0_0_0_1px_var(--accent)]/10"
-                    : "bg-[var(--bg-elevated)] border-[var(--border-default)] hover:bg-[var(--bg-surface)] hover:border-[var(--border-hover)]"
+                    ? "bg-[var(--accent)]/8 border-[var(--accent)]/30"
+                    : "bg-transparent border-transparent hover:bg-[var(--bg-surface)] hover:border-[var(--border-default)]"
                 )}>
                 <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center border shrink-0", COLOR_STYLES[cat.color] || COLOR_STYLES.blue)}>
                   <Icon name={cat.icon || "box"} size={16} />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-[var(--fg-primary)] truncate">{cat.name}</p>
+                  <p className={cn("text-sm font-medium truncate", isActive ? "text-[var(--accent)]" : "text-[var(--fg-primary)]")}>{cat.name}</p>
                   <p className="text-xs text-[var(--fg-muted)]">{cat.type_count} types · {cat.asset_count} assets</p>
                 </div>
-                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
+                <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
                   <button onClick={() => { setEditingCat(cat); setAddingCat(false); }}
-                    className="p-1 rounded text-[var(--fg-muted)] hover:text-[var(--fg-primary)]">
-                    <Icon name="pencil" size={12} />
+                    className="p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)] transition-all">
+                    <Icon name="pencil" size={13} />
                   </button>
                   <button onClick={() => handleDeleteCategory(cat)}
-                    className="p-1 rounded text-[var(--fg-muted)] hover:text-rose-400">
-                    <Icon name="trash" size={12} />
+                    className="p-1.5 rounded-md text-[var(--fg-muted)] hover:text-rose-500 hover:bg-rose-500/10 transition-all">
+                    <Icon name="trash" size={13} />
                   </button>
                 </div>
               </div>
@@ -258,55 +285,59 @@ export default function AssetTypeManager() {
       </div>
 
       {/* Right: Types */}
-      <div className="flex-1 min-w-0 flex flex-col gap-3">
-        <div className="flex items-center justify-between shrink-0">
-          <h3 className="text-sm font-semibold text-[var(--fg-primary)]">
-            {selectedCategory ? `${selectedCategory.name} — Types` : "Select a Category"}
-          </h3>
+      <div className="flex-1 min-w-0 flex flex-col rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] overflow-hidden animate-fade-up" style={{ animationDelay: "80ms" }}>
+        <div className="flex items-center justify-between gap-2.5 px-5 py-4 border-b border-[var(--border-default)] shrink-0">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="h-8 w-8 rounded-lg bg-blue-500/10 text-blue-500 flex items-center justify-center shrink-0">
+              <Icon name="tag" size={16} />
+            </span>
+            <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight truncate">
+              {selectedCategory ? `${selectedCategory.name} — Types` : "Select a Category"}
+            </h2>
+          </div>
           {selectedCat && (
             <Button size="sm" icon={<Icon name="plus" size={13} />} onClick={() => { setAddingType(true); setEditingType(null); }}>Add Type</Button>
           )}
         </div>
 
-        <div className="flex-1 min-h-0 overflow-y-auto scrollbar-none">
+        <div className="flex-1 min-h-0 overflow-y-auto scrollbar-none p-4">
           {!selectedCat ? (
-            <div className="flex flex-col items-center justify-center h-48 text-center">
-              <Icon name="tag" size={28} className="text-[var(--fg-muted)] mb-2" />
-              <p className="text-sm text-[var(--fg-muted)]">Select a category to manage its types</p>
-            </div>
+            <EmptyState icon="tag" title="Select a category" description="Choose a category on the left to manage its asset types." compact />
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               {addingType && !editingType && (
                 <TypeForm categoryId={selectedCat} onSave={handleSaveType} onCancel={() => setAddingType(false)} />
               )}
 
               {catTypes.length === 0 && !addingType ? (
-                <div className="flex flex-col items-center justify-center py-16 rounded-xl bg-[var(--bg-elevated)] border border-dashed border-[var(--border-default)]">
-                  <Icon name="box" size={28} className="text-[var(--fg-muted)] mb-2" />
-                  <p className="text-sm text-[var(--fg-muted)] mb-3">No types in this category yet</p>
-                  <Button size="sm" icon={<Icon name="plus" size={13} />} onClick={() => setAddingType(true)}>Add First Type</Button>
-                </div>
+                <EmptyState
+                  icon="box"
+                  title="No types yet"
+                  description="This category doesn't have any asset types. Add the first one to get started."
+                  action={<Button size="sm" icon={<Icon name="plus" size={13} />} onClick={() => setAddingType(true)}>Add First Type</Button>}
+                  compact
+                />
               ) : catTypes.map((type) => (
                 <div key={type.id}>
                   {editingType?.id === type.id ? (
                     <TypeForm categoryId={selectedCat} initial={type} onSave={handleSaveType} onCancel={() => setEditingType(null)} />
                   ) : (
-                    <div className="group flex items-center gap-3 px-4 py-3 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)] hover:border-[var(--border-hover)] transition-all">
-                      <div className="w-9 h-9 rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)] flex items-center justify-center shrink-0">
-                        <Icon name={type.icon || "box"} size={16} className="text-[var(--fg-muted)]" />
+                    <div className="group flex items-center gap-3 px-4 py-3.5 rounded-xl bg-[var(--bg-surface)]/50 border border-[var(--border-default)] hover:border-[var(--border-hover)] hover:bg-[var(--bg-surface)] transition-all duration-150">
+                      <div className="w-9 h-9 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)] flex items-center justify-center shrink-0 text-[var(--fg-muted)]">
+                        <Icon name={type.icon || "box"} size={16} />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-[var(--fg-primary)]">{type.name}</p>
+                        <p className="text-sm font-medium text-[var(--fg-primary)] truncate">{type.name}</p>
                         {type.description && <p className="text-xs text-[var(--fg-muted)] truncate">{type.description}</p>}
                       </div>
-                      <Badge tone="slate">{type.asset_count} assets</Badge>
-                      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Badge tone="slate" size="sm">{type.asset_count} assets</Badge>
+                      <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button onClick={() => { setEditingType(type); setAddingType(false); }}
-                          className="p-1.5 rounded-lg text-[var(--fg-muted)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)] transition-all">
+                          className="p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)] transition-all">
                           <Icon name="pencil" size={13} />
                         </button>
                         <button onClick={() => handleDeleteType(type)}
-                          className="p-1.5 rounded-lg text-[var(--fg-muted)] hover:text-rose-400 hover:bg-rose-500/10 transition-all">
+                          className="p-1.5 rounded-md text-[var(--fg-muted)] hover:text-rose-500 hover:bg-rose-500/10 transition-all">
                           <Icon name="trash" size={13} />
                         </button>
                       </div>

@@ -1,64 +1,54 @@
 /**
  * Assets Page — Full Asset Management Hub
  * Sub-tabs: Assets | Types & Categories | Maintenance | Assignments | Reports
+ *
+ * Premium Vodafone shell: branded PageHeader (assets icon) + shared underline
+ * Tabs for sub-navigation. Each tab renders its own toolbar / KPIs / table.
+ * All tab state and child components are preserved exactly.
  */
 import { useState } from "react";
-import Icon from "../components/ui/Icon";
+import PageHeader from "../components/ui/PageHeader";
+import Tabs from "../components/ui/Tabs";
 import AssetList from "../components/assets/AssetList";
 import AssetTypeManager from "../components/assets/AssetTypeManager";
 import MaintenanceTab from "../components/assets/MaintenanceTab";
 import AssignmentsTab from "../components/assets/AssignmentsTab";
 import AssetReportsTab from "../components/assets/AssetReportsTab";
 
-function cn(...p) { return p.filter(Boolean).join(" "); }
-
 const TABS = [
-  { key: "assets",      label: "Assets",          icon: "assets",    desc: "Inventory" },
-  { key: "types",       label: "Types & Categories", icon: "tag",    desc: "Manage" },
-  { key: "maintenance", label: "Maintenance",      icon: "tool",      desc: "Logs" },
-  { key: "assignments", label: "Assignments",      icon: "userPlus",  desc: "History" },
-  { key: "reports",     label: "Reports",          icon: "barChart",  desc: "Analytics" },
+  { value: "assets",      label: "Inventory",          icon: "assets" },
+  { value: "types",       label: "Types & Categories", icon: "tag" },
+  { value: "maintenance", label: "Maintenance",        icon: "tool" },
+  { value: "assignments", label: "Assignments",        icon: "userPlus" },
+  { value: "reports",     label: "Reports",            icon: "barChart" },
 ];
 
 export default function Assets() {
   const [activeTab, setActiveTab] = useState("assets");
 
   return (
-    <div className="flex flex-col h-full animate-fade-in">
-      {/* Page header */}
-      <div className="rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] px-6 py-5 mb-5 shrink-0">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-semibold text-[var(--fg-primary)] tracking-tight">
-            Asset Management
-          </h1>
-          <p className="text-sm text-[var(--fg-secondary)] mt-1">
-            Track, manage and report on all IT assets
-          </p>
-        </div>
+    <div className="flex flex-col h-full">
+      {/* Branded page header */}
+      <div className="shrink-0 animate-fade-up">
+        <PageHeader
+          icon="assets"
+          title="Asset Management"
+          subtitle="Track, manage and report on all IT assets"
+        />
       </div>
 
-      {/* Sub-tab bar */}
-      <div className="flex gap-1 mb-5 p-1 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shrink-0">
-        {TABS.map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => setActiveTab(tab.key)}
-            className={cn(
-              "flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200",
-              activeTab === tab.key
-                ? "bg-[var(--accent)] text-white shadow-[0_0_16px_rgba(230,0,0,0.3)]"
-                : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)]"
-            )}
-          >
-            <Icon name={tab.icon} size={15} />
-            <span className="hidden sm:inline">{tab.label}</span>
-            <span className="sm:hidden">{tab.desc}</span>
-          </button>
-        ))}
+      {/* Sub-tab navigation (shared underline tabs) */}
+      <div className="shrink-0 mt-5">
+        <Tabs
+          variant="underline"
+          tabs={TABS}
+          value={activeTab}
+          onChange={setActiveTab}
+        />
       </div>
 
       {/* Tab content */}
-      <div className="flex-1 min-h-0">
+      <div className="flex-1 min-h-0 pt-5">
         {activeTab === "assets"      && <AssetList />}
         {activeTab === "types"       && <AssetTypeManager />}
         {activeTab === "maintenance" && <MaintenanceTab />}

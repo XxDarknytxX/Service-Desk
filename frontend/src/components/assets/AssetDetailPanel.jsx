@@ -7,8 +7,27 @@ import { assetsApi } from "../../services/api";
 import Badge from "../ui/Badge";
 import Button from "../ui/Button";
 import Icon from "../ui/Icon";
+import Skeleton from "../ui/Skeleton";
+import EmptyState from "../ui/EmptyState";
 
 function cn(...p) { return p.filter(Boolean).join(" "); }
+
+// Loading placeholder for the lazy-loaded sub-tab lists
+function SubSkeleton() {
+  return (
+    <div className="space-y-2.5">
+      {Array.from({ length: 3 }).map((_, i) => (
+        <div key={i} className="p-3.5 rounded-xl bg-[var(--bg-surface)]/50 border border-[var(--border-default)] space-y-2">
+          <div className="flex items-center justify-between">
+            <Skeleton className="h-3.5 w-32" rounded="rounded-md" />
+            <Skeleton className="h-4 w-16" rounded="rounded-full" />
+          </div>
+          <Skeleton className="h-2.5 w-40" rounded="rounded-md" />
+        </div>
+      ))}
+    </div>
+  );
+}
 
 const STATUS_TONE = { active:"emerald", maintenance:"amber", retired:"rose", inactive:"slate" };
 const COND_TONE   = { new:"emerald", excellent:"emerald", good:"blue", fair:"amber", poor:"rose", damaged:"rose" };
@@ -16,16 +35,16 @@ const COND_TONE   = { new:"emerald", excellent:"emerald", good:"blue", fair:"amb
 function Row({ label, value }) {
   if (!value && value !== 0) return null;
   return (
-    <div className="flex items-start justify-between py-2.5 border-b border-[var(--border-default)] last:border-0">
+    <div className="flex items-start justify-between gap-3 py-2.5 border-b border-[var(--border-default)] last:border-0">
       <span className="text-xs text-[var(--fg-muted)] w-32 shrink-0">{label}</span>
-      <span className="text-xs text-[var(--fg-primary)] text-right flex-1">{value}</span>
+      <span className="text-xs font-medium text-[var(--fg-primary)] text-right flex-1">{value}</span>
     </div>
   );
 }
 
 function SectionTitle({ children }) {
   return (
-    <p className="text-[11px] font-semibold text-[var(--fg-muted)] uppercase tracking-wider mb-2 mt-4">{children}</p>
+    <p className="text-label mb-2 mt-5 first:mt-0">{children}</p>
   );
 }
 
@@ -78,28 +97,36 @@ export default function AssetDetailPanel({ asset, onClose, onEdit, onCheckout, o
 
   return (
     <div className={cn(
-      "fixed inset-y-0 right-0 z-50 w-[420px] flex flex-col",
+      "fixed inset-y-0 right-0 z-50 w-full max-w-[440px] flex flex-col",
       "bg-[var(--bg-elevated)] border-l border-[var(--border-default)]",
-      "shadow-[-8px_0_32px_rgba(0,0,0,0.4)]",
+      "shadow-[var(--shadow-elevated)]",
       "animate-slide-in-right"
     )}>
       {/* Header */}
-      <div className="flex items-start justify-between px-5 py-4 border-b border-[var(--border-default)] shrink-0">
-        <div className="flex-1 min-w-0 pr-3">
-          <div className="flex items-center gap-2 mb-1">
-            <Badge tone={STATUS_TONE[asset.status] || "slate"}>{asset.status}</Badge>
-            {asset.condition && <Badge tone={COND_TONE[asset.condition] || "slate"}>{asset.condition}</Badge>}
+      <div className="relative shrink-0 px-5 py-5 border-b border-[var(--border-default)] overflow-hidden">
+        <div className="pointer-events-none absolute -top-16 -right-10 h-40 w-40 rounded-full bg-[var(--accent)] opacity-[0.07] blur-3xl" />
+        <div className="relative flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3 min-w-0">
+            <span className="h-11 w-11 rounded-xl bg-[var(--accent)]/10 text-[var(--accent)] border border-[var(--accent)]/15 flex items-center justify-center shrink-0">
+              <Icon name="monitor" size={20} />
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold text-[var(--fg-primary)] truncate tracking-tight">{asset.name}</h2>
+              <p className="text-xs text-[var(--fg-muted)] font-mono mb-2">{asset.asset_tag}</p>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <Badge tone={STATUS_TONE[asset.status] || "slate"} size="sm" dot className="capitalize">{asset.status}</Badge>
+                {asset.condition && <Badge tone={COND_TONE[asset.condition] || "slate"} size="sm" className="capitalize">{asset.condition}</Badge>}
+              </div>
+            </div>
           </div>
-          <h2 className="text-base font-semibold text-[var(--fg-primary)] truncate">{asset.name}</h2>
-          <p className="text-xs text-[var(--fg-muted)] font-mono">{asset.asset_tag}</p>
+          <button onClick={onClose} className="p-2 rounded-lg text-[var(--fg-muted)] hover:bg-[var(--bg-surface)] hover:text-[var(--fg-primary)] transition-all shrink-0">
+            <Icon name="close" size={16} />
+          </button>
         </div>
-        <button onClick={onClose} className="p-1.5 rounded-lg text-[var(--fg-muted)] hover:bg-[var(--bg-surface)] hover:text-[var(--fg-primary)] transition-all">
-          <Icon name="close" size={16} />
-        </button>
       </div>
 
       {/* Actions */}
-      <div className="flex gap-2 px-5 py-3 border-b border-[var(--border-default)] shrink-0">
+      <div className="flex gap-2 px-5 py-3.5 border-b border-[var(--border-default)] shrink-0">
         <Button size="sm" variant="secondary" icon={<Icon name="pencil" size={13} />} onClick={onEdit} className="flex-1">Edit</Button>
         {isAssigned
           ? <Button size="sm" variant="secondary" icon={<Icon name="download" size={13} />} onClick={onCheckin} className="flex-1">Check In</Button>
@@ -108,19 +135,24 @@ export default function AssetDetailPanel({ asset, onClose, onEdit, onCheckout, o
       </div>
 
       {/* Inner tabs */}
-      <div className="flex border-b border-[var(--border-default)] shrink-0 px-3 pt-2">
-        {DETAIL_TABS.map((t) => (
-          <button key={t.key} onClick={() => setTab(t.key)}
-            className={cn(
-              "flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-all",
-              tab === t.key
-                ? "border-[var(--accent)] text-[var(--accent)]"
-                : "border-transparent text-[var(--fg-muted)] hover:text-[var(--fg-primary)]"
-            )}>
-            <Icon name={t.icon} size={12} />
-            {t.label}
-          </button>
-        ))}
+      <div className="relative flex items-center gap-1 border-b border-[var(--border-default)] shrink-0 px-3 overflow-x-auto scrollbar-none">
+        {DETAIL_TABS.map((t) => {
+          const active = tab === t.key;
+          return (
+            <button key={t.key} onClick={() => setTab(t.key)}
+              className={cn(
+                "group relative flex items-center gap-1.5 px-3 py-3 text-[13px] font-medium whitespace-nowrap transition-colors duration-150",
+                active ? "text-[var(--fg-primary)]" : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
+              )}>
+              <Icon name={t.icon} size={14} className={active ? "text-[var(--accent)]" : "text-[var(--fg-muted)] group-hover:text-[var(--fg-secondary)]"} />
+              {t.label}
+              <span className={cn(
+                "absolute -bottom-px left-2 right-2 h-0.5 rounded-full bg-[var(--accent)] transition-all duration-300",
+                active ? "opacity-100 scale-x-100" : "opacity-0 scale-x-50"
+              )} />
+            </button>
+          );
+        })}
       </div>
 
       {/* Content */}
@@ -154,12 +186,12 @@ export default function AssetDetailPanel({ asset, onClose, onEdit, onCheckout, o
             <Row label="Expiry Date"   value={fmtDate(asset.warranty_expiry_date)} />
             {warrantyDays !== null && (
               <div className={cn(
-                "flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium",
-                warrantyDays < 0 ? "bg-rose-500/10 text-rose-400 border border-rose-500/20" :
-                warrantyDays < 30 ? "bg-amber-500/10 text-amber-400 border border-amber-500/20" :
-                "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                "flex items-center gap-2 px-3 py-2 mt-2 rounded-lg text-xs font-medium",
+                warrantyDays < 0 ? "bg-rose-500/10 text-rose-500 border border-rose-500/20" :
+                warrantyDays < 30 ? "bg-amber-500/10 text-amber-500 border border-amber-500/20" :
+                "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"
               )}>
-                <Icon name={warrantyDays < 0 ? "alert" : "shield"} size={13} />
+                <Icon name={warrantyDays < 0 ? "alertCircle" : "shield"} size={14} className="shrink-0" />
                 {warrantyDays < 0 ? `Expired ${Math.abs(warrantyDays)} days ago` :
                  warrantyDays === 0 ? "Expires today" :
                  `${warrantyDays} days remaining`}
@@ -177,23 +209,20 @@ export default function AssetDetailPanel({ asset, onClose, onEdit, onCheckout, o
 
         {/* ── MAINTENANCE ── */}
         {tab === "maintenance" && (
-          <div className="space-y-2">
-            {loading ? <p className="text-xs text-[var(--fg-muted)] text-center py-8">Loading…</p>
+          <div className="space-y-2.5">
+            {loading ? <SubSkeleton />
             : maintenance.length === 0 ? (
-              <div className="text-center py-10">
-                <Icon name="tool" size={28} className="text-[var(--fg-muted)] mx-auto mb-2" />
-                <p className="text-xs text-[var(--fg-muted)]">No maintenance records</p>
-              </div>
+              <EmptyState icon="tool" title="No maintenance records" description="Maintenance work for this asset will appear here." compact />
             ) : maintenance.map((m) => (
-              <div key={m.id} className="p-3 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-default)]">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-sm font-medium text-[var(--fg-primary)]">{m.title}</span>
-                  <Badge tone={m.status==="completed"?"emerald":m.status==="cancelled"?"slate":m.status==="in_progress"?"blue":"amber"}>
+              <div key={m.id} className="p-3.5 rounded-xl bg-[var(--bg-surface)]/50 border border-[var(--border-default)] hover:border-[var(--border-hover)] transition-colors">
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <span className="text-sm font-medium text-[var(--fg-primary)] truncate">{m.title}</span>
+                  <Badge size="sm" dot className="capitalize shrink-0" tone={m.status==="completed"?"emerald":m.status==="cancelled"?"slate":m.status==="in_progress"?"blue":"amber"}>
                     {m.status.replace("_"," ")}
                   </Badge>
                 </div>
-                <p className="text-xs text-[var(--fg-muted)]">{m.maintenance_type} · {m.scheduled_date ? new Date(m.scheduled_date).toLocaleDateString() : "No date"}</p>
-                {m.cost && <p className="text-xs text-[var(--fg-secondary)] mt-1">Cost: FJD {Number(m.cost).toFixed(2)}</p>}
+                <p className="text-xs text-[var(--fg-muted)] capitalize">{m.maintenance_type} · {m.scheduled_date ? new Date(m.scheduled_date).toLocaleDateString() : "No date"}</p>
+                {m.cost && <p className="text-xs text-[var(--fg-secondary)] mt-1 tabular-nums">Cost: FJD {Number(m.cost).toFixed(2)}</p>}
               </div>
             ))}
           </div>
@@ -201,21 +230,18 @@ export default function AssetDetailPanel({ asset, onClose, onEdit, onCheckout, o
 
         {/* ── TICKETS ── */}
         {tab === "tickets" && (
-          <div className="space-y-2">
-            {loading ? <p className="text-xs text-[var(--fg-muted)] text-center py-8">Loading…</p>
+          <div className="space-y-2.5">
+            {loading ? <SubSkeleton />
             : tickets.length === 0 ? (
-              <div className="text-center py-10">
-                <Icon name="ticket" size={28} className="text-[var(--fg-muted)] mx-auto mb-2" />
-                <p className="text-xs text-[var(--fg-muted)]">No linked tickets</p>
-              </div>
+              <EmptyState icon="ticket" title="No linked tickets" description="Tickets referencing this asset will show up here." compact />
             ) : tickets.map((t) => (
-              <div key={t.id} className="p-3 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-default)]">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-mono text-[var(--fg-muted)]">#{t.id}</span>
-                  <Badge tone="blue">{t.status_label || t.status_id}</Badge>
+              <div key={t.id} className="p-3.5 rounded-xl bg-[var(--bg-surface)]/50 border border-[var(--border-default)] hover:border-[var(--border-hover)] transition-colors">
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <span className="text-xs font-mono font-semibold text-[var(--accent)]">#{t.id}</span>
+                  <Badge tone="blue" size="sm" className="shrink-0">{t.status_label || t.status_id}</Badge>
                 </div>
                 <p className="text-sm font-medium text-[var(--fg-primary)]">{t.subject}</p>
-                <p className="text-xs text-[var(--fg-muted)]">{new Date(t.created_at).toLocaleDateString()}</p>
+                <p className="text-xs text-[var(--fg-muted)] mt-0.5">{new Date(t.created_at).toLocaleDateString()}</p>
               </div>
             ))}
           </div>
@@ -223,20 +249,17 @@ export default function AssetDetailPanel({ asset, onClose, onEdit, onCheckout, o
 
         {/* ── HISTORY ── */}
         {tab === "history" && (
-          <div className="space-y-2">
-            {loading ? <p className="text-xs text-[var(--fg-muted)] text-center py-8">Loading…</p>
+          <div className="space-y-2.5">
+            {loading ? <SubSkeleton />
             : history.length === 0 ? (
-              <div className="text-center py-10">
-                <Icon name="clock" size={28} className="text-[var(--fg-muted)] mx-auto mb-2" />
-                <p className="text-xs text-[var(--fg-muted)]">No assignment history</p>
-              </div>
+              <EmptyState icon="clock" title="No assignment history" description="Checkout and check-in events for this asset will be listed here." compact />
             ) : history.map((h) => (
-              <div key={h.id} className="p-3 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-default)]">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-sm font-medium text-[var(--fg-primary)]">
+              <div key={h.id} className="p-3.5 rounded-xl bg-[var(--bg-surface)]/50 border border-[var(--border-default)] hover:border-[var(--border-hover)] transition-colors">
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <span className="text-sm font-medium text-[var(--fg-primary)] truncate">
                     {h.assigned_user_name || h.assigned_org_name || "Unknown"}
                   </span>
-                  <Badge tone={h.checked_in_at ? "slate" : "emerald"}>
+                  <Badge tone={h.checked_in_at ? "slate" : "emerald"} size="sm" dot={!h.checked_in_at} className="shrink-0">
                     {h.checked_in_at ? "Returned" : "Active"}
                   </Badge>
                 </div>
@@ -244,7 +267,11 @@ export default function AssetDetailPanel({ asset, onClose, onEdit, onCheckout, o
                   Out: {new Date(h.checked_out_at).toLocaleDateString()}
                   {h.checked_in_at && ` · In: ${new Date(h.checked_in_at).toLocaleDateString()}`}
                 </p>
-                {h.location && <p className="text-xs text-[var(--fg-muted)]">📍 {h.location}</p>}
+                {h.location && (
+                  <p className="text-xs text-[var(--fg-muted)] mt-0.5 flex items-center gap-1">
+                    <Icon name="globe" size={11} className="shrink-0" /> {h.location}
+                  </p>
+                )}
               </div>
             ))}
           </div>

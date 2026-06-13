@@ -14,13 +14,18 @@ function cn(...p) { return p.filter(Boolean).join(" "); }
 const STATUSES = ["active","inactive","maintenance","retired"];
 const CONDITIONS = ["new","excellent","good","fair","poor","damaged"];
 
-const SECTION = ({ title, children }) => (
+const SECTION = ({ title, icon, children }) => (
   <div>
-    <div className="flex items-center gap-3 mb-4">
-      <span className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider whitespace-nowrap">{title}</span>
+    <div className="flex items-center gap-2.5 mb-4">
+      {icon && (
+        <span className="h-7 w-7 rounded-lg bg-[var(--accent)]/10 text-[var(--accent)] flex items-center justify-center shrink-0">
+          <Icon name={icon} size={14} />
+        </span>
+      )}
+      <span className="text-label whitespace-nowrap">{title}</span>
       <div className="flex-1 h-px bg-[var(--border-default)]" />
     </div>
-    <div className="grid grid-cols-2 gap-4">{children}</div>
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">{children}</div>
   </div>
 );
 
@@ -127,16 +132,16 @@ export default function AssetModal({ open, onClose, asset = null, onSaved }) {
         </>
       }
     >
-      <div className="space-y-6">
+      <div className="space-y-7">
         {error && (
-          <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-red-500/10 border border-red-500/20 text-sm text-red-400">
-            <Icon name="alert" size={14} />
+          <div className="flex items-center gap-2.5 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-sm font-medium text-red-500">
+            <Icon name="alertCircle" size={16} className="shrink-0" />
             {error}
           </div>
         )}
 
         {/* Identity */}
-        <SECTION title="Identity">
+        <SECTION title="Identity" icon="hash">
           <Input label="Asset Name" value={form.name} onChange={set("name")} required placeholder="e.g. MacBook Pro 2023" />
           <Input label="Asset Tag" value={form.asset_tag} onChange={set("asset_tag")} placeholder="Auto-generated if blank" />
           <Select label="Category" value={form.category_id} onChange={(e) => { setForm(f => ({ ...f, category_id: e.target.value, asset_type_id: "" })); }}>
@@ -150,7 +155,7 @@ export default function AssetModal({ open, onClose, asset = null, onSaved }) {
         </SECTION>
 
         {/* Hardware Details */}
-        <SECTION title="Hardware Details">
+        <SECTION title="Hardware Details" icon="monitor">
           <Input label="Manufacturer" value={form.manufacturer} onChange={set("manufacturer")} placeholder="e.g. Apple, Dell, Cisco" />
           <Input label="Model" value={form.model} onChange={set("model")} placeholder="e.g. MacBook Pro M3" />
           <Input label="Serial Number" value={form.serial_number} onChange={set("serial_number")} placeholder="Device serial number" />
@@ -165,7 +170,7 @@ export default function AssetModal({ open, onClose, asset = null, onSaved }) {
         </SECTION>
 
         {/* Procurement */}
-        <SECTION title="Procurement">
+        <SECTION title="Procurement" icon="creditCard">
           <Input label="Supplier / Vendor" value={form.supplier} onChange={set("supplier")} placeholder="Vendor name" />
           <Input label="Order / PO Number" value={form.order_number} onChange={set("order_number")} placeholder="PO-2024-001" />
           <Input label="Purchase Date" type="date" value={form.purchase_date} onChange={set("purchase_date")} />
@@ -177,18 +182,21 @@ export default function AssetModal({ open, onClose, asset = null, onSaved }) {
         </SECTION>
 
         {/* Assignment */}
-        <SECTION title="Assignment">
+        <SECTION title="Assignment" icon="userPlus">
           <Input label="Assigned User ID" type="number" value={form.assigned_to_user_id} onChange={set("assigned_to_user_id")} placeholder="Leave blank if unassigned" />
           <Input label="Assigned Org ID" type="number" value={form.assigned_to_org_id} onChange={set("assigned_to_org_id")} placeholder="Leave blank if unassigned" />
         </SECTION>
 
         {/* Notes */}
         <div>
-          <div className="flex items-center gap-3 mb-4">
-            <span className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">Notes</span>
+          <div className="flex items-center gap-2.5 mb-4">
+            <span className="h-7 w-7 rounded-lg bg-[var(--accent)]/10 text-[var(--accent)] flex items-center justify-center shrink-0">
+              <Icon name="fileText" size={14} />
+            </span>
+            <span className="text-label">Notes</span>
             <div className="flex-1 h-px bg-[var(--border-default)]" />
           </div>
-          <Textarea label="" value={form.notes} onChange={set("notes")} rows={3} placeholder="Additional notes about this asset…" />
+          <Textarea value={form.notes} onChange={set("notes")} rows={3} placeholder="Additional notes about this asset…" />
         </div>
       </div>
     </Modal>

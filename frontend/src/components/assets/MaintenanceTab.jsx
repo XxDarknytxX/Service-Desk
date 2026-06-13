@@ -9,6 +9,8 @@ import Button from "../ui/Button";
 import Icon from "../ui/Icon";
 import Modal from "../ui/Modal";
 import Input, { Textarea, Select } from "../ui/Input";
+import { SkeletonTable } from "../ui/Skeleton";
+import EmptyState from "../ui/EmptyState";
 import useConfirm from "../ui/useConfirm";
 
 function cn(...p) { return p.filter(Boolean).join(" "); }
@@ -67,31 +69,44 @@ function MaintenanceModal({ open, record, assets, onClose, onSaved }) {
           </Button>
         </>
       }>
-      <div className="grid grid-cols-2 gap-4">
-        <div className="col-span-2">
+      <div className="space-y-6">
+        {/* Work item */}
+        <div className="space-y-4">
+          <div className="flex items-center gap-3">
+            <span className="text-label whitespace-nowrap">Work Item</span>
+            <div className="flex-1 h-px bg-[var(--border-default)]" />
+          </div>
           <Select label="Asset *" value={form.asset_id} onChange={set("asset_id")}>
             <option value="">Select asset…</option>
             {assets.map((a) => <option key={a.id} value={a.id}>{a.name} ({a.asset_tag})</option>)}
           </Select>
-        </div>
-        <div className="col-span-2">
           <Input label="Title *" value={form.title} onChange={set("title")} placeholder="e.g. Annual PM Check, Battery Replacement" />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Select label="Type" value={form.maintenance_type} onChange={set("maintenance_type")}>
+              {["repair","preventive","upgrade","calibration","inspection","other"].map((t) => (
+                <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+              ))}
+            </Select>
+            <Select label="Status" value={form.status} onChange={set("status")}>
+              {["scheduled","in_progress","completed","cancelled"].map((s) => (
+                <option key={s} value={s}>{s.replace("_"," ").replace(/\b\w/g, c => c.toUpperCase())}</option>
+              ))}
+            </Select>
+          </div>
         </div>
-        <Select label="Type" value={form.maintenance_type} onChange={set("maintenance_type")}>
-          {["repair","preventive","upgrade","calibration","inspection","other"].map((t) => (
-            <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
-          ))}
-        </Select>
-        <Select label="Status" value={form.status} onChange={set("status")}>
-          {["scheduled","in_progress","completed","cancelled"].map((s) => (
-            <option key={s} value={s}>{s.replace("_"," ").replace(/\b\w/g, c => c.toUpperCase())}</option>
-          ))}
-        </Select>
-        <Input label="Scheduled Date" type="date" value={form.scheduled_date} onChange={set("scheduled_date")} />
-        <Input label="Completed Date" type="date" value={form.completed_date} onChange={set("completed_date")} />
-        <Input label="Cost (FJD)" type="number" min="0" step="0.01" value={form.cost} onChange={set("cost")} placeholder="0.00" />
-        <Input label="Technician / Vendor" value={form.technician} onChange={set("technician")} placeholder="Who performed the work?" />
-        <div className="col-span-2">
+
+        {/* Schedule & cost */}
+        <div className="space-y-4">
+          <div className="flex items-center gap-3">
+            <span className="text-label whitespace-nowrap">Schedule &amp; Cost</span>
+            <div className="flex-1 h-px bg-[var(--border-default)]" />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Input label="Scheduled Date" type="date" value={form.scheduled_date} onChange={set("scheduled_date")} />
+            <Input label="Completed Date" type="date" value={form.completed_date} onChange={set("completed_date")} />
+            <Input label="Cost (FJD)" type="number" min="0" step="0.01" value={form.cost} onChange={set("cost")} placeholder="0.00" />
+            <Input label="Technician / Vendor" value={form.technician} onChange={set("technician")} placeholder="Who performed the work?" />
+          </div>
           <Textarea label="Notes" value={form.notes} onChange={set("notes")} rows={3} placeholder="Details about the maintenance work…" />
         </div>
       </div>
@@ -164,7 +179,7 @@ export default function MaintenanceTab() {
   const fmtDate = (d) => d ? new Date(d).toLocaleDateString("en-FJ", { day:"2-digit", month:"short", year:"numeric" }) : "—";
 
   return (
-    <div className="flex flex-col h-full gap-4">
+    <div className="flex flex-col h-full gap-5">
       {/* Toolbar */}
       <div className="flex items-center gap-3 flex-wrap shrink-0">
         {[
@@ -179,13 +194,13 @@ export default function MaintenanceTab() {
         ].map((f, i) => (
           <div key={i} className="relative">
             <select value={f.value} onChange={(e) => f.set(e.target.value)}
-              className="appearance-none pl-3 pr-8 py-2 text-sm rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent)] cursor-pointer">
+              className="appearance-none pl-3.5 pr-9 py-2.5 text-sm rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)] hover:border-[var(--border-hover)] text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/20 cursor-pointer transition-all">
               {f.opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
-            <Icon name="chevronDown" size={13} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--fg-muted)] pointer-events-none" />
+            <Icon name="chevronDown" size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--fg-muted)] pointer-events-none" />
           </div>
         ))}
-        <Badge tone="slate" className="ml-1">{records.length} records</Badge>
+        <Badge tone="slate" className="ml-1 tabular-nums">{records.length} records</Badge>
         <Button icon={<Icon name="plus" size={14} />} onClick={() => { setEditing(null); setShowModal(true); }} className="ml-auto">
           Log Maintenance
         </Button>
@@ -194,87 +209,89 @@ export default function MaintenanceTab() {
       {/* Table */}
       <div className="flex-1 min-h-0 overflow-y-auto scrollbar-none">
         {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <div className="w-10 h-10 rounded-full border-4 border-[var(--border-default)] border-t-[var(--accent)] animate-spin" />
-          </div>
+          <SkeletonTable rows={8} cols={6} />
         ) : records.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)]">
-            <Icon name="tool" size={36} className="text-[var(--fg-muted)] mb-3" />
-            <p className="text-sm font-semibold text-[var(--fg-primary)] mb-1">No maintenance records</p>
-            <p className="text-sm text-[var(--fg-muted)] mb-4">Log maintenance to track asset upkeep</p>
-            <Button icon={<Icon name="plus" size={14} />} onClick={() => setShowModal(true)}>Log Maintenance</Button>
+          <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]">
+            <EmptyState
+              icon="tool"
+              title="No maintenance records"
+              description="Log maintenance work to track asset upkeep, costs and schedules."
+              action={<Button icon={<Icon name="plus" size={14} />} onClick={() => setShowModal(true)}>Log Maintenance</Button>}
+            />
           </div>
         ) : (
-          <div className="rounded-xl overflow-hidden bg-[var(--bg-elevated)] border border-[var(--border-default)]">
-            <table className="w-full">
-              <thead>
-                <tr className="bg-[var(--bg-base)] border-b border-[var(--border-default)]">
-                  {["Asset","Title","Type","Status","Scheduled","Completed","Cost","Technician",""].map((h) => (
-                    <th key={h} className="text-left px-4 py-3 text-[11px] font-medium text-[var(--fg-muted)] uppercase tracking-wider whitespace-nowrap">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--border-default)]">
-                {records.map((r) => (
-                  <tr key={r.id} className="group hover:bg-[var(--bg-base)] transition-colors">
-                    <td className="px-4 py-3">
-                      <div>
-                        <p className="text-sm font-medium text-[var(--fg-primary)]">{r.asset_name}</p>
-                        <p className="text-xs text-[var(--fg-muted)] font-mono">{r.asset_tag}</p>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <p className="text-sm text-[var(--fg-primary)] max-w-[200px] truncate">{r.title}</p>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-1.5">
-                        <Icon name={TYPE_ICON[r.maintenance_type] || "box"} size={13} className="text-[var(--fg-muted)]" />
-                        <span className="text-sm text-[var(--fg-secondary)] capitalize">{r.maintenance_type}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge tone={STATUS_TONE[r.status] || "slate"}>{r.status.replace("_"," ")}</Badge>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="text-sm text-[var(--fg-secondary)]">{fmtDate(r.scheduled_date)}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="text-sm text-[var(--fg-secondary)]">{fmtDate(r.completed_date)}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="text-sm text-[var(--fg-secondary)]">{r.cost ? `FJD ${Number(r.cost).toFixed(2)}` : "—"}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="text-sm text-[var(--fg-secondary)]">{r.technician || "—"}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        {r.status === "scheduled" && (
-                          <button onClick={() => quickStatus(r.id, "in_progress")}
-                            className="px-2 py-1 text-xs rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20 hover:bg-amber-500/20 transition-all whitespace-nowrap">
-                            Start
-                          </button>
-                        )}
-                        {r.status === "in_progress" && (
-                          <button onClick={() => quickStatus(r.id, "completed")}
-                            className="px-2 py-1 text-xs rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-all whitespace-nowrap">
-                            Complete
-                          </button>
-                        )}
-                        <button onClick={() => { setEditing(r); setShowModal(true); }}
-                          className="p-1.5 rounded-lg text-[var(--fg-muted)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)] transition-all">
-                          <Icon name="pencil" size={13} />
-                        </button>
-                        <button onClick={() => handleDelete(r)}
-                          className="p-1.5 rounded-lg text-[var(--fg-muted)] hover:text-rose-400 hover:bg-rose-500/10 transition-all">
-                          <Icon name="trash" size={13} />
-                        </button>
-                      </div>
-                    </td>
+          <div className="rounded-2xl overflow-hidden bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="bg-[var(--bg-surface)]/60 border-b border-[var(--border-default)]">
+                    {["Asset","Title","Type","Status","Scheduled","Completed","Cost","Technician",""].map((h, i) => (
+                      <th key={i} className="text-left px-4 py-3 text-label whitespace-nowrap">{h}</th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-[var(--border-default)]">
+                  {records.map((r) => (
+                    <tr key={r.id} className="group hover:bg-[var(--bg-surface)] transition-colors duration-150">
+                      <td className="px-4 py-3.5">
+                        <div>
+                          <p className="text-sm font-medium text-[var(--fg-primary)]">{r.asset_name}</p>
+                          <p className="text-xs text-[var(--fg-muted)] font-mono">{r.asset_tag}</p>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <p className="text-sm text-[var(--fg-primary)] max-w-[200px] truncate">{r.title}</p>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <div className="flex items-center gap-1.5">
+                          <Icon name={TYPE_ICON[r.maintenance_type] || "box"} size={14} className="text-[var(--fg-muted)]" />
+                          <span className="text-sm text-[var(--fg-secondary)] capitalize">{r.maintenance_type}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <Badge tone={STATUS_TONE[r.status] || "slate"} size="sm" dot className="capitalize">{r.status.replace("_"," ")}</Badge>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <span className="text-sm text-[var(--fg-secondary)]">{fmtDate(r.scheduled_date)}</span>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <span className="text-sm text-[var(--fg-secondary)]">{fmtDate(r.completed_date)}</span>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <span className="text-sm tabular-nums text-[var(--fg-secondary)]">{r.cost ? `FJD ${Number(r.cost).toFixed(2)}` : "—"}</span>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <span className="text-sm text-[var(--fg-secondary)]">{r.technician || "—"}</span>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {r.status === "scheduled" && (
+                            <button onClick={() => quickStatus(r.id, "in_progress")}
+                              className="px-2.5 py-1 text-xs font-medium rounded-md bg-amber-500/10 text-amber-500 border border-amber-500/20 hover:bg-amber-500/20 transition-all whitespace-nowrap">
+                              Start
+                            </button>
+                          )}
+                          {r.status === "in_progress" && (
+                            <button onClick={() => quickStatus(r.id, "completed")}
+                              className="px-2.5 py-1 text-xs font-medium rounded-md bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 hover:bg-emerald-500/20 transition-all whitespace-nowrap">
+                              Complete
+                            </button>
+                          )}
+                          <button onClick={() => { setEditing(r); setShowModal(true); }}
+                            className="p-1.5 rounded-md text-[var(--fg-muted)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface-hover)] transition-all">
+                            <Icon name="pencil" size={13} />
+                          </button>
+                          <button onClick={() => handleDelete(r)}
+                            className="p-1.5 rounded-md text-[var(--fg-muted)] hover:text-rose-500 hover:bg-rose-500/10 transition-all">
+                            <Icon name="trash" size={13} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>
