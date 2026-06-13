@@ -206,6 +206,14 @@
     box-sizing: border-box;
   }
 
+  /* Robustly clip decorative layers (incl. blur-filtered glow blobs) to rounded
+     card corners. Chromium can let a `filter: blur()` child escape an ancestor's
+     `overflow: hidden` + `border-radius`, leaving a square glow in the corner;
+     paint containment forces the rounded clip. Scoped to elevated cards only. */
+  [class*="rounded-2xl"][class*="overflow-hidden"] {
+    contain: paint;
+  }
+
   /* Custom scrollbar - adapts to theme */
   ::-webkit-scrollbar {
     width: 8px;
@@ -526,6 +534,14 @@
     to { opacity: 1; transform: translateY(0); }
   }
   .animate-kpi-rise { animation: kpi-rise 0.5s var(--ease-out-expo) both; }
+
+  /* Flowing Vodafone-red header accent — a gentle left↔right pulse that runs
+     along the bottom edge of the app header, giving the chrome a live feel. */
+  @keyframes header-wave {
+    0%, 100% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+  }
+  .animate-header-wave { animation: header-wave 6s ease-in-out infinite; }
 
   /* Animation delays */
   .delay-75 { animation-delay: 75ms; }

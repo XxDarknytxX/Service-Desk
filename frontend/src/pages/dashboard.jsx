@@ -257,8 +257,12 @@ export default function Dashboard() {
       <div
         className="relative overflow-hidden rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] animate-fade-up"
       >
-        {/* decorative brand glow */}
-        <div className="pointer-events-none absolute -top-24 -right-16 h-64 w-64 rounded-full bg-[var(--accent)] opacity-[0.10] blur-3xl" />
+        {/* decorative brand glow — radial-gradient background clips cleanly to the
+            rounded corners (a blur-filtered child can escape the rounded clip in Chromium) */}
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{ background: "radial-gradient(520px circle at 100% -10%, rgba(230,0,0,0.13), transparent 62%)" }}
+        />
         <div className="pointer-events-none absolute inset-0 bg-grid opacity-60" />
         <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[var(--accent)] to-transparent opacity-40" />
 

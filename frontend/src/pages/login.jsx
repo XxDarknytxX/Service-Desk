@@ -15,6 +15,7 @@ import { useToast } from "../contexts/toast";
 import Button from "../components/ui/Button";
 import Icon from "../components/ui/Icon";
 import VodafoneLogo from "../components/ui/VodafoneLogo";
+import LoadingScreen from "../components/ui/LoadingScreen";
 
 function cn(...parts) {
   return parts.filter(Boolean).join(" ");
@@ -45,6 +46,7 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [entering, setEntering] = useState(false);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -64,10 +66,11 @@ export default function Login() {
     setLoading(true);
     try {
       await login(email, password);
-      navigate("/dashboard");
+      // Branded splash, then transition into the app
+      setEntering(true);
+      setTimeout(() => navigate("/dashboard"), 1300);
     } catch (err) {
       toast.error(err.message || "Invalid credentials");
-    } finally {
       setLoading(false);
     }
   }
@@ -83,6 +86,8 @@ export default function Login() {
 
   return (
     <div className="login-canvas relative min-h-screen flex overflow-hidden">
+      {/* Post-login branded splash → transitions into the app */}
+      {entering && <LoadingScreen message="Signing you in…" />}
       {/* ── Page-wide decorative layers (one canvas, no boundaries) ── */}
       {/* Grid texture, fading out as the canvas turns white */}
       <div

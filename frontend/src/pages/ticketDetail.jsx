@@ -1074,7 +1074,11 @@ export default function TicketDetail() {
               const dateGroups = groupEventsByDate(filteredTrail);
 
               return (
-                <div>
+                <div className={cn(activeTab === "all" && comments.length > 0 && "mt-8 pt-6 border-t border-[var(--border-default)]")}>
+                  {/* Section label when combined with comments in the All tab */}
+                  {activeTab === "all" && (
+                    <p className="text-label mb-4">Activity timeline</p>
+                  )}
                   {/* Filter Input */}
                   {activeTab === "history" && (
                     <div className="relative mb-4">

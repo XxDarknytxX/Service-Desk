@@ -357,11 +357,20 @@ export default function AppLayout({ children }) {
         {/* Header — same surface + border as the sidebar so the chrome is one piece */}
         <header
           className={cn(
-            "h-16 flex-shrink-0 z-20",
+            "relative h-16 flex-shrink-0 z-20",
             "bg-[var(--bg-elevated)]",
             "border-b border-[var(--border-default)]"
           )}
         >
+          {/* Flowing Vodafone-red accent line — gentle pulse along the header edge */}
+          <div
+            className="pointer-events-none absolute bottom-0 left-0 w-full h-[2px] z-10 animate-header-wave"
+            style={{
+              background:
+                "linear-gradient(90deg, rgba(230,0,0,0.04) 0%, rgba(230,0,0,0.55) 25%, #E60000 50%, rgba(230,0,0,0.55) 75%, rgba(230,0,0,0.04) 100%)",
+              backgroundSize: "200% 100%",
+            }}
+          />
           <div className="h-full flex items-center justify-between gap-4 px-4 sm:px-6">
             {/* Left: hamburger (mobile) + search */}
             <div className="flex items-center gap-3 flex-1 min-w-0">
