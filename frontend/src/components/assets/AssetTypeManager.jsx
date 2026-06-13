@@ -8,10 +8,22 @@ import { useToast } from "../../contexts/toast";
 import Badge from "../ui/Badge";
 import Button from "../ui/Button";
 import Icon from "../ui/Icon";
+import useConfirm from "../ui/useConfirm";
 
 function cn(...p) { return p.filter(Boolean).join(" "); }
 
 const COLORS = ["blue","purple","emerald","amber","rose","slate","cyan","orange"];
+
+const SWATCH_STYLES = {
+  blue: "bg-blue-500",
+  purple: "bg-purple-500",
+  emerald: "bg-emerald-500",
+  amber: "bg-amber-500",
+  rose: "bg-rose-500",
+  slate: "bg-slate-500",
+  cyan: "bg-cyan-500",
+  orange: "bg-orange-500",
+};
 const ICONS  = ["box","monitor","wifi","phone","code","briefcase","server","database","shield","tool","layers","cpu"];
 
 const COLOR_STYLES = {
@@ -49,8 +61,8 @@ function InlineForm({ title, initial = {}, onSave, onCancel }) {
         className="w-full px-3 py-2 text-sm rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)] text-[var(--fg-primary)] focus:outline-none focus:border-[var(--accent)]" />
       <div className="flex flex-wrap gap-1.5">
         {COLORS.map((c) => (
-          <button key={c} onClick={() => setColor(c)}
-            className={cn("w-6 h-6 rounded-full border-2 transition-all", `bg-${c}-500`, color===c ? "border-white scale-110" : "border-transparent opacity-60 hover:opacity-100")} />
+          <button key={c} onClick={() => setColor(c)} title={c} aria-label={`Color ${c}`}
+            className={cn("w-6 h-6 rounded-full border-2 transition-all", SWATCH_STYLES[c], color===c ? "border-[var(--fg-primary)] scale-110" : "border-transparent opacity-60 hover:opacity-100")} />
         ))}
       </div>
       <div className="flex flex-wrap gap-1.5">
@@ -108,6 +120,7 @@ function TypeForm({ categoryId, initial = {}, onSave, onCancel }) {
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function AssetTypeManager() {
   const toast = useToast();
+  const { confirm, confirmDialog } = useConfirm();
   const [categories, setCategories] = useState([]);
   const [types, setTypes]           = useState([]);
   const [selectedCat, setSelectedCat] = useState(null);
@@ -126,7 +139,9 @@ export default function AssetTypeManager() {
       setCategories(cats);
       setTypes(typs);
       if (!selectedCat && cats.length) setSelectedCat(cats[0].id);
-    } catch { /* silent */ }
+    } catch (e) {
+      toast.error(e?.message || "Failed to load asset categories");
+    }
     finally { setLoading(false); }
   }
 
@@ -135,30 +150,58 @@ export default function AssetTypeManager() {
 
   async function handleSaveCategory(data) {
     try {
-      if (editingCat) await assetsApi.updateCategory(editingCat.id, data);
-      else            { const r = await assetsApi.createCategory(data); setSelectedCat(r.id); }
+      if (editingCat) { await assetsApi.updateCategory(editingCat.id, data); toast.success("Category updated"); }
+      else            { const r = await assetsApi.createCategory(data); setSelectedCat(r.id); toast.success("Category created"); }
       setEditingCat(null); setAddingCat(false);
       load();
-    } catch { /* silent */ }
+    } catch (e) {
+      toast.error(e?.message || "Failed to save category");
+    }
   }
 
-  async function handleDeleteCategory(cat) {
-    try { await assetsApi.deleteCategory(cat.id); load(); } catch { /* silent */ }
+  function handleDeleteCategory(cat) {
+    confirm({
+      title: "Delete category?",
+      message: (
+        <>
+          This will delete <strong className="text-[var(--fg-primary)]">{cat.name}</strong>
+          {cat.type_count > 0 && <> and its {cat.type_count} type{cat.type_count > 1 ? "s" : ""}</>}.
+        </>
+      ),
+      confirmText: "Delete",
+      onConfirm: async () => {
+        try { await assetsApi.deleteCategory(cat.id); toast.success("Category deleted"); load(); }
+        catch (e) { toast.error(e?.message || "Cannot delete — assets may still use this category"); }
+      },
+    });
   }
 
   async function handleSaveType(data) {
     try {
-      if (editingType) await assetsApi.updateAssetType(editingType.id, data);
-      else             await assetsApi.createAssetType(data);
+      if (editingType) { await assetsApi.updateAssetType(editingType.id, data); toast.success("Type updated"); }
+      else             { await assetsApi.createAssetType(data); toast.success("Type created"); }
       setEditingType(null); setAddingType(false);
       load();
-    } catch { /* silent */ }
+    } catch (e) {
+      toast.error(e?.message || "Failed to save type");
+    }
   }
 
-  async function handleDeleteType(type) {
-    try { await assetsApi.deleteAssetType(type.id); load(); } catch (e) {
-      toast.error(e?.message || "Cannot delete — assets may still use this type");
-    }
+  function handleDeleteType(type) {
+    confirm({
+      title: "Delete asset type?",
+      message: (
+        <>
+          This will delete <strong className="text-[var(--fg-primary)]">{type.name}</strong>
+          {type.asset_count > 0 && <>. {type.asset_count} asset{type.asset_count > 1 ? "s" : ""} currently use it</>}.
+        </>
+      ),
+      confirmText: "Delete",
+      onConfirm: async () => {
+        try { await assetsApi.deleteAssetType(type.id); toast.success("Type deleted"); load(); }
+        catch (e) { toast.error(e?.message || "Cannot delete — assets may still use this type"); }
+      },
+    });
   }
 
   return (
@@ -275,6 +318,8 @@ export default function AssetTypeManager() {
           )}
         </div>
       </div>
+
+      {confirmDialog}
     </div>
   );
 }

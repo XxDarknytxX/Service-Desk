@@ -11,6 +11,7 @@ import Modal from "../components/ui/Modal";
 import Input, { Textarea } from "../components/ui/Input";
 import Badge from "../components/ui/Badge";
 import Card from "../components/ui/Card";
+import useConfirm from "../components/ui/useConfirm";
 import { useAuth } from "../contexts/auth";
 import { useToast } from "../contexts/toast";
 
@@ -21,6 +22,7 @@ function cn(...parts) {
 export default function Organizations() {
   const { user } = useAuth();
   const toast = useToast();
+  const { confirm, confirmDialog } = useConfirm();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -37,6 +39,8 @@ export default function Organizations() {
     try {
       const data = await api("/organizations");
       setItems(data.items || []);
+    } catch (error) {
+      toast.error(error.message || "Failed to load organizations");
     } finally { setLoading(false); }
   }
 
@@ -58,8 +62,10 @@ export default function Organizations() {
     try {
       if (editingOrg) {
         await api(`/organizations/${editingOrg.id}`, { method: "PATCH", body: formData });
+        toast.success("Organization updated");
       } else {
         await api("/organizations", { method: "POST", body: formData });
+        toast.success("Organization created");
       }
       setShowModal(false);
       loadOrganizations();
@@ -67,12 +73,25 @@ export default function Organizations() {
     finally { setSubmitting(false); }
   }
 
-  async function handleDelete(id) {
-    // confirm removed - proceeding with deletion directly
-    try {
-      await api(`/organizations/${id}`, { method: "DELETE" });
-      loadOrganizations();
-    } catch (error) { toast.error(error.message); }
+  function handleDelete(org) {
+    confirm({
+      title: "Delete organization?",
+      message: (
+        <>
+          This will permanently delete{" "}
+          <strong className="text-[var(--fg-primary)]">{org.name}</strong> and
+          unlink it from any tickets. This action cannot be undone.
+        </>
+      ),
+      confirmText: "Delete Organization",
+      onConfirm: async () => {
+        try {
+          await api(`/organizations/${org.id}`, { method: "DELETE" });
+          toast.success("Organization deleted");
+          loadOrganizations();
+        } catch (error) { toast.error(error.message); }
+      },
+    });
   }
 
   const filtered = items.filter((org) =>
@@ -145,6 +164,7 @@ export default function Organizations() {
         </div>
       ) : (
         <Card tint="cyan" padding={false} hover={false}>
+          <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr className="bg-[var(--bg-base)] border-b border-[var(--border-default)]">
@@ -214,7 +234,8 @@ export default function Organizations() {
                           <Icon name="pencil" size={14} />
                         </button>
                         <button
-                          onClick={() => handleDelete(org.id)}
+                          onClick={() => handleDelete(org)}
+                          title="Delete organization"
                           className={cn(
                             "inline-flex items-center justify-center p-2.5 rounded-lg transition-all duration-200",
                             "text-[var(--fg-muted)] hover:text-rose-400",
@@ -230,6 +251,7 @@ export default function Organizations() {
               ))}
             </tbody>
           </table>
+          </div>
         </Card>
       )}
 
@@ -281,6 +303,8 @@ export default function Organizations() {
           />
         </form>
       </Modal>
+
+      {confirmDialog}
     </div>
   );
 }

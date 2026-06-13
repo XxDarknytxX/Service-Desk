@@ -9,8 +9,11 @@ import { requireAuth } from '../middleware/auth.js';
 export function makeAiChatRouter(aiChatController) {
   const router = express.Router();
 
-  // All routes require authentication
-  router.use(requireAuth);
+  // All AI chat routes require authentication.
+  // Scoped to /ai-chat so this router never intercepts unrelated /api paths
+  // (a bare router.use(requireAuth) would 401 every request that flows
+  // through this router, including public form links).
+  router.use('/ai-chat', requireAuth);
 
   // Send message to AI
   router.post('/ai-chat/message', aiChatController.sendMessage);

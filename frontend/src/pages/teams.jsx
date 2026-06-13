@@ -12,6 +12,7 @@ import Modal from "../components/ui/Modal";
 import Input, { Textarea } from "../components/ui/Input";
 import Badge from "../components/ui/Badge";
 import Card from "../components/ui/Card";
+import useConfirm from "../components/ui/useConfirm";
 import { useAuth } from "../contexts/auth";
 import { useToast } from "../contexts/toast";
 
@@ -165,6 +166,7 @@ function cn(...parts) {
 export default function Teams() {
   const { user } = useAuth();
   const toast = useToast();
+  const { confirm, confirmDialog } = useConfirm();
   const [teams, setTeams] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -200,6 +202,8 @@ export default function Teams() {
     try {
       const data = await api("/teams");
       setTeams(data.items || []);
+    } catch (error) {
+      toast.error(error.message || "Failed to load teams");
     } finally { setLoading(false); }
   }
 
@@ -221,8 +225,10 @@ export default function Teams() {
     try {
       if (editingTeam) {
         await api(`/teams/${editingTeam.id}`, { method: "PATCH", body: formData });
+        toast.success("Team updated");
       } else {
         await api("/teams", { method: "POST", body: formData });
+        toast.success("Team created");
       }
       setShowModal(false);
       loadTeams();
@@ -230,12 +236,25 @@ export default function Teams() {
     finally { setSubmitting(false); }
   }
 
-  async function handleDelete(id) {
-    // confirm removed - proceeding with deletion directly
-    try {
-      await api(`/teams/${id}`, { method: "DELETE" });
-      loadTeams();
-    } catch (error) { toast.error(error.message); }
+  function handleDelete(team) {
+    confirm({
+      title: "Delete team?",
+      message: (
+        <>
+          This will permanently delete{" "}
+          <strong className="text-[var(--fg-primary)]">{team.name}</strong> and
+          remove all of its member assignments. This action cannot be undone.
+        </>
+      ),
+      confirmText: "Delete Team",
+      onConfirm: async () => {
+        try {
+          await api(`/teams/${team.id}`, { method: "DELETE" });
+          toast.success("Team deleted");
+          loadTeams();
+        } catch (error) { toast.error(error.message); }
+      },
+    });
   }
 
   async function openMembersModal(team) {
@@ -288,16 +307,32 @@ export default function Teams() {
     }
   }
 
-  async function removeMember(member) {
-    // confirm removed - proceeding with removal directly
-    try {
-      // DELETE /teams/members/:userId removes the user from all teams
-      await api(`/teams/members/${member.id}`, { method: "DELETE" });
-      await reloadMembers();
-      loadTeams();
-    } catch (error) {
-      toast.error(error.message || "Failed to remove member");
-    }
+  function removeMember(member) {
+    confirm({
+      title: "Remove member?",
+      message: (
+        <>
+          Remove{" "}
+          <strong className="text-[var(--fg-primary)]">
+            {member.full_name || member.email}
+          </strong>{" "}
+          from {selectedTeam?.name || "this team"}? They will keep their account
+          and can be re-added later.
+        </>
+      ),
+      confirmText: "Remove",
+      onConfirm: async () => {
+        try {
+          // DELETE /teams/members/:userId removes the user from all teams
+          await api(`/teams/members/${member.id}`, { method: "DELETE" });
+          toast.success("Member removed");
+          await reloadMembers();
+          loadTeams();
+        } catch (error) {
+          toast.error(error.message || "Failed to remove member");
+        }
+      },
+    });
   }
 
   async function addMember(u) {
@@ -364,6 +399,7 @@ export default function Teams() {
         method: "PUT",
         body: { restricted: privilegesRestricted, modules: privilegesModules },
       });
+      toast.success("Team privileges saved");
       setShowPrivilegesModal(false);
     } catch (error) {
       toast.error(error.message || "Failed to save privileges");
@@ -493,7 +529,8 @@ export default function Teams() {
                         <Icon name="pencil" size={14} />
                       </button>
                       <button
-                        onClick={() => handleDelete(team.id)}
+                        onClick={() => handleDelete(team)}
+                        title="Delete team"
                         className={cn(
                           "p-2 rounded-lg transition-all duration-200",
                           "text-[var(--fg-muted)] hover:text-rose-400",
@@ -1009,6 +1046,8 @@ export default function Teams() {
           </div>
         )}
       </Modal>
+
+      {confirmDialog}
     </div>
   );
 }

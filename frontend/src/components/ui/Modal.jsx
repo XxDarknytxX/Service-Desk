@@ -7,10 +7,11 @@
  * - Elevated card container with multi-layer shadows
  * - Accent glow line at top
  * - Scale-in animation
- * - Keyboard accessible (Escape to close)
+ * - Keyboard accessible (Escape to close, focus trap, focus restore)
+ * - Click outside to close (mousedown-based so text-selection drags don't dismiss)
  */
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import Icon from "./Icon";
 import Button from "./Button";
@@ -28,6 +29,9 @@ const sizes = {
   full: "max-w-7xl",
 };
 
+const FOCUSABLE =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 export default function Modal({
   open,
   onClose,
@@ -41,6 +45,8 @@ export default function Modal({
 }) {
   const { theme } = useTheme();
   const isLight = theme === "light";
+  const dialogRef = useRef(null);
+  const restoreFocusRef = useRef(null);
 
   // Lock body scroll when open
   useEffect(() => {
@@ -54,12 +60,51 @@ export default function Modal({
     };
   }, [open]);
 
-  // Handle Escape key
+  // Focus management: remember the trigger, focus the dialog, restore on close
+  useEffect(() => {
+    if (!open) return undefined;
+    restoreFocusRef.current = document.activeElement;
+    const t = requestAnimationFrame(() => {
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      if (dialog.contains(document.activeElement)) return;
+      const first = dialog.querySelector(FOCUSABLE);
+      (first || dialog).focus({ preventScroll: true });
+    });
+    return () => {
+      cancelAnimationFrame(t);
+      const prev = restoreFocusRef.current;
+      if (prev && typeof prev.focus === "function" && document.contains(prev)) {
+        prev.focus({ preventScroll: true });
+      }
+    };
+  }, [open]);
+
+  // Keyboard: Escape closes, Tab cycles within the dialog
   useEffect(() => {
     if (!open) return undefined;
     function onKeyDown(event) {
       if (event.key === "Escape") {
+        event.stopPropagation();
         onClose?.();
+        return;
+      }
+      if (event.key === "Tab") {
+        const dialog = dialogRef.current;
+        if (!dialog) return;
+        const nodes = Array.from(dialog.querySelectorAll(FOCUSABLE)).filter(
+          (el) => el.offsetParent !== null || el === document.activeElement
+        );
+        if (nodes.length === 0) return;
+        const first = nodes[0];
+        const last = nodes[nodes.length - 1];
+        if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+          event.preventDefault();
+          first.focus();
+        }
       }
     }
     window.addEventListener("keydown", onKeyDown);
@@ -77,13 +122,20 @@ export default function Modal({
           "fixed inset-0 backdrop-blur-sm transition-opacity animate-fade-in",
           isLight ? "bg-black/30" : "bg-black/70"
         )}
-        onClick={onClose}
         aria-hidden="true"
       />
 
-      {/* Modal Container */}
-      <div className="flex min-h-full items-center justify-center p-4 sm:p-6">
+      {/* Modal Container — mousedown on the empty area closes (clicks that start
+          inside the dialog and end outside, e.g. text selection, do not) */}
+      <div
+        className="flex min-h-full items-center justify-center p-4 sm:p-6"
+        onMouseDown={(e) => {
+          if (e.target === e.currentTarget) onClose?.();
+        }}
+      >
         <div
+          ref={dialogRef}
+          tabIndex={-1}
           className={cn(
             "relative w-full",
             sizes[size],
@@ -96,11 +148,13 @@ export default function Modal({
             // Animation
             "animate-scale-in",
             // Layout
-            "flex flex-col max-h-[calc(100vh-3rem)]"
+            "flex flex-col max-h-[calc(100vh-3rem)]",
+            // No outline when programmatically focused
+            "focus:outline-none"
           )}
           role="dialog"
           aria-modal="true"
-          onClick={(e) => e.stopPropagation()}
+          aria-label={typeof title === "string" ? title : undefined}
         >
           {/* Accent glow line at top */}
           <div className={cn(
@@ -189,11 +243,23 @@ export function ConfirmModal({
   cancelText = "Cancel",
   variant = "danger",
   loading = false,
+  icon,
 }) {
+  const iconStyles = {
+    danger: "bg-rose-500/10 text-rose-400 border-rose-500/20",
+    primary: "bg-[var(--accent)]/10 text-[var(--accent)] border-[var(--accent)]/20",
+    success: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+  };
+  const defaultIcons = {
+    danger: "alertTriangle",
+    primary: "info",
+    success: "checkCircle",
+  };
+
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={loading ? undefined : onClose}
       title={title}
       size="sm"
       actions={
@@ -211,9 +277,19 @@ export function ConfirmModal({
         </>
       }
     >
-      <p className="text-[var(--fg-secondary)] leading-relaxed">
-        {message}
-      </p>
+      <div className="flex items-start gap-4">
+        <div
+          className={cn(
+            "w-11 h-11 rounded-xl border flex items-center justify-center shrink-0",
+            iconStyles[variant] || iconStyles.danger
+          )}
+        >
+          <Icon name={icon || defaultIcons[variant] || "alertTriangle"} size={20} />
+        </div>
+        <div className="text-sm text-[var(--fg-secondary)] leading-relaxed pt-1.5">
+          {message}
+        </div>
+      </div>
     </Modal>
   );
 }

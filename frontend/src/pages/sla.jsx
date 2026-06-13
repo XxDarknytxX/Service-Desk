@@ -15,6 +15,7 @@ import Icon from "../components/ui/Icon";
 import Card, { StatCard } from "../components/ui/Card";
 import Modal from "../components/ui/Modal";
 import Input, { Textarea } from "../components/ui/Input";
+import useConfirm from "../components/ui/useConfirm";
 import { useAuth } from "../contexts/auth";
 import { useMeta } from "../contexts/meta";
 import { useToast } from "../contexts/toast";
@@ -58,6 +59,7 @@ export default function SlaManagement() {
   const { user } = useAuth();
   const { meta } = useMeta();
   const toast = useToast();
+  const { confirm, confirmDialog } = useConfirm();
   const navigate = useNavigate();
   const [policies, setPolicies] = useState([]);
   const [ticketSlas, setTicketSlas] = useState([]);
@@ -187,6 +189,7 @@ export default function SlaManagement() {
       setApprovalSlaList(aslList);
     } catch (error) {
       console.error("Failed to load SLA data", error);
+      toast.error(error.message || "Failed to load SLA data");
     } finally {
       setLoading(false);
     }
@@ -310,10 +313,15 @@ export default function SlaManagement() {
 
       if (editingPolicy) {
         await slaApi.updatePolicy(editingPolicy.id, payload);
+        toast.success("Policy updated");
       } else {
         await slaApi.createPolicy(payload);
+        toast.success("Policy created");
       }
       setShowPolicyModal(false);
+      setEditingPolicy(null);
+      setCreatePolicyType(null);
+      setPolicyForm(defaultTeamForm);
       loadData();
     } catch (error) {
       toast.error(error.message);
@@ -322,14 +330,28 @@ export default function SlaManagement() {
     }
   }
 
-  async function handleDeletePolicy(id) {
-    // confirm removed - proceeding with deletion directly
-    try {
-      await slaApi.deletePolicy(id);
-      loadData();
-    } catch (error) {
-      toast.error(error.message);
-    }
+  function handleDeletePolicy(policy) {
+    confirm({
+      title: "Delete SLA policy?",
+      message: (
+        <>
+          This will permanently delete{" "}
+          <strong className="text-[var(--fg-primary)]">{policy.name}</strong>.
+          Tickets already tracked under this policy keep their existing timers,
+          but no new tickets will use it.
+        </>
+      ),
+      confirmText: "Delete Policy",
+      onConfirm: async () => {
+        try {
+          await slaApi.deletePolicy(policy.id);
+          toast.success("Policy deleted");
+          loadData();
+        } catch (error) {
+          toast.error(error.message);
+        }
+      },
+    });
   }
 
   async function handleCheckBreaches() {
@@ -529,7 +551,7 @@ export default function SlaManagement() {
                               className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-base)] transition-all">
                               <Icon name="pencil" size={14} />
                             </button>
-                            <button onClick={() => handleDeletePolicy(policy.id)}
+                            <button onClick={() => handleDeletePolicy(policy)}
                               className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-rose-400 hover:bg-rose-500/10 transition-all">
                               <Icon name="trash" size={14} />
                             </button>
@@ -624,7 +646,7 @@ export default function SlaManagement() {
                               className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-base)] transition-all">
                               <Icon name="pencil" size={14} />
                             </button>
-                            <button onClick={() => handleDeletePolicy(policy.id)}
+                            <button onClick={() => handleDeletePolicy(policy)}
                               className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-rose-400 hover:bg-rose-500/10 transition-all">
                               <Icon name="trash" size={14} />
                             </button>
@@ -842,15 +864,24 @@ export default function SlaManagement() {
                 { label: "Breached", value: approvalSlaStats.breached, tone: "rose" },
                 { label: "Pending", value: approvalSlaStats.pending, tone: "amber" },
                 { label: "Escalated", value: approvalSlaStats.escalated, tone: "violet" },
-              ].map((s) => (
-                <div key={s.label} className={cn(
-                  "rounded-lg p-3 text-center",
-                  "bg-[var(--bg-elevated)] border border-[var(--border-default)]"
-                )}>
-                  <p className={`text-2xl font-bold text-${s.tone}-400`}>{s.value}</p>
-                  <p className="text-[11px] text-[var(--fg-muted)] mt-1">{s.label}</p>
-                </div>
-              ))}
+              ].map((s) => {
+                const toneText = {
+                  blue: "text-blue-400",
+                  emerald: "text-emerald-400",
+                  rose: "text-rose-400",
+                  amber: "text-amber-400",
+                  violet: "text-violet-400",
+                }[s.tone] || "text-[var(--fg-primary)]";
+                return (
+                  <div key={s.label} className={cn(
+                    "rounded-lg p-3 text-center",
+                    "bg-[var(--bg-elevated)] border border-[var(--border-default)]"
+                  )}>
+                    <p className={cn("text-2xl font-bold", toneText)}>{s.value}</p>
+                    <p className="text-[11px] text-[var(--fg-muted)] mt-1">{s.label}</p>
+                  </div>
+                );
+              })}
             </div>
           )}
 
@@ -1626,6 +1657,8 @@ export default function SlaManagement() {
           </div>
         )}
       </Modal>
+
+      {confirmDialog}
     </div>
   );
 }

@@ -3,17 +3,19 @@
  * Linear/Modern Design System
  *
  * Features:
- * - Dark sidebar with subtle accent glow
- * - Glass-morphic header
- * - Floating ambient blobs
- * - Collapsible sidebar
+ * - Unified chrome: sidebar and header share the same elevated surface + border
+ * - Buttery sidebar collapse: fixed 40px icon column that never moves,
+ *   labels fade/slide out, width animates with the expo ease
+ * - Collapse control lives ON the sidebar edge (desktop); hamburger is mobile-only
+ * - Active nav item gets an accent bar + tinted icon
+ * - Collapse state persists across sessions
  * - Mobile responsive with slide-out menu
  */
 
 import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../contexts/auth";
-import { useTheme } from "../contexts/theme";
 import Icon from "./ui/Icon";
+import VodafoneLogo from "./ui/VodafoneLogo";
 import FloatingBlobs from "./ui/FloatingBlobs";
 import FaqChatBar from "./FaqChatBar";
 import { useState, useEffect, useRef } from "react";
@@ -44,11 +46,15 @@ const navSections = [
       { to: "/templates", label: "Ticket Templates", icon: "clipboard", roles: ["admin"], moduleKey: "templates" },
       { to: "/assets", label: "Assets", icon: "assets", roles: ["admin", "agent"], moduleKey: "assets" },
       { to: "/sla", label: "SLA Policies", icon: "sla", roles: ["admin"], moduleKey: "sla" },
+      { to: "/forms", label: "Customer Forms", icon: "send", roles: ["admin", "agent"], moduleKey: "forms" },
       { to: "/knowledge-base", label: "Knowledge Base", icon: "knowledgeBase", moduleKey: "knowledge-base" },
       { to: "/reports", label: "Reports", icon: "reports", roles: ["admin", "agent"], moduleKey: "reports" },
     ],
   },
 ];
+
+const SIDEBAR_EXPANDED = 260;
+const SIDEBAR_COLLAPSED = 72;
 
 function cn(...parts) {
   return parts.filter(Boolean).join(" ");
@@ -58,10 +64,10 @@ export default function AppLayout({ children }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuth();
-  const { theme } = useTheme();
-  const isLight = theme === "light";
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(
+    () => localStorage.getItem("sd-sidebar-collapsed") === "1"
+  );
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
 
@@ -69,19 +75,25 @@ export default function AppLayout({ children }) {
   const notificationsRef = useRef(null);
 
   const userRoles = user?.roles || [];
-  const SIDEBAR_WIDTH_EXPANDED = 260;
-  const SIDEBAR_WIDTH_COLLAPSED = 72;
-  const sidebarWidth = collapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH_EXPANDED;
+  // Mobile overlay always shows the expanded layout
+  const expanded = !collapsed || mobileOpen;
+  const sidebarWidth = mobileOpen
+    ? SIDEBAR_EXPANDED
+    : collapsed
+    ? SIDEBAR_COLLAPSED
+    : SIDEBAR_EXPANDED;
+
+  function toggleCollapsed() {
+    setCollapsed((prev) => {
+      localStorage.setItem("sd-sidebar-collapsed", prev ? "0" : "1");
+      return !prev;
+    });
+  }
 
   function isVisible(item) {
-    // 1. Role check (existing)
     const roleOk = item.roles ? item.roles.some((role) => userRoles.includes(role)) : true;
     if (!roleOk) return false;
-
-    // 2. Admins bypass team module restrictions
     if (userRoles.includes("admin")) return true;
-
-    // 3. Team module check: null/undefined = unrestricted, array = restricted
     const teamModules = user?.teamModules;
     if (!teamModules || !item.moduleKey) return true;
     return teamModules.includes(item.moduleKey);
@@ -99,6 +111,9 @@ export default function AppLayout({ children }) {
     : userRoles.includes("agent")
     ? "Support Agent"
     : "User";
+
+  const displayName = user?.fullName || user?.full_name || user?.email || "User";
+  const initial = displayName[0].toUpperCase();
 
   // Close mobile menu on route change
   useEffect(() => {
@@ -134,6 +149,14 @@ export default function AppLayout({ children }) {
     };
   }, [mobileOpen]);
 
+  /* Fade/slide treatment shared by every label that disappears on collapse */
+  const labelCls = (extra) =>
+    cn(
+      "transition-[opacity,transform] duration-200 ease-out whitespace-nowrap",
+      expanded ? "opacity-100 translate-x-0" : "opacity-0 -translate-x-2 pointer-events-none",
+      extra
+    );
+
   return (
     <div className="flex h-screen overflow-hidden bg-[var(--bg-base)]">
       {/* Floating background blobs */}
@@ -151,105 +174,131 @@ export default function AppLayout({ children }) {
       {/* ===== SIDEBAR ===== */}
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex flex-col transition-all duration-300",
-          "sidebar-bg border-r border-[var(--border-default)]",
+          "fixed inset-y-0 left-0 z-50 flex flex-col",
+          "bg-[var(--bg-elevated)] border-r border-[var(--border-default)]",
+          "transition-[width,transform] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]",
           "lg:relative lg:translate-x-0",
           mobileOpen ? "translate-x-0" : "-translate-x-full"
         )}
-        style={{ width: mobileOpen ? SIDEBAR_WIDTH_EXPANDED : sidebarWidth }}
+        style={{ width: sidebarWidth }}
       >
         {/* Accent glow line at top */}
-        <div className={cn(
-          "absolute top-0 left-[20%] right-[20%] h-px bg-gradient-to-r from-transparent via-[var(--accent)] to-transparent",
-          isLight ? "opacity-20" : "opacity-40"
-        )} />
+        <div className="absolute top-0 left-[20%] right-[20%] h-px bg-gradient-to-r from-transparent via-[var(--accent)] to-transparent opacity-30 pointer-events-none" />
 
-        {/* Logo row */}
-        <div className="h-16 flex items-center gap-3 px-4 flex-shrink-0 border-b border-[var(--border-default)]">
-          <div
-            className={cn(
-              "h-9 w-9 min-w-[2.25rem] rounded-lg flex items-center justify-center flex-shrink-0",
-              "bg-[var(--accent)] text-white",
-              "shadow-[0_0_20px_rgba(230,0,0,0.3)]"
-            )}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-              <path d="M12 2L2 7l10 5 10-5-10-5z" fill="currentColor" opacity="0.9" />
-              <path
-                d="M2 17l10 5 10-5M2 12l10 5 10-5"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
+        {/* Collapse toggle — floats on the sidebar edge (desktop only) */}
+        <button
+          onClick={toggleCollapsed}
+          className={cn(
+            "hidden lg:flex absolute -right-3 top-[42px] z-10",
+            "h-6 w-6 items-center justify-center rounded-full",
+            "bg-[var(--bg-elevated)] border border-[var(--border-strong)]",
+            "text-[var(--fg-muted)] shadow-[0_2px_8px_rgba(0,0,0,0.25)]",
+            "hover:text-[var(--accent)] hover:border-[var(--accent)]/50 hover:scale-110",
+            "active:scale-95",
+            "transition-all duration-150",
+            "focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          )}
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        >
+          <Icon name={collapsed ? "chevronRight" : "chevronLeft"} size={13} />
+        </button>
+
+        {/* Logo row — h-16 with bottom border lines up with the header */}
+        <div className="h-16 flex items-center gap-3 px-[18px] border-b border-[var(--border-default)] shrink-0 overflow-hidden">
+          <VodafoneLogo
+            size={36}
+            className="shrink-0 drop-shadow-[0_0_14px_rgba(230,0,0,0.4)]"
+          />
+
+          <div className={labelCls("min-w-0 flex-1")} aria-hidden={!expanded}>
+            <h1 className="text-sm font-semibold text-[var(--fg-primary)] tracking-tight leading-tight truncate">
+              Service Desk
+            </h1>
+            <p className="text-[10px] text-[var(--fg-muted)] truncate">Vodafone Fiji</p>
           </div>
 
-          {(!collapsed || mobileOpen) && (
-            <div className="min-w-0 flex-1">
-              <h1 className="text-sm font-semibold text-[var(--fg-primary)] tracking-tight leading-tight truncate">
-                Service Desk
-              </h1>
-              <p className="text-[10px] text-[var(--fg-muted)] truncate">
-                Vodafone ITSM
-              </p>
-            </div>
-          )}
-
           {/* Mobile close */}
-          <button
-            onClick={() => setMobileOpen(false)}
-            className="ml-auto lg:hidden p-2 rounded-lg text-[var(--fg-muted)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)] transition-colors"
-            aria-label="Close menu"
-          >
-            <Icon name="close" size={18} />
-          </button>
+          {mobileOpen && (
+            <button
+              onClick={() => setMobileOpen(false)}
+              className="lg:hidden p-2 rounded-lg shrink-0 text-[var(--fg-muted)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)] transition-colors"
+              aria-label="Close menu"
+            >
+              <Icon name="close" size={18} />
+            </button>
+          )}
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 px-3 py-4 overflow-y-auto overflow-x-hidden">
-          <div className="space-y-6">
+        <nav className="flex-1 px-4 py-4 overflow-y-auto overflow-x-hidden scrollbar-none">
+          <div className="space-y-5">
             {visibleSections.map((section) => (
               <div key={section.title}>
-                {(!collapsed || mobileOpen) && (
-                  <p className="px-3 mb-2 text-label truncate">
+                {/* Section header: title when expanded, small divider when collapsed */}
+                <div className="relative h-6 mb-1 flex items-center overflow-visible">
+                  <p
+                    className={cn(
+                      "px-1 text-label whitespace-nowrap transition-opacity duration-200",
+                      expanded ? "opacity-100" : "opacity-0"
+                    )}
+                    aria-hidden={!expanded}
+                  >
                     {section.title}
                   </p>
-                )}
-                <div className="space-y-1">
+                  <div
+                    className={cn(
+                      "absolute left-1/2 -translate-x-1/2 w-5 h-px bg-[var(--border-strong)]",
+                      "transition-opacity duration-200",
+                      expanded ? "opacity-0" : "opacity-100"
+                    )}
+                  />
+                </div>
+
+                <div className="space-y-0.5">
                   {section.items.map((item) => (
                     <NavLink
                       key={item.to}
                       to={item.to}
                       end={item.to === "/dashboard"}
-                      title={collapsed && !mobileOpen ? item.label : undefined}
+                      title={!expanded ? item.label : undefined}
                       className={({ isActive }) =>
                         cn(
-                          "group flex items-center gap-3 rounded-lg font-medium transition-all duration-150",
-                          collapsed && !mobileOpen ? "justify-center px-3 py-2" : "px-3 py-2",
+                          "group relative flex items-center h-10 rounded-lg overflow-hidden",
+                          "transition-colors duration-150",
                           isActive
-                            ? "bg-[var(--bg-surface-hover)] text-[var(--fg-primary)]"
+                            ? "bg-[var(--accent)]/[0.08] text-[var(--fg-primary)]"
                             : "text-[var(--fg-secondary)] hover:bg-[var(--bg-surface)] hover:text-[var(--fg-primary)]"
                         )
                       }
                     >
                       {({ isActive }) => (
                         <>
-                          <div
+                          {/* Active accent bar */}
+                          <span
                             className={cn(
-                              "flex items-center justify-center w-8 h-8 min-w-[2rem] rounded-lg transition-all duration-150",
+                              "absolute left-0 top-1/2 -translate-y-1/2 w-[3px] rounded-r-full bg-[var(--accent)]",
+                              "transition-all duration-200",
+                              isActive ? "h-5 opacity-100" : "h-0 opacity-0"
+                            )}
+                          />
+                          {/* Fixed icon slot — identical position expanded & collapsed */}
+                          <span
+                            className={cn(
+                              "w-10 shrink-0 flex items-center justify-center transition-colors duration-150",
                               isActive
-                                ? "bg-[var(--accent)]/10 text-[var(--accent)]"
+                                ? "text-[var(--accent)]"
                                 : "text-[var(--fg-muted)] group-hover:text-[var(--fg-secondary)]"
                             )}
                           >
                             <Icon name={item.icon} size={18} />
-                          </div>
-                          {(!collapsed || mobileOpen) && (
-                            <span className="truncate text-sm leading-8">
-                              {item.label}
-                            </span>
-                          )}
+                          </span>
+                          <span
+                            className={labelCls("text-sm font-medium")}
+                            aria-hidden={!expanded}
+                          >
+                            {item.label}
+                          </span>
                         </>
                       )}
                     </NavLink>
@@ -260,85 +309,72 @@ export default function AppLayout({ children }) {
           </div>
         </nav>
 
-        {/* Sidebar footer - User info */}
-        <div className="border-t border-[var(--border-default)] flex-shrink-0 mb-4">
-          {collapsed && !mobileOpen ? (
-            <div className="flex justify-center py-4">
+        {/* Sidebar footer — user identity (click → profile) */}
+        <div className="border-t border-[var(--border-default)] shrink-0 px-4 py-4">
+          <button
+            onClick={() => navigate("/profile")}
+            title={!expanded ? `${displayName} — view profile` : "View profile"}
+            className={cn(
+              "w-full flex items-center h-12 rounded-xl text-left",
+              expanded && "overflow-hidden",
+              "hover:bg-[var(--bg-surface)] transition-colors duration-150",
+              "focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            )}
+          >
+            <div className="w-10 shrink-0 flex items-center justify-center">
               <div
                 className={cn(
-                  "h-9 w-9 rounded-lg flex items-center justify-center",
+                  "relative h-10 w-10 rounded-xl flex items-center justify-center",
                   "bg-[var(--accent)]/10 text-[var(--accent)]",
-                  "text-sm font-semibold"
-                )}
-                title={user?.fullName || user?.full_name || user?.email || "User"}
-              >
-                {(user?.fullName || user?.full_name || user?.email || "U")[0].toUpperCase()}
-              </div>
-            </div>
-          ) : (
-            <div className="px-4 py-4 flex items-center gap-3 min-w-0">
-              <div
-                className={cn(
-                  "h-9 w-9 rounded-lg flex items-center justify-center flex-shrink-0",
-                  "bg-[var(--accent)]/10 text-[var(--accent)]",
+                  "border border-[var(--accent)]/15",
                   "text-sm font-semibold"
                 )}
               >
-                {(user?.fullName || user?.full_name || user?.email || "U")[0].toUpperCase()}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-[var(--fg-primary)] truncate">
-                  {user?.fullName || user?.full_name || user?.email}
-                </p>
-                <p className="text-[11px] text-[var(--fg-muted)] truncate">{roleLabel}</p>
+                {initial}
+                {/* Online indicator — kept inside the avatar bounds so it never clips */}
+                <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-emerald-500 border-2 border-[var(--bg-elevated)]" />
               </div>
             </div>
-          )}
+            {expanded && (
+              <>
+                <div className="min-w-0 flex-1 ml-3 animate-fade-in">
+                  <p className="text-sm font-semibold text-[var(--fg-primary)] truncate leading-snug">
+                    {displayName}
+                  </p>
+                  <p className="text-[11px] text-[var(--fg-muted)] truncate mt-0.5">{roleLabel}</p>
+                </div>
+                <span className="shrink-0 pr-1 text-[var(--fg-muted)] animate-fade-in">
+                  <Icon name="chevronRight" size={14} />
+                </span>
+              </>
+            )}
+          </button>
         </div>
       </aside>
 
       {/* ===== MAIN CONTENT AREA ===== */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {/* Header */}
+        {/* Header — same surface + border as the sidebar so the chrome is one piece */}
         <header
           className={cn(
             "h-16 flex-shrink-0 z-20",
-            "bg-[var(--bg-base)]/80 backdrop-blur-xl",
+            "bg-[var(--bg-elevated)]",
             "border-b border-[var(--border-default)]"
           )}
         >
           <div className="h-full flex items-center justify-between gap-4 px-4 sm:px-6">
-            {/* Left: hamburger + search */}
+            {/* Left: hamburger (mobile) + search */}
             <div className="flex items-center gap-3 flex-1 min-w-0">
-              {/* Mobile hamburger */}
               <button
                 onClick={() => setMobileOpen(true)}
                 className={cn(
                   "lg:hidden p-2.5 rounded-lg",
                   "text-[var(--fg-muted)]",
-                  "bg-[var(--bg-surface)]",
                   "border border-[var(--border-default)]",
-                  "hover:text-[var(--fg-primary)] hover:border-[var(--border-hover)]",
+                  "hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)] hover:border-[var(--border-hover)]",
                   "transition-all duration-150"
                 )}
                 aria-label="Open menu"
-              >
-                <Icon name="menu" size={18} />
-              </button>
-
-              {/* Desktop collapse toggle */}
-              <button
-                onClick={() => setCollapsed(!collapsed)}
-                className={cn(
-                  "hidden lg:flex p-2.5 rounded-lg",
-                  "text-[var(--fg-muted)]",
-                  "bg-[var(--bg-surface)]",
-                  "border border-[var(--border-default)]",
-                  "hover:text-[var(--fg-primary)] hover:border-[var(--border-hover)]",
-                  "transition-all duration-150"
-                )}
-                aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-                title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
               >
                 <Icon name="menu" size={18} />
               </button>
@@ -356,7 +392,7 @@ export default function AppLayout({ children }) {
                     placeholder="Search tickets, users..."
                     className={cn(
                       "w-full pl-10 pr-4 py-2",
-                      "bg-[var(--bg-elevated)] rounded-lg",
+                      "bg-[var(--bg-base)] rounded-lg",
                       "text-[var(--fg-primary)] text-sm",
                       "placeholder:text-[var(--fg-muted)]",
                       "border border-[var(--border-default)]",
@@ -380,9 +416,8 @@ export default function AppLayout({ children }) {
                   className={cn(
                     "relative p-2.5 rounded-lg",
                     "text-[var(--fg-muted)]",
-                    "bg-[var(--bg-surface)]",
                     "border border-[var(--border-default)]",
-                    "hover:text-[var(--fg-primary)] hover:border-[var(--border-hover)]",
+                    "hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)] hover:border-[var(--border-hover)]",
                     "transition-all duration-150"
                   )}
                   aria-label="Notifications"
@@ -427,9 +462,8 @@ export default function AppLayout({ children }) {
                   }}
                   className={cn(
                     "flex items-center gap-2.5 p-1.5 pr-3 rounded-lg",
-                    "bg-[var(--bg-surface)]",
                     "border border-[var(--border-default)]",
-                    "hover:border-[var(--border-hover)]",
+                    "hover:bg-[var(--bg-surface)] hover:border-[var(--border-hover)]",
                     "transition-all duration-150"
                   )}
                   aria-expanded={showUserMenu}
@@ -441,7 +475,7 @@ export default function AppLayout({ children }) {
                       "text-sm font-semibold"
                     )}
                   >
-                    {(user?.fullName || user?.full_name || user?.email || "U")[0].toUpperCase()}
+                    {initial}
                   </div>
                   <span className="hidden md:block text-sm font-medium text-[var(--fg-primary)] truncate max-w-[100px]">
                     {user?.fullName || user?.full_name || user?.email?.split("@")[0]}

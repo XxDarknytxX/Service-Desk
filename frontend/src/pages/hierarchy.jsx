@@ -12,6 +12,7 @@ import Modal from "../components/ui/Modal";
 import Input, { Select, SearchableSelect } from "../components/ui/Input";
 import Badge from "../components/ui/Badge";
 import Card from "../components/ui/Card";
+import useConfirm from "../components/ui/useConfirm";
 import { useAuth } from "../contexts/auth";
 import OrgChart from "../components/OrgChart";
 import { useToast } from "../contexts/toast";
@@ -23,6 +24,7 @@ function cn(...parts) {
 export default function Hierarchy() {
   const { user } = useAuth();
   const toast = useToast();
+  const { confirm, confirmDialog } = useConfirm();
   const [users, setUsers] = useState([]);
   const [teams, setTeams] = useState([]);
   const [hierarchy, setHierarchy] = useState([]);
@@ -60,6 +62,7 @@ export default function Hierarchy() {
       setTeams(Array.isArray(teamsList) ? teamsList : []);
     } catch (error) {
       console.error("Failed to load hierarchy:", error);
+      toast.error(error.message || "Failed to load hierarchy");
     } finally {
       setLoading(false);
     }
@@ -136,10 +139,9 @@ export default function Hierarchy() {
         await api(`/hierarchy/user/${selectedUser.id}`, { method: "DELETE" }).catch(() => {});
       }
 
-      // Update team if changed
+      // Update team membership: always clear, then re-add if one is selected
+      await api(`/teams/members/${selectedUser.id}`, { method: "DELETE" }).catch(() => {});
       if (formData.team_id) {
-        // First remove from all teams, then add to new team
-        await api(`/teams/members/${selectedUser.id}`, { method: "DELETE" }).catch(() => {});
         await api("/teams/members", {
           method: "POST",
           body: {
@@ -149,6 +151,7 @@ export default function Hierarchy() {
         });
       }
 
+      toast.success("User updated");
       setShowEditModal(false);
       loadData();
     } catch (error) {
@@ -158,14 +161,30 @@ export default function Hierarchy() {
     }
   }
 
-  async function handleRemoveManager(userId) {
-    // confirm removed - proceeding with removal directly
-    try {
-      await api(`/hierarchy/user/${userId}`, { method: "DELETE" });
-      loadData();
-    } catch (error) {
-      toast.error(error.message);
-    }
+  function handleRemoveManager(u) {
+    confirm({
+      title: "Remove from hierarchy?",
+      message: (
+        <>
+          This removes the reporting line for{" "}
+          <strong className="text-[var(--fg-primary)]">
+            {u.full_name || u.email}
+          </strong>
+          . They will no longer have a manager and approval chains that rely on
+          their hierarchy will stop at them.
+        </>
+      ),
+      confirmText: "Remove",
+      onConfirm: async () => {
+        try {
+          await api(`/hierarchy/user/${u.id}`, { method: "DELETE" });
+          toast.success("Removed from hierarchy");
+          loadData();
+        } catch (error) {
+          toast.error(error.message);
+        }
+      },
+    });
   }
 
   // Build hierarchy map for quick lookups
@@ -291,40 +310,26 @@ export default function Hierarchy() {
         {viewMode === "list" && (
           <>
             <div className="flex-1 max-w-sm">
-              <input
-                type="text"
+              <Input
+                icon="search"
                 placeholder="Search users..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className={cn(
-                  "w-full px-4 py-2.5 rounded-lg",
-                  "bg-[var(--bg-elevated)]",
-                  "border border-[var(--border-default)]",
-                  "text-[var(--fg-primary)] placeholder:text-[var(--fg-muted)]",
-                  "focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/30 focus:border-[var(--accent)]",
-                  "transition-all duration-200"
-                )}
               />
             </div>
-            <select
-              value={teamFilter}
-              onChange={(e) => setTeamFilter(e.target.value)}
-              className={cn(
-                "px-4 py-2.5 rounded-lg",
-                "bg-[var(--bg-elevated)]",
-                "border border-[var(--border-default)]",
-                "text-[var(--fg-primary)]",
-                "focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/30 focus:border-[var(--accent)]",
-                "transition-all duration-200"
-              )}
-            >
-              <option value="">All Teams</option>
-              {teams.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
+            <div className="w-44">
+              <Select
+                value={teamFilter}
+                onChange={(e) => setTeamFilter(e.target.value)}
+              >
+                <option value="">All Teams</option>
+                {teams.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
             <Badge tone="slate">{filtered.length} users</Badge>
           </>
         )}
@@ -455,7 +460,7 @@ export default function Hierarchy() {
                 {isAdmin && manager && (
                   <div className="pt-4 border-t border-[var(--border-default)]">
                     <button
-                      onClick={() => handleRemoveManager(u.id)}
+                      onClick={() => handleRemoveManager(u)}
                       className={cn(
                         "text-sm text-rose-400 hover:text-rose-300 transition-colors",
                         "flex items-center gap-2"
@@ -585,6 +590,8 @@ export default function Hierarchy() {
           </div>
         </form>
       </Modal>
+
+      {confirmDialog}
     </div>
   );
 }

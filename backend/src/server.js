@@ -23,6 +23,7 @@ import { makeApprovalController } from "./controllers/approvalController.js";
 import { makeAiChatController } from "./controllers/aiChatController.js";
 import { makeTemplateController } from "./controllers/templateController.js";
 import { makeTemplateApprovalController } from "./controllers/templateApprovalController.js";
+import { makeFormController } from "./controllers/formController.js";
 import { makeAuthRouter } from "./routes/auth.js";
 import { makeTicketRouter } from "./routes/tickets.js";
 import { makeUserRouter } from "./routes/users.js";
@@ -40,6 +41,7 @@ import { makeApprovalRouter } from "./routes/approvals.js";
 import { makeAiChatRouter } from "./routes/aiChat.js";
 import { makeTemplateRouter } from "./routes/templates.js";
 import { makeTemplateApprovalRouter } from "./routes/templateApprovals.js";
+import { makeFormsRouter } from "./routes/forms.js";
 import { makeSlaService } from "./services/slaService.js";
 import { processAutoApprovals } from "./services/approvalWorkflow.js";
 
@@ -113,18 +115,25 @@ const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:3000")
   .split(",")
   .map((o) => o.trim());
 
+// localhost, 127.0.0.1 and private-LAN origins (any port) — dev only
+const LOCAL_ORIGIN_RE =
+  /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\]|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(:\d+)?$/;
+
 app.use(cors({
   origin: (origin, cb) => {
-    // Allow requests with no origin (mobile apps, curl, same-origin)
+    // Allow requests with no origin (mobile apps, curl, same-origin GETs)
     if (!origin) return cb(null, true);
-    // Allow VS Code devtunnels and configured origins
     if (
       allowedOrigins.includes(origin) ||
-      origin.endsWith(".devtunnels.ms")
+      origin.endsWith(".devtunnels.ms") ||
+      (!isProd && LOCAL_ORIGIN_RE.test(origin))
     ) {
       return cb(null, true);
     }
-    cb(new Error("Not allowed by CORS"));
+    // Unknown origin: don't grant CORS headers, but never error the request.
+    // (Throwing here turned same-origin proxied requests into 500s — true
+    // cross-origin callers are still blocked by the browser without headers.)
+    cb(null, false);
   },
   credentials: true,
 }));
@@ -149,6 +158,7 @@ const approvals = makeApprovalController(pool);
 const aiChat = makeAiChatController(pool);
 const templateCtrl = makeTemplateController(pool);
 const templateApprovalCtrl = makeTemplateApprovalController(pool);
+const formsCtrl = makeFormController(pool);
 
 // Routes
 app.use("/api", makeAuthRouter(auth));
@@ -168,6 +178,7 @@ app.use("/api", makeApprovalRouter(approvals));
 app.use("/api", makeAiChatRouter(aiChat));
 app.use("/api", makeTemplateApprovalRouter(templateApprovalCtrl));
 app.use("/api", makeTemplateRouter(templateCtrl));
+app.use("/api", makeFormsRouter(formsCtrl));
 
 // Health check
 app.get("/health", async (_req, res) => {

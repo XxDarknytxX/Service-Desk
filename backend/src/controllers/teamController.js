@@ -21,6 +21,7 @@ export const MODULE_REGISTRY = [
   { key: "assets",         label: "Assets",            section: "Operations",     icon: "assets",       roles: ["admin", "agent"],      description: "Track and manage IT assets and inventory" },
   { key: "sla",            label: "SLA Policies",      section: "Operations",     icon: "sla",          roles: ["admin"],               description: "Configure SLA response and resolution targets" },
   { key: "knowledge-base", label: "Knowledge Base",    section: "Operations",     icon: "knowledgeBase",roles: null,                   description: "Browse and manage help articles and FAQs" },
+  { key: "forms",          label: "Customer Forms",    section: "Operations",     icon: "send",         roles: ["admin", "agent"],      description: "Build customer-facing forms and send one-time fill links" },
   { key: "reports",        label: "Reports",           section: "Operations",     icon: "reports",      roles: ["admin", "agent"],      description: "Analytics, agent performance, and SLA compliance" },
 ];
 

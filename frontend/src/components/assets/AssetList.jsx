@@ -9,6 +9,7 @@ import Badge from "../ui/Badge";
 import Button from "../ui/Button";
 import Icon from "../ui/Icon";
 import Modal from "../ui/Modal";
+import useConfirm from "../ui/useConfirm";
 import AssetModal from "./AssetModal";
 import AssetDetailPanel from "./AssetDetailPanel";
 
@@ -147,6 +148,7 @@ function BulkBar({ selected, onClear, onBulkAction }) {
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function AssetList() {
   const toast = useToast();
+  const { confirm, confirmDialog } = useConfirm();
   const [assets, setAssets]           = useState([]);
   const [categories, setCategories]   = useState([]);
   const [types, setTypes]             = useState([]);
@@ -174,7 +176,9 @@ export default function AssetList() {
       const [cats, typs] = await Promise.all([assetsApi.getCategories(), assetsApi.getAssetTypes()]);
       setCategories(cats);
       setTypes(typs);
-    } catch { /* silent */ }
+    } catch (e) {
+      toast.error(e?.message || "Failed to load asset filters");
+    }
   }
 
   async function loadAssets() {
@@ -189,7 +193,9 @@ export default function AssetList() {
       const data = await assetsApi.getAssets(params);
       setAssets(data);
       setSelected([]);
-    } catch { /* silent */ }
+    } catch (e) {
+      toast.error(e?.message || "Failed to load assets");
+    }
     finally { setLoading(false); }
   }
 
@@ -225,18 +231,47 @@ export default function AssetList() {
 
   async function handleBulkAction(action, value) {
     if (!selected.length) return;
+    if (action === "delete") {
+      confirm({
+        title: `Delete ${selected.length} asset${selected.length > 1 ? "s" : ""}?`,
+        message: (
+          <>
+            This will permanently delete the selected asset
+            {selected.length > 1 ? "s" : ""} along with their assignment and
+            maintenance history. This action cannot be undone.
+          </>
+        ),
+        confirmText: "Delete Assets",
+        onConfirm: async () => {
+          try {
+            await assetsApi.bulkUpdate({ ids: selected, action, value });
+            toast.success(`${selected.length} asset${selected.length > 1 ? "s" : ""} deleted`);
+            loadAssets();
+          } catch (e) {
+            toast.error(e?.message || "Bulk delete failed");
+          }
+        },
+      });
+      return;
+    }
     try {
       await assetsApi.bulkUpdate({ ids: selected, action, value });
+      toast.success(`${selected.length} asset${selected.length > 1 ? "s" : ""} updated`);
       loadAssets();
-    } catch { /* silent */ }
+    } catch (e) {
+      toast.error(e?.message || "Bulk update failed");
+    }
   }
 
   async function handleCheckin(asset) {
     try {
       await assetsApi.checkin(asset.id, {});
+      toast.success("Asset checked in");
       loadAssets();
       if (detailAsset?.id === asset.id) setDetailAsset((prev) => ({ ...prev, assigned_to_user_id: null }));
-    } catch { /* silent */ }
+    } catch (e) {
+      toast.error(e?.message || "Failed to check in asset");
+    }
   }
 
   function openEdit(asset) { setEditingAsset(asset); setShowModal(true); }
@@ -529,6 +564,8 @@ export default function AssetList() {
           />
         </>
       )}
+
+      {confirmDialog}
     </div>
   );
 }

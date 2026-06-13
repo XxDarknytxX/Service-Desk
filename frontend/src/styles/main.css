@@ -24,6 +24,7 @@
     --bg-elevated: #0a0a0c;
     --bg-surface: rgba(255, 255, 255, 0.03);
     --bg-surface-hover: rgba(255, 255, 255, 0.06);
+    --bg-sunken: rgba(0, 0, 0, 0.35);
 
     /* ========== FOREGROUND / TEXT ========== */
     --fg-primary: #EDEDEF;
@@ -123,6 +124,7 @@
     --bg-elevated: #FFFFFF;
     --bg-surface: rgba(0, 0, 0, 0.03);
     --bg-surface-hover: rgba(0, 0, 0, 0.06);
+    --bg-sunken: rgba(0, 0, 0, 0.04);
 
     /* ========== FOREGROUND / TEXT ========== */
     --fg-primary: #111318;
@@ -454,6 +456,24 @@
     to { transform: rotate(360deg); }
   }
 
+  @keyframes loading-dot {
+    0%, 80%, 100% { opacity: 0.25; transform: scale(0.75); }
+    40% { opacity: 1; transform: scale(1.05); }
+  }
+
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    20% { transform: translateX(-6px); }
+    40% { transform: translateX(6px); }
+    60% { transform: translateX(-4px); }
+    80% { transform: translateX(4px); }
+  }
+
+  @keyframes drift-ring {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
   .animate-float { animation: float 8s ease-in-out infinite; }
   .animate-float-delayed { animation: float-delayed 10s ease-in-out infinite; }
   .animate-float-slow { animation: float-slow 12s ease-in-out infinite; }
@@ -465,6 +485,9 @@
   .animate-slide-down { animation: slide-down 0.2s var(--ease-out-expo) both; }
   .animate-shimmer { animation: shimmer 2s linear infinite; }
   .animate-spin { animation: spin 1s linear infinite; }
+  .animate-loading-dot { animation: loading-dot 1.2s ease-in-out infinite; }
+  .animate-shake { animation: shake 0.4s var(--ease-out-expo); }
+  .animate-drift-ring { animation: drift-ring 80s linear infinite; }
 
   /* Animation delays */
   .delay-75 { animation-delay: 75ms; }
@@ -540,6 +563,40 @@
   .text-muted { color: var(--fg-muted); }
   .text-subtle { color: var(--fg-subtle); }
   .text-accent { color: var(--accent); }
+
+  /* ========== LOGIN CANVAS (one continuous red→white sweep) ========== */
+  .login-canvas {
+    /* Mobile: vertical — dark red top flowing into white below the fold */
+    background: linear-gradient(
+      180deg,
+      #160305 0%,
+      #2a060a 12%,
+      #6a0a11 24%,
+      #c40b12 32%,
+      #e60000 38%,
+      #ee4d52 46%,
+      #f6aaac 54%,
+      #fdecec 62%,
+      #ffffff 72%
+    );
+  }
+  @media (min-width: 1024px) {
+    .login-canvas {
+      /* Desktop: horizontal — brand red on the left melting into the white form side */
+      background: linear-gradient(
+        100deg,
+        #160305 0%,
+        #2a060a 16%,
+        #500810 30%,
+        #9c0d15 40%,
+        #e60000 48%,
+        #ee4d52 55%,
+        #f6aaac 63%,
+        #fdecec 70%,
+        #ffffff 78%
+      );
+    }
+  }
 
   /* ========== SIDEBAR STYLES ========== */
   .sidebar-bg {

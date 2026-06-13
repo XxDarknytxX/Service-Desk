@@ -19,6 +19,7 @@ import Badge from "../components/ui/Badge"
 import Button from "../components/ui/Button"
 import Icon from "../components/ui/Icon"
 import Card from "../components/ui/Card"
+import { Select } from "../components/ui/Input"
 import TicketCreateModal from "../components/tickets/TicketCreateModal"
 
 function cn(...parts) {
@@ -149,6 +150,7 @@ export default function Tickets() {
       setTotal(data.total || 0)
     } catch (error) {
       console.error("Failed to fetch tickets:", error)
+      toast.error(error.message || "Failed to load tickets")
     } finally {
       setLoading(false)
     }
@@ -213,8 +215,8 @@ export default function Tickets() {
     setShowCreateModal(false)
   }
 
-  const handleTicketCreated = () => {
-    handleCloseModal()
+  const handleTicketCreated = (_id, opts) => {
+    if (!opts?.keepOpen) handleCloseModal()
     fetchTickets()
   }
 
@@ -453,12 +455,11 @@ export default function Tickets() {
                 className={cn(
                   "p-2.5 rounded-lg transition-all duration-200",
                   "bg-[var(--bg-base)] border border-[var(--border-default)]",
-                  "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)]",
-                  loading && "animate-spin"
+                  "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)]"
                 )}
                 title="Refresh"
               >
-                <Icon name="refresh" size={16} />
+                <Icon name="refresh" size={16} className={cn(loading && "animate-spin")} />
               </button>
 
               {/* Column visibility toggle */}
@@ -591,19 +592,24 @@ export default function Tickets() {
                 )}
               />
             </div>
-            <select value={statusFilter} onChange={handleStatusChange} className={selectStyle}>
+            <Select value={statusFilter} onChange={handleStatusChange}>
               <option value="">All Statuses</option>
               {meta?.statuses?.map((s) => <option key={s.id} value={s.key}>{s.label}</option>)}
-            </select>
-            <select value={priorityFilter} onChange={handlePriorityChange} className={selectStyle}>
+            </Select>
+            <Select value={priorityFilter} onChange={handlePriorityChange}>
               <option value="">All Priorities</option>
               {meta?.priorities?.map((p) => <option key={p.id} value={p.key}>{p.label}</option>)}
-            </select>
-            <select value={assigneeFilter} onChange={handleAssigneeChange} className={selectStyle} disabled={queueView !== "all"}>
+            </Select>
+            <Select
+              value={assigneeFilter}
+              onChange={handleAssigneeChange}
+              disabled={queueView !== "all"}
+              title={queueView !== "all" ? "Switch to All Tickets to filter by assignee" : undefined}
+            >
               <option value="">All Assignees</option>
               <option value="unassigned">Unassigned</option>
               {meta?.agents?.map((a) => <option key={a.id} value={a.id}>{a.full_name || a.email}</option>)}
-            </select>
+            </Select>
           </div>
         </Card>
 

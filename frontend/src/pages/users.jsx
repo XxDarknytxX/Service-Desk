@@ -11,6 +11,7 @@ import Modal from "../components/ui/Modal";
 import Input, { Select } from "../components/ui/Input";
 import Badge from "../components/ui/Badge";
 import Card from "../components/ui/Card";
+import useConfirm from "../components/ui/useConfirm";
 import { useAuth } from "../contexts/auth";
 import { useToast } from "../contexts/toast";
 
@@ -29,6 +30,7 @@ const API_URL = import.meta.env.VITE_API_URL || "/api";
 export default function Users() {
   const { user } = useAuth();
   const toast = useToast();
+  const { confirm, confirmDialog } = useConfirm();
   const [users, setUsers] = useState([]);
   const [teams, setTeams] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -161,10 +163,9 @@ export default function Users() {
           await api(`/hierarchy/user/${editingUser.id}`, { method: "DELETE" }).catch(() => {});
         }
 
-        // Update team if changed
+        // Update team membership: always clear, then re-add if one is selected
+        await api(`/teams/members/${editingUser.id}`, { method: "DELETE" }).catch(() => {});
         if (formData.team_id) {
-          // First remove from all teams, then add to new team
-          await api(`/teams/members/${editingUser.id}`, { method: "DELETE" }).catch(() => {});
           await api("/teams/members", {
             method: "POST",
             body: {
@@ -174,6 +175,7 @@ export default function Users() {
           });
         }
 
+        toast.success("User updated");
         setShowModal(false);
         loadData();
       } else {
@@ -205,6 +207,7 @@ export default function Users() {
         if (result.generatedPassword) {
           setGeneratedPassword(result.generatedPassword);
         } else {
+          toast.success("User created");
           setShowModal(false);
           loadData();
         }
@@ -241,14 +244,28 @@ export default function Users() {
     loadData();
   }
 
-  async function handleDeleteUser(userId, userName) {
-    // confirm removed - proceeding with deletion directly
-    try {
-      await api(`/users/${userId}`, { method: "DELETE" });
-      loadData();
-    } catch (error) {
-      toast.error(error.message || "Failed to delete user");
-    }
+  function handleDeleteUser(userId, userName) {
+    confirm({
+      title: "Delete user?",
+      message: (
+        <>
+          This will permanently delete{" "}
+          <strong className="text-[var(--fg-primary)]">{userName}</strong> and
+          remove their team and hierarchy assignments. This action cannot be
+          undone.
+        </>
+      ),
+      confirmText: "Delete User",
+      onConfirm: async () => {
+        try {
+          await api(`/users/${userId}`, { method: "DELETE" });
+          toast.success("User deleted");
+          loadData();
+        } catch (error) {
+          toast.error(error.message || "Failed to delete user");
+        }
+      },
+    });
   }
 
   function toggleRole(role) {
@@ -407,6 +424,7 @@ export default function Users() {
         </div>
       ) : (
         <Card tint="indigo" padding={false} hover={false}>
+          <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr className="bg-[var(--bg-base)] border-b border-[var(--border-default)]">
@@ -487,6 +505,7 @@ export default function Users() {
               ))}
             </tbody>
           </table>
+          </div>
         </Card>
       )}
 
@@ -646,7 +665,7 @@ export default function Users() {
                       <td className="px-3 py-2 text-[var(--fg-secondary)]">{r.row}</td>
                       <td className="px-3 py-2 text-[var(--fg-primary)]">{r.email}</td>
                       <td className="px-3 py-2">
-                        <Badge tone={r.status === "created" ? "green" : r.status === "skipped" ? "yellow" : "brand"}>
+                        <Badge tone={r.status === "created" ? "green" : r.status === "skipped" ? "amber" : "red"}>
                           {r.status}
                         </Badge>
                       </td>
@@ -829,6 +848,8 @@ export default function Users() {
           </div>
         </form>
       </Modal>
+
+      {confirmDialog}
     </div>
   );
 }

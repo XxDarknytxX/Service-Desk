@@ -366,4 +366,45 @@ export const templatesApi = {
   testApprovalFlow: (templateId, mockData) => request(`/templates/${templateId}/approval-flow/test`, { method: "POST", body: JSON.stringify(mockData) }),
 };
 
+// Customer Forms API (admin/agent)
+export const formsApi = {
+  list: () => request("/forms"),
+  get: (id) => request(`/forms/${id}`),
+  create: (data) => request("/forms", { method: "POST", body: JSON.stringify(data) }),
+  update: (id, data) => request(`/forms/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  remove: (id) => request(`/forms/${id}`, { method: "DELETE" }),
+  createInvite: (formId, data) => request(`/forms/${formId}/invites`, { method: "POST", body: JSON.stringify(data) }),
+  revokeInvite: (inviteId) => request(`/forms/invites/${inviteId}`, { method: "DELETE" }),
+  submissions: (formId) => request(`/forms/${formId}/submissions`),
+  ticketInvites: (ticketId) => request(`/tickets/${ticketId}/forms`),
+};
+
+// Public form endpoints — no auth header (the token in the URL is the credential)
+export const publicFormsApi = {
+  get: async (token) => {
+    const res = await fetch(`${API_URL}/public/forms/${token}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = new Error(data.error || "Form unavailable");
+      err.status = res.status;
+      throw err;
+    }
+    return data;
+  },
+  submit: async (token, responses) => {
+    const res = await fetch(`${API_URL}/public/forms/${token}/submit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ responses }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = new Error(data.error || "Submission failed");
+      err.status = res.status;
+      throw err;
+    }
+    return data;
+  },
+};
+
 export { API_URL };

@@ -12,6 +12,7 @@ import Modal from "../components/ui/Modal";
 import Input, { Textarea, Select } from "../components/ui/Input";
 import Badge from "../components/ui/Badge";
 import Card from "../components/ui/Card";
+import useConfirm from "../components/ui/useConfirm";
 import { useAuth } from "../contexts/auth";
 import { useToast } from "../contexts/toast";
 
@@ -25,6 +26,7 @@ function cn(...parts) {
 export default function Departments() {
   const { user } = useAuth();
   const toast = useToast();
+  const { confirm, confirmDialog } = useConfirm();
   const [departments, setDepartments] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -52,6 +54,7 @@ export default function Departments() {
       setDepartments(data.departments || []);
     } catch (error) {
       console.error("Failed to load departments:", error);
+      toast.error(error.message || "Failed to load departments");
     } finally {
       setLoading(false);
     }
@@ -101,8 +104,10 @@ export default function Departments() {
 
       if (editingDept) {
         await api(`/departments/${editingDept.id}`, { method: "PATCH", body: payload });
+        toast.success("Department updated");
       } else {
         await api("/departments", { method: "POST", body: payload });
+        toast.success("Department created");
       }
       setShowModal(false);
       loadDepartments();
@@ -113,14 +118,27 @@ export default function Departments() {
     }
   }
 
-  async function handleDelete(id) {
-    // confirm removed - proceeding with deletion directly
-    try {
-      await api(`/departments/${id}`, { method: "DELETE" });
-      loadDepartments();
-    } catch (error) {
-      toast.error(error.message);
-    }
+  function handleDelete(dept) {
+    confirm({
+      title: "Delete department?",
+      message: (
+        <>
+          This will permanently delete{" "}
+          <strong className="text-[var(--fg-primary)]">{dept.name}</strong>.
+          Sub-departments will become top-level. This action cannot be undone.
+        </>
+      ),
+      confirmText: "Delete Department",
+      onConfirm: async () => {
+        try {
+          await api(`/departments/${dept.id}`, { method: "DELETE" });
+          toast.success("Department deleted");
+          loadDepartments();
+        } catch (error) {
+          toast.error(error.message);
+        }
+      },
+    });
   }
 
   const filtered = departments.filter((d) =>
@@ -239,7 +257,8 @@ export default function Departments() {
                         <Icon name="pencil" size={14} />
                       </button>
                       <button
-                        onClick={() => handleDelete(dept.id)}
+                        onClick={() => handleDelete(dept)}
+                        title="Delete department"
                         className={cn(
                           "p-2 rounded-lg transition-all duration-200",
                           "text-[var(--fg-muted)] hover:text-rose-400",
@@ -359,6 +378,8 @@ export default function Departments() {
           </Select>
         </form>
       </Modal>
+
+      {confirmDialog}
     </div>
   );
 }

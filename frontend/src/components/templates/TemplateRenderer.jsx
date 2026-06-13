@@ -456,7 +456,13 @@ function renderMultiselectField(field, value, onChange, error, readOnly, preview
 
 function renderCheckboxGroupField(field, value, onChange, error, readOnly, preview) {
   const selected = Array.isArray(value) ? value : [];
-  const groups = field.groups || [];
+  // Supports both shapes: named option groups, or a flat options array
+  // (rendered as a single unnamed group).
+  const groups = field.groups?.length
+    ? field.groups
+    : field.options?.length
+    ? [{ name: "", options: field.options }]
+    : [];
 
   if (readOnly) {
     // Collect all labels from all groups
@@ -489,9 +495,11 @@ function renderCheckboxGroupField(field, value, onChange, error, readOnly, previ
       <div className="space-y-4 mt-1">
         {groups.map((group, gi) => (
           <div key={gi}>
-            <h4 className="text-xs font-semibold text-[var(--fg-secondary)] uppercase tracking-wider mb-2">
-              {group.name}
-            </h4>
+            {group.name && (
+              <h4 className="text-xs font-semibold text-[var(--fg-secondary)] uppercase tracking-wider mb-2">
+                {group.name}
+              </h4>
+            )}
             <div className="space-y-2.5 pl-1">
               {(group.options || []).map((opt) => (
                 <CustomCheckbox
@@ -1140,7 +1148,7 @@ export default function TemplateRenderer({
           : WIDTH_MAP[field.width] || WIDTH_MAP.full;
 
         return (
-          <div key={field.id} className={widthClass}>
+          <div key={field.id} id={`field-${field.id}`} className={widthClass}>
             {renderField(
               field,
               values[field.id],

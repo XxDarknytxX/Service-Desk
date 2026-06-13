@@ -14,6 +14,7 @@ import Icon from "../components/ui/Icon";
 import Card from "../components/ui/Card";
 import Modal from "../components/ui/Modal";
 import Input, { Textarea, Select } from "../components/ui/Input";
+import useConfirm from "../components/ui/useConfirm";
 import TemplateCategoryManager from "../components/templates/TemplateCategoryManager";
 import TemplateFormBuilder from "../components/templates/TemplateFormBuilder";
 import TemplateApprovalFlow from "../components/templates/TemplateApprovalFlow";
@@ -78,6 +79,7 @@ export default function TemplateBuilder() {
   const { meta } = useMeta();
   const { user } = useAuth();
   const toast = useToast();
+  const { confirm, confirmDialog } = useConfirm();
 
   const [templates, setTemplates] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -112,6 +114,7 @@ export default function TemplateBuilder() {
       setTemplates(data.templates || []);
     } catch (err) {
       console.error("Failed to load templates:", err);
+      toast.error(err.message || "Failed to load templates");
     } finally {
       setLoading(false);
     }
@@ -213,19 +216,34 @@ export default function TemplateBuilder() {
     }
   }
 
-  async function handleDelete(id) {
-    // confirm removed - proceeding with deletion directly
-    try {
-      await templatesApi.deleteTemplate(id);
-      loadTemplates();
-    } catch (err) {
-      toast.error(err.message || "Failed to delete template.");
-    }
+  function handleDelete(template) {
+    confirm({
+      title: "Delete template?",
+      message: (
+        <>
+          This will permanently delete{" "}
+          <strong className="text-[var(--fg-primary)]">{template.name}</strong>{" "}
+          and its approval flow. Tickets already created from it are not
+          affected.
+        </>
+      ),
+      confirmText: "Delete Template",
+      onConfirm: async () => {
+        try {
+          await templatesApi.deleteTemplate(template.id);
+          toast.success("Template deleted");
+          loadTemplates();
+        } catch (err) {
+          toast.error(err.message || "Failed to delete template.");
+        }
+      },
+    });
   }
 
   async function handleDuplicate(id) {
     try {
       await templatesApi.duplicateTemplate(id);
+      toast.success("Template duplicated");
       loadTemplates();
     } catch (err) {
       toast.error(err.message || "Failed to duplicate template.");
@@ -650,7 +668,7 @@ export default function TemplateBuilder() {
                             <Icon name="clipboard" size={14} />
                           </button>
                           <button
-                            onClick={() => handleDelete(template.id)}
+                            onClick={() => handleDelete(template)}
                             className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-rose-400 hover:bg-rose-500/10 transition-all"
                             title="Delete template"
                           >
@@ -941,6 +959,8 @@ export default function TemplateBuilder() {
         )}
         </div>
       </Modal>
+
+      {confirmDialog}
     </div>
   );
 }

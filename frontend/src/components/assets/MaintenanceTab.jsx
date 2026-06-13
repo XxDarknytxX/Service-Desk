@@ -3,11 +3,13 @@
  */
 import { useState, useEffect } from "react";
 import { assetsApi } from "../../services/api";
+import { useToast } from "../../contexts/toast";
 import Badge from "../ui/Badge";
 import Button from "../ui/Button";
 import Icon from "../ui/Icon";
 import Modal from "../ui/Modal";
 import Input, { Textarea, Select } from "../ui/Input";
+import useConfirm from "../ui/useConfirm";
 
 function cn(...p) { return p.filter(Boolean).join(" "); }
 
@@ -16,6 +18,7 @@ const TYPE_ICON   = { repair:"tool", preventive:"shield", upgrade:"layers", cali
 
 function MaintenanceModal({ open, record, assets, onClose, onSaved }) {
   const editing = !!record;
+  const toast = useToast();
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
 
@@ -42,9 +45,12 @@ function MaintenanceModal({ open, record, assets, onClose, onSaved }) {
     try {
       if (editing) await assetsApi.updateMaintenance(record.id, { ...form, cost: form.cost || null });
       else         await assetsApi.createMaintenance({ ...form, cost: form.cost || null });
+      toast.success(editing ? "Maintenance record updated" : "Maintenance logged");
       onSaved();
       onClose();
-    } catch { /* silent */ }
+    } catch (e) {
+      toast.error(e?.message || "Failed to save maintenance record");
+    }
     finally { setSaving(false); }
   }
 
@@ -94,6 +100,8 @@ function MaintenanceModal({ open, record, assets, onClose, onSaved }) {
 }
 
 export default function MaintenanceTab() {
+  const toast = useToast();
+  const { confirm, confirmDialog } = useConfirm();
   const [records, setRecords] = useState([]);
   const [assets, setAssets]   = useState([]);
   const [loading, setLoading] = useState(true);
@@ -113,7 +121,9 @@ export default function MaintenanceTab() {
       const [recs, asts] = await Promise.all([assetsApi.getMaintenance(params), assetsApi.getAssets()]);
       setRecords(recs);
       setAssets(asts);
-    } catch { /* silent */ }
+    } catch (e) {
+      toast.error(e?.message || "Failed to load maintenance records");
+    }
     finally { setLoading(false); }
   }
 
@@ -122,11 +132,33 @@ export default function MaintenanceTab() {
       const rec = records.find((r) => r.id === id);
       await assetsApi.updateMaintenance(id, { ...rec, status });
       load();
-    } catch { /* silent */ }
+    } catch (e) {
+      toast.error(e?.message || "Failed to update status");
+    }
   }
 
-  async function handleDelete(id) {
-    try { await assetsApi.deleteMaintenance(id); load(); } catch { /* silent */ }
+  function handleDelete(rec) {
+    confirm({
+      title: "Delete maintenance record?",
+      message: (
+        <>
+          This will permanently delete{" "}
+          <strong className="text-[var(--fg-primary)]">{rec.title}</strong>{" "}
+          {rec.asset_name && <>for {rec.asset_name} </>}from the maintenance
+          history.
+        </>
+      ),
+      confirmText: "Delete",
+      onConfirm: async () => {
+        try {
+          await assetsApi.deleteMaintenance(rec.id);
+          toast.success("Maintenance record deleted");
+          load();
+        } catch (e) {
+          toast.error(e?.message || "Failed to delete record");
+        }
+      },
+    });
   }
 
   const fmtDate = (d) => d ? new Date(d).toLocaleDateString("en-FJ", { day:"2-digit", month:"short", year:"numeric" }) : "—";
@@ -233,7 +265,7 @@ export default function MaintenanceTab() {
                           className="p-1.5 rounded-lg text-[var(--fg-muted)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)] transition-all">
                           <Icon name="pencil" size={13} />
                         </button>
-                        <button onClick={() => handleDelete(r.id)}
+                        <button onClick={() => handleDelete(r)}
                           className="p-1.5 rounded-lg text-[var(--fg-muted)] hover:text-rose-400 hover:bg-rose-500/10 transition-all">
                           <Icon name="trash" size={13} />
                         </button>
@@ -254,6 +286,8 @@ export default function MaintenanceTab() {
         onClose={() => { setShowModal(false); setEditing(null); }}
         onSaved={load}
       />
+
+      {confirmDialog}
     </div>
   );
 }

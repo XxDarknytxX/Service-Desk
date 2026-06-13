@@ -99,7 +99,10 @@ export default function Reports() {
       setAgentWorkload(aw || { agents: [], unassigned: { total: 0, byTeam: [] } });
       setAtRiskTickets(ar || { tickets: [], count: 0 });
       setSlaPriorityBreakdown(spb || []);
-    } catch (err) { console.error("Failed to load reports", err); }
+    } catch (err) {
+      console.error("Failed to load reports", err);
+      toast.error(err.message || "Failed to load reports");
+    }
     finally { setLoading(false); }
   }
 
@@ -496,13 +499,13 @@ export default function Reports() {
           {/* SLA Summary with Gauges */}
           <div className="grid grid-cols-2 gap-5">
             {[
-              { label: "Response SLA", pct: slaCompliance.summary?.response_compliance_pct || 0, met: slaCompliance.summary?.response_met || 0, breached: slaCompliance.summary?.response_breached || 0, color: "#3B82F6", tint: "blue", icon: "clock" },
-              { label: "Resolution SLA", pct: slaCompliance.summary?.resolve_compliance_pct || 0, met: slaCompliance.summary?.resolve_met || 0, breached: slaCompliance.summary?.resolve_breached || 0, color: "#10B981", tint: "emerald", icon: "check" },
+              { label: "Response SLA", pct: slaCompliance.summary?.response_compliance_pct || 0, met: slaCompliance.summary?.response_met || 0, breached: slaCompliance.summary?.response_breached || 0, color: "#3B82F6", boxCls: "bg-blue-500/10 border border-blue-500/20", textCls: "text-blue-400", icon: "clock" },
+              { label: "Resolution SLA", pct: slaCompliance.summary?.resolve_compliance_pct || 0, met: slaCompliance.summary?.resolve_met || 0, breached: slaCompliance.summary?.resolve_breached || 0, color: "#10B981", boxCls: "bg-emerald-500/10 border border-emerald-500/20", textCls: "text-emerald-400", icon: "check" },
             ].map(g => (
-              <div key={g.label} className={cn("rounded-xl p-6", `bg-${g.tint}-500/10 border border-${g.tint}-500/20`)}>
+              <div key={g.label} className={cn("rounded-xl p-6", g.boxCls)}>
                 <div className="flex items-center gap-2 mb-3">
-                  <Icon name={g.icon} size={18} className={`text-${g.tint}-400`} />
-                  <p className={`text-[11px] font-medium text-${g.tint}-400 uppercase tracking-wider`}>{g.label}</p>
+                  <Icon name={g.icon} size={18} className={g.textCls} />
+                  <p className={cn("text-[11px] font-medium uppercase tracking-wider", g.textCls)}>{g.label}</p>
                 </div>
                 <div className="flex items-center gap-6">
                   <div className="relative">

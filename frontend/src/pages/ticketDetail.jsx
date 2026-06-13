@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { api, approvalsApi, ticketsApi, templatesApi, slaApi, csatApi } from "../services/api";
+import { api, approvalsApi, ticketsApi, templatesApi, slaApi, csatApi, formsApi } from "../services/api";
 import { useMeta } from "../contexts/meta";
 import { useAuth } from "../contexts/auth";
 import { useToast } from "../contexts/toast";
@@ -91,6 +91,17 @@ export default function TicketDetail() {
   const [templateResponse, setTemplateResponse] = useState(null);
   const [showTemplateData, setShowTemplateData] = useState(true);
 
+  // Customer forms linked to this ticket
+  const [ticketForms, setTicketForms] = useState([]);
+  const [showSendFormModal, setShowSendFormModal] = useState(false);
+  const [availableForms, setAvailableForms] = useState([]);
+  const [sendFormId, setSendFormId] = useState("");
+  const [sendFormEmail, setSendFormEmail] = useState("");
+  const [sendFormName, setSendFormName] = useState("");
+  const [sendingFormInvite, setSendingFormInvite] = useState(false);
+  const [sentFormLink, setSentFormLink] = useState(null);
+  const [viewFormInvite, setViewFormInvite] = useState(null);
+
   // CSAT state
   const [csatRating, setCsatRating] = useState(null);
   const [csatHover, setCsatHover] = useState(0);
@@ -152,6 +163,14 @@ export default function TicketDetail() {
           ? templateRes.value.response
           : null
       );
+
+      // Load customer forms linked to this ticket (agent view only)
+      if (user?.roles?.includes("admin") || user?.roles?.includes("agent")) {
+        formsApi
+          .ticketInvites(id)
+          .then((d) => setTicketForms(d.invites || []))
+          .catch(() => setTicketForms([]));
+      }
 
       // Load CSAT if ticket is solved/closed
       const sk = ticketRes.ticket.status_key;
@@ -231,7 +250,10 @@ export default function TicketDetail() {
     try {
       await api(`/tickets/${id}/assign`, { method: "POST" });
       await loadTicketData();
-    } catch (err) { console.error("Assign failed:", err); }
+    } catch (err) {
+      console.error("Assign failed:", err);
+      toast.error(err.message || "Failed to assign ticket");
+    }
     finally { setActionLoading(null); }
   };
 
@@ -259,7 +281,10 @@ export default function TicketDetail() {
       setCommentBody("");
       setIsInternalNote(false);
       await loadTicketData();
-    } catch (err) { console.error("Comment failed:", err); }
+    } catch (err) {
+      console.error("Comment failed:", err);
+      toast.error(err.message || "Failed to post comment");
+    }
     finally { setSubmittingComment(false); }
   };
 
@@ -271,7 +296,10 @@ export default function TicketDetail() {
       await api(`/tickets/${id}/tags`, { method: "POST", body: { name: tagInput.trim() } });
       setTagInput("");
       await loadTicketData();
-    } catch (err) { console.error("Tag add failed:", err); }
+    } catch (err) {
+      console.error("Tag add failed:", err);
+      toast.error(err.message || "Failed to add tag");
+    }
     finally { setAddingTag(false); }
   };
 
@@ -279,7 +307,10 @@ export default function TicketDetail() {
     try {
       await api(`/tickets/${id}/tags/${tagId}`, { method: "DELETE" });
       await loadTicketData();
-    } catch (err) { console.error("Tag remove failed:", err); }
+    } catch (err) {
+      console.error("Tag remove failed:", err);
+      toast.error(err.message || "Failed to remove tag");
+    }
   };
 
   const handleOpenApprovalModal = async () => {
@@ -495,6 +526,60 @@ export default function TicketDetail() {
     }
   };
 
+  // ── Customer form handlers ──
+  const handleOpenSendForm = async () => {
+    setShowSendFormModal(true);
+    setSendFormId("");
+    setSendFormEmail(ticket?.requester_email || "");
+    setSendFormName(ticket?.requester_name || "");
+    setSentFormLink(null);
+    if (availableForms.length === 0) {
+      try {
+        const d = await formsApi.list();
+        setAvailableForms(d.forms || []);
+      } catch (err) {
+        toast.error(err.message || "Failed to load forms");
+      }
+    }
+  };
+
+  const handleSendFormInvite = async () => {
+    if (!sendFormId) {
+      toast.error("Choose a form to send");
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(sendFormEmail.trim())) {
+      toast.error("Enter a valid recipient email");
+      return;
+    }
+    setSendingFormInvite(true);
+    try {
+      const invite = await formsApi.createInvite(sendFormId, {
+        email: sendFormEmail.trim(),
+        name: sendFormName.trim() || undefined,
+        ticket_id: Number(id),
+      });
+      setSentFormLink(`${window.location.origin}/f/${invite.token}`);
+      toast.success("Form linked to this ticket");
+      const d = await formsApi.ticketInvites(id).catch(() => null);
+      if (d) setTicketForms(d.invites || []);
+      loadTicketData();
+    } catch (err) {
+      toast.error(err.message || "Failed to send form");
+    } finally {
+      setSendingFormInvite(false);
+    }
+  };
+
+  const copyFormLink = async (token) => {
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}/f/${token}`);
+      toast.success("Link copied to clipboard");
+    } catch {
+      toast.error("Could not copy — copy it manually");
+    }
+  };
+
   const formatDate = (d) => {
     if (!d) return "N/A";
     return new Date(d).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -559,6 +644,8 @@ export default function TicketDetail() {
     "approval_sla.assigned":   { icon: "clock",      label: "Approval SLA Set",    color: "text-blue-400" },
     "approval_sla.met":        { icon: "check",      label: "Approval SLA Met",    color: "text-emerald-400" },
     "approval_sla.escalated":  { icon: "arrowUp",    label: "Approval Escalated",  color: "text-orange-400" },
+    "form.sent":               { icon: "send",       label: "Form Sent",           color: "text-cyan-400" },
+    "form.completed":          { icon: "checkCircle", label: "Form Completed",     color: "text-emerald-400" },
   };
 
   const groupEventsByDate = (events) => {
@@ -605,6 +692,8 @@ export default function TicketDetail() {
       case "ticket.reopened": return "reopened this ticket";
       case "sla.paused": return "paused the SLA timer";
       case "sla.resumed": return "resumed the SLA timer";
+      case "form.sent": return `sent customer form "${p.form_name || ""}" to ${p.recipient_email || "the recipient"}`;
+      case "form.completed": return `customer completed form "${p.form_name || ""}"${p.auto_reopened ? " — ticket reopened automatically" : ""}`;
       default: return event.event_type.replace("ticket.", "").replace(/[._]/g, " ");
     }
   };
@@ -636,76 +725,103 @@ export default function TicketDetail() {
   return (
     <div className="animate-fade-in">
       {/* Breadcrumb Header */}
-      <div className="flex items-center gap-2 text-sm mb-4">
-        <button onClick={() => navigate("/tickets")} className="text-[var(--fg-muted)] hover:text-[var(--fg-primary)] transition-colors">
+      <div className="flex items-center gap-2 text-sm mb-5">
+        <button
+          onClick={() => navigate("/tickets")}
+          className="flex items-center gap-1.5 text-[var(--fg-muted)] hover:text-[var(--fg-primary)] transition-colors"
+        >
+          <Icon name="arrowLeft" size={14} />
           Tickets
         </button>
-        <Icon name="chevronRight" size={14} className="text-[var(--fg-muted)]" />
-        <span className="text-[var(--fg-secondary)] font-medium">{ticket.ticket_number}</span>
+        <Icon name="chevronRight" size={13} className="text-[var(--fg-subtle)]" />
+        <span className="text-[12px] font-mono font-medium px-2 py-0.5 rounded-md bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[var(--fg-secondary)]">
+          {ticket.ticket_number}
+        </span>
       </div>
 
       {/* Main Layout */}
-      <div className="flex gap-6">
+      <div className="flex flex-col-reverse gap-6 xl:flex-row">
         {/* Left: Main Content */}
         <div className="flex-1 min-w-0">
           {/* Title & Badges */}
           <div className="mb-6">
             <div className="flex items-center gap-2 mb-3 flex-wrap">
-              <Badge tone={STATUS_COLORS[ticket.status_key] || "slate"} className="text-xs">
+              <Badge tone={STATUS_COLORS[ticket.status_key] || "slate"} size="sm" dot>
                 {ticket.status_label}
               </Badge>
-              <Badge tone={PRIORITY_COLORS[ticket.priority_key] || "slate"} className="text-xs">
+              <Badge tone={PRIORITY_COLORS[ticket.priority_key] || "slate"} size="sm" dot>
                 {ticket.priority_label}
               </Badge>
               {ticket.type_label && (
-                <Badge tone="slate" className="text-xs">{ticket.type_label}</Badge>
+                <Badge tone="slate" size="sm">{ticket.type_label}</Badge>
               )}
+              <span className="text-xs text-[var(--fg-muted)] ml-1">
+                Opened {getTimeAgo(ticket.created_at)} by{" "}
+                <span className="text-[var(--fg-secondary)] font-medium">{ticket.requester_name}</span>
+              </span>
             </div>
-            <h1 className="text-xl font-semibold text-[var(--fg-primary)] leading-tight mb-3">
+            <h1 className="text-[22px] font-semibold text-[var(--fg-primary)] leading-snug tracking-tight mb-4">
               {ticket.subject}
             </h1>
 
-            {/* Quick Actions Row */}
+            {/* Quick Actions — one cohesive toolbar */}
             {isAgent && (
-              <div className="flex items-center gap-2 flex-wrap">
+              <div className="inline-flex items-center flex-wrap rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)] p-1 gap-0.5">
                 {ticket.assignee_id !== user?.id && (
-                  <Button size="sm" variant="ghost" onClick={handleAssignToMe} loading={actionLoading === "assign"}>
-                    <Icon name="userPlus" size={14} className="mr-1.5" />Assign to me
-                  </Button>
+                  <ToolbarAction
+                    icon="userPlus"
+                    label="Assign to me"
+                    onClick={handleAssignToMe}
+                    loading={actionLoading === "assign"}
+                  />
                 )}
                 {canSendForApproval && (
-                  <Button size="sm" variant="ghost" onClick={handleOpenApprovalModal}>
-                    <Icon name="checkCircle" size={14} className="mr-1.5" />Send for Approval
-                  </Button>
+                  <ToolbarAction
+                    icon="shield"
+                    label="Send for Approval"
+                    onClick={handleOpenApprovalModal}
+                  />
                 )}
-                <Button size="sm" variant="ghost" onClick={handleEscalate} loading={actionLoading === "escalate"}>
-                  <Icon name="arrowUp" size={14} className="mr-1.5" />Escalate
-                </Button>
-                {user?.role === "admin" && (
-                  <Button size="sm" variant="ghost" onClick={handleOpenReassignModal}>
-                    <Icon name="users" size={14} className="mr-1.5" />Reassign
-                  </Button>
+                <ToolbarAction
+                  icon="arrowUp"
+                  label="Escalate"
+                  onClick={handleEscalate}
+                  loading={actionLoading === "escalate"}
+                />
+                {user?.roles?.includes("admin") && (
+                  <ToolbarAction
+                    icon="users"
+                    label="Reassign"
+                    onClick={handleOpenReassignModal}
+                  />
                 )}
                 {(ticket.status_key === "new" || ticket.status_key === "open" || ticket.status_key === "pending") && ticket.assignee_id === user?.id && (
-                  <Button size="sm" variant="ghost" onClick={() => handleQuickStatus("solved")} loading={actionLoading === "solved"} className="text-emerald-400 hover:bg-emerald-500/10">
-                    <Icon name="checkCircle" size={14} className="mr-1.5" />Resolve
-                  </Button>
+                  <>
+                    <span className="w-px h-5 bg-[var(--border-default)] mx-1" />
+                    <ToolbarAction
+                      icon="checkCircle"
+                      label="Resolve"
+                      onClick={() => handleQuickStatus("solved")}
+                      loading={actionLoading === "solved"}
+                      tone="success"
+                    />
+                  </>
                 )}
               </div>
             )}
           </div>
 
           {/* Description Section */}
-          <div className="mb-6">
+          <div className="mb-5">
             <button
               onClick={() => setShowDescription(!showDescription)}
-              className="flex items-center gap-2 text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider mb-3 hover:text-[var(--fg-secondary)] transition-colors"
+              className="flex items-center gap-2 text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider mb-2.5 hover:text-[var(--fg-secondary)] transition-colors"
             >
-              <Icon name={showDescription ? "chevronDown" : "chevronRight"} size={14} />
+              <Icon name={showDescription ? "chevronDown" : "chevronRight"} size={13} />
               Description
             </button>
             {showDescription && (
-              <div className="text-sm text-[var(--fg-secondary)] leading-relaxed pl-6">
+              <div className="rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)] px-4 py-3.5 text-sm text-[var(--fg-secondary)] leading-relaxed whitespace-pre-wrap">
                 {ticket.description || <span className="text-[var(--fg-muted)] italic">No description provided</span>}
               </div>
             )}
@@ -713,33 +829,31 @@ export default function TicketDetail() {
 
           {/* Template Response Data */}
           {templateResponse && (
-            <div className="mb-6">
+            <div className="mb-5">
               <button
                 onClick={() => setShowTemplateData(!showTemplateData)}
-                className="flex items-center gap-2 text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider mb-3 hover:text-[var(--fg-secondary)] transition-colors"
+                className="flex items-center gap-2 text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider mb-2.5 hover:text-[var(--fg-secondary)] transition-colors"
               >
-                <Icon name={showTemplateData ? "chevronDown" : "chevronRight"} size={14} />
+                <Icon name={showTemplateData ? "chevronDown" : "chevronRight"} size={13} />
                 {ticket.template_name ? `${ticket.template_name} Data` : "Template Data"}
                 {ticket.template_icon && (
-                  <Icon name={ticket.template_icon} size={14} className="ml-1" />
+                  <Icon name={ticket.template_icon} size={13} className="ml-1" />
                 )}
               </button>
               {showTemplateData && (
-                <div className="pl-6">
-                  <div className="rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] p-4">
-                    <TemplateRenderer
-                      schema={templateResponse.schema_snapshot || []}
-                      values={templateResponse.response_data || {}}
-                      readOnly={true}
-                    />
-                  </div>
+                <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-elevated)] p-4">
+                  <TemplateRenderer
+                    schema={templateResponse.schema_snapshot || []}
+                    values={templateResponse.response_data || {}}
+                    readOnly={true}
+                  />
                 </div>
               )}
             </div>
           )}
 
           {/* Tags */}
-          <div className="mb-6 pl-6">
+          <div className="mb-6">
             <div className="flex items-center gap-2 flex-wrap">
               {tags.map((tag) => (
                 <span key={tag.id} className="inline-flex items-center gap-1 px-2 py-0.5 bg-violet-500/10 text-violet-400 rounded text-xs font-medium">
@@ -768,11 +882,11 @@ export default function TicketDetail() {
           {/* Activity Section */}
           <div className="border-t border-[var(--border-default)] pt-6">
             {/* Tab Buttons */}
-            <div className="flex items-center gap-1 mb-4">
+            <div className="inline-flex items-center gap-1 p-1 mb-5 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-default)] overflow-x-auto max-w-full">
               {[
                 { key: "comments", label: "Comments", count: comments.length },
-                { key: "history", label: "Activity Log", count: auditTrail.length },
-                { key: "sla", label: "SLA Analysis", count: null },
+                { key: "history", label: "Activity", count: auditTrail.length },
+                { key: "sla", label: "SLA", count: null },
                 ...(ticket.approval_status && ticket.approval_status !== "not_required"
                   ? [{ key: "approvals", label: "Approvals", count: approvalData?.length || null }]
                   : []),
@@ -782,14 +896,25 @@ export default function TicketDetail() {
                   key={t.key}
                   onClick={() => setActiveTab(t.key)}
                   className={cn(
-                    "px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
+                    "px-3.5 py-1.5 rounded-md text-[13px] font-medium transition-all whitespace-nowrap",
                     activeTab === t.key
-                      ? "bg-[var(--bg-elevated)] text-[var(--fg-primary)]"
-                      : "text-[var(--fg-muted)] hover:text-[var(--fg-secondary)]"
+                      ? "bg-[var(--accent)] text-white shadow-[0_0_10px_rgba(230,0,0,0.25)]"
+                      : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)]"
                   )}
                 >
                   {t.label}
-                  {t.count > 0 && <span className="ml-1 text-[var(--fg-muted)]">{t.count}</span>}
+                  {t.count > 0 && (
+                    <span
+                      className={cn(
+                        "ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-semibold",
+                        activeTab === t.key
+                          ? "bg-white/20 text-white"
+                          : "bg-[var(--bg-surface)] text-[var(--fg-muted)]"
+                      )}
+                    >
+                      {t.count}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -1331,13 +1456,15 @@ export default function TicketDetail() {
         </div>
 
         {/* Right: Sidebar */}
-        <div className="w-72 flex-shrink-0">
-          <div className="sticky top-6 space-y-1">
+        <div className="w-full xl:w-[300px] flex-shrink-0">
+          <div className="xl:sticky xl:top-6 space-y-3">
             {/* Details Panel */}
-            <div className="rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] overflow-hidden">
-              <div className="px-4 py-2 border-b border-[var(--border-default)]">
+            <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-sm)] overflow-hidden">
+              <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--border-default)]">
+                <Icon name="info" size={13} className="text-[var(--fg-muted)]" />
                 <h3 className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">Details</h3>
               </div>
+              <div className="py-1.5">
 
               {/* Status */}
               <DetailRow label="Status" icon="activity">
@@ -1415,14 +1542,18 @@ export default function TicketDetail() {
               <DetailRow label="Updated" icon="clock">
                 <span className="text-sm text-[var(--fg-secondary)]">{getTimeAgo(ticket.updated_at)}</span>
               </DetailRow>
+              </div>
             </div>
 
             {/* SLA Panel */}
             {slaData && (
-              <div className="rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] overflow-hidden mt-1">
-                <div className="px-4 py-2 border-b border-[var(--border-default)] flex items-center justify-between">
-                  <h3 className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">SLA</h3>
-                  <span className="text-xs text-[var(--fg-muted)]">{slaData.policy_name}</span>
+              <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-sm)] overflow-hidden">
+                <div className="px-4 py-2.5 border-b border-[var(--border-default)] flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-2 min-w-0">
+                    <Icon name="sla" size={13} className="text-[var(--fg-muted)] shrink-0" />
+                    <h3 className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">SLA</h3>
+                  </span>
+                  <span className="text-[11px] text-[var(--fg-muted)] truncate">{slaData.policy_name}</span>
                 </div>
                 <div className="p-3 space-y-2">
                   {(() => {
@@ -1467,14 +1598,17 @@ export default function TicketDetail() {
 
             {/* Teams Panel */}
             {isAgent && (
-              <div className="rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] overflow-hidden mt-1">
-                <div className={`px-4 py-2 flex items-center justify-between${ticketTeams.length > 0 ? " border-b border-[var(--border-default)]" : ""}`}>
-                  <h3 className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">Teams</h3>
+              <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-sm)] overflow-hidden">
+                <div className={`px-4 py-2.5 flex items-center justify-between${ticketTeams.length > 0 ? " border-b border-[var(--border-default)]" : ""}`}>
+                  <span className="flex items-center gap-2">
+                    <Icon name="teams" size={13} className="text-[var(--fg-muted)]" />
+                    <h3 className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">Teams</h3>
+                  </span>
                   <button
                     onClick={() => setShowAddTeamModal(true)}
-                    className="text-xs text-[var(--accent)] hover:underline"
+                    className="flex items-center gap-1 text-xs font-medium text-[var(--accent)] hover:underline"
                   >
-                    + Add
+                    <Icon name="plus" size={11} /> Add
                   </button>
                 </div>
                 {ticketTeams.length > 0 && (
@@ -1560,10 +1694,68 @@ export default function TicketDetail() {
               </div>
             )}
 
+            {/* Customer Forms Panel */}
+            {isAgent && (
+              <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-sm)] overflow-hidden">
+                <div className={`px-4 py-2.5 flex items-center justify-between${ticketForms.length > 0 ? " border-b border-[var(--border-default)]" : ""}`}>
+                  <span className="flex items-center gap-2">
+                    <Icon name="send" size={13} className="text-[var(--fg-muted)]" />
+                    <h3 className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">Customer Forms</h3>
+                  </span>
+                  <button
+                    onClick={handleOpenSendForm}
+                    className="flex items-center gap-1 text-xs font-medium text-[var(--accent)] hover:underline"
+                  >
+                    <Icon name="plus" size={11} /> Send
+                  </button>
+                </div>
+                {ticketForms.length > 0 && (
+                  <div className="p-3 space-y-2">
+                    {ticketForms.map((fi) => (
+                      <div key={fi.id} className="p-2.5 rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)]">
+                        <div className="flex items-center justify-between gap-2 text-xs">
+                          <span className="text-[var(--fg-primary)] font-medium truncate">{fi.form_name}</span>
+                          <Badge
+                            tone={fi.status === "completed" ? "emerald" : fi.status === "revoked" ? "slate" : "amber"}
+                            className="text-[10px] capitalize shrink-0"
+                            dot={fi.status === "pending"}
+                          >
+                            {fi.status}
+                          </Badge>
+                        </div>
+                        <p className="text-[10px] text-[var(--fg-muted)] mt-1 truncate">
+                          {fi.recipient_email}
+                          {fi.status === "completed" && fi.submitted_at && ` · ${getTimeAgo(fi.submitted_at)}`}
+                        </p>
+                        <div className="flex items-center gap-1.5 mt-2">
+                          {fi.status === "pending" && (
+                            <button
+                              onClick={() => copyFormLink(fi.token)}
+                              className="flex-1 py-1 px-2 text-[10px] font-medium rounded bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[var(--fg-secondary)] hover:text-[var(--accent)] hover:border-[var(--accent)]/40 transition-colors"
+                            >
+                              Copy link
+                            </button>
+                          )}
+                          {fi.status === "completed" && (
+                            <button
+                              onClick={() => setViewFormInvite(fi)}
+                              className="flex-1 py-1 px-2 text-[10px] font-medium rounded bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+                            >
+                              View response
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Approval Panel */}
             {ticket.approval_status && ticket.approval_status !== "not_required" && (
-              <div className="rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] overflow-hidden mt-1">
-                <div className="px-4 py-2 border-b border-[var(--border-default)] flex items-center justify-between">
+              <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-sm)] overflow-hidden">
+                <div className="px-4 py-2.5 border-b border-[var(--border-default)] flex items-center justify-between">
                   <h3 className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">Approval</h3>
                   <Badge
                     tone={ticket.approval_status === "approved" ? "emerald" : ticket.approval_status === "rejected" ? "rose" : "amber"}
@@ -1607,8 +1799,9 @@ export default function TicketDetail() {
             )}
             {/* CSAT Rating Panel - shown for solved/closed tickets */}
             {(ticket.status_key === "solved" || ticket.status_key === "closed") && (
-              <div className="rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] overflow-hidden mt-3">
-                <div className="px-4 py-3 border-b border-[var(--border-default)]">
+              <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-sm)] overflow-hidden">
+                <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--border-default)]">
+                  <Icon name="star" size={13} className="text-[var(--fg-muted)]" />
                   <h3 className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">Satisfaction Rating</h3>
                 </div>
                 <div className="p-4 space-y-3">
@@ -2266,18 +2459,183 @@ export default function TicketDetail() {
           </div>
         </div>
       </Modal>
+      {/* Send Customer Form Modal */}
+      <Modal
+        open={showSendFormModal}
+        onClose={() => setShowSendFormModal(false)}
+        title="Send a customer form"
+        subtitle="The response attaches to this ticket automatically"
+        size="md"
+        actions={
+          sentFormLink ? (
+            <Button variant="secondary" onClick={() => setShowSendFormModal(false)}>Done</Button>
+          ) : (
+            <>
+              <Button variant="secondary" onClick={() => setShowSendFormModal(false)}>Cancel</Button>
+              <Button onClick={handleSendFormInvite} loading={sendingFormInvite} icon={<Icon name="send" size={14} />}>
+                Create form link
+              </Button>
+            </>
+          )
+        }
+      >
+        {sentFormLink ? (
+          <div className="text-center py-3 space-y-4">
+            <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center mx-auto animate-scale-in">
+              <Icon name="checkCircle" size={26} />
+            </div>
+            <p className="text-sm text-[var(--fg-secondary)]">
+              Share this one-time link with{" "}
+              <strong className="text-[var(--fg-primary)]">{sendFormEmail}</strong>
+            </p>
+            <div className="flex items-center gap-2 p-3 rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)]">
+              <Icon name="link" size={14} className="text-[var(--fg-muted)] shrink-0" />
+              <code className="flex-1 text-[12px] text-[var(--fg-secondary)] truncate text-left">{sentFormLink}</code>
+              <Button
+                size="xs"
+                variant="secondary"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(sentFormLink);
+                    toast.success("Link copied");
+                  } catch {
+                    toast.error("Copy manually");
+                  }
+                }}
+                icon={<Icon name="copy" size={12} />}
+              >
+                Copy
+              </Button>
+            </div>
+            <p className="text-[11px] text-[var(--fg-muted)] flex items-center justify-center gap-1.5">
+              <Icon name="info" size={11} />
+              Set the ticket to Pending while you wait — it reopens automatically on submission
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-5">
+            <div>
+              <label className="block text-sm font-medium text-[var(--fg-primary)] mb-2">Form</label>
+              <select
+                value={sendFormId}
+                onChange={(e) => setSendFormId(e.target.value)}
+                className={cn(
+                  "w-full px-3 py-2.5 rounded-lg text-sm transition-all",
+                  "bg-[var(--bg-base)] text-[var(--fg-primary)]",
+                  "border border-[var(--border-default)] hover:border-[var(--border-hover)]",
+                  "focus:outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/20"
+                )}
+              >
+                <option value="">Choose a form…</option>
+                {availableForms.map((f) => (
+                  <option key={f.id} value={f.id}>{f.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-[var(--fg-primary)] mb-2">Send to (email)</label>
+                <input
+                  type="email"
+                  value={sendFormEmail}
+                  onChange={(e) => setSendFormEmail(e.target.value)}
+                  placeholder="customer@company.com"
+                  className={cn(
+                    "w-full px-3 py-2.5 rounded-lg text-sm transition-all",
+                    "bg-[var(--bg-base)] text-[var(--fg-primary)]",
+                    "placeholder:text-[var(--fg-muted)]",
+                    "border border-[var(--border-default)] hover:border-[var(--border-hover)]",
+                    "focus:outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/20"
+                  )}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[var(--fg-primary)] mb-2">Name (optional)</label>
+                <input
+                  type="text"
+                  value={sendFormName}
+                  onChange={(e) => setSendFormName(e.target.value)}
+                  placeholder="Recipient name"
+                  className={cn(
+                    "w-full px-3 py-2.5 rounded-lg text-sm transition-all",
+                    "bg-[var(--bg-base)] text-[var(--fg-primary)]",
+                    "placeholder:text-[var(--fg-muted)]",
+                    "border border-[var(--border-default)] hover:border-[var(--border-hover)]",
+                    "focus:outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/20"
+                  )}
+                />
+              </div>
+            </div>
+            <div className="flex items-start gap-2.5 p-3 rounded-lg bg-blue-500/5 border border-blue-500/20">
+              <Icon name="info" size={14} className="text-blue-400 shrink-0 mt-0.5" />
+              <p className="text-[12px] text-[var(--fg-secondary)] leading-relaxed">
+                The recipient gets a one-time link. When they submit, their response is
+                attached here, the activity log records it, and a Pending ticket reopens
+                automatically.
+              </p>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* View Form Response Modal */}
+      <Modal
+        open={!!viewFormInvite}
+        onClose={() => setViewFormInvite(null)}
+        title={`Response — ${viewFormInvite?.form_name || ""}`}
+        subtitle={
+          viewFormInvite &&
+          `${viewFormInvite.recipient_name || viewFormInvite.recipient_email} · submitted ${formatDate(viewFormInvite.submitted_at)}`
+        }
+        size="lg"
+        actions={<Button variant="secondary" onClick={() => setViewFormInvite(null)}>Close</Button>}
+      >
+        {viewFormInvite && (
+          <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-base)] p-4">
+            <TemplateRenderer
+              schema={viewFormInvite.fields_schema || []}
+              values={viewFormInvite.response_data || {}}
+              readOnly
+            />
+          </div>
+        )}
+      </Modal>
     </div>
+  );
+}
+
+function ToolbarAction({ icon, label, onClick, loading, tone }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={loading}
+      className={cn(
+        "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[13px] font-medium",
+        "transition-colors duration-150 whitespace-nowrap",
+        "disabled:opacity-60",
+        tone === "success"
+          ? "text-emerald-400 hover:bg-emerald-500/10"
+          : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)]"
+      )}
+    >
+      {loading ? (
+        <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+      ) : (
+        <Icon name={icon} size={14} />
+      )}
+      {label}
+    </button>
   );
 }
 
 function DetailRow({ label, icon, children }) {
   return (
-    <div className="px-4 py-1.5 flex items-center justify-between hover:bg-[var(--bg-base)] transition-colors group">
-      <div className="flex items-center gap-2 text-[var(--fg-muted)] shrink-0">
-        <Icon name={icon} size={14} />
-        <span className="text-xs">{label}</span>
+    <div className="px-4 py-2 flex items-center justify-between gap-3 hover:bg-[var(--bg-surface)] transition-colors group">
+      <div className="flex items-center gap-2 text-[var(--fg-muted)] shrink-0 w-[88px]">
+        <Icon name={icon} size={13} />
+        <span className="text-xs font-medium">{label}</span>
       </div>
-      <div className="flex-1 text-right ml-4">{children}</div>
+      <div className="flex-1 min-w-0 flex justify-end">{children}</div>
     </div>
   );
 }
@@ -2287,40 +2645,43 @@ function DetailSelect({ value, onChange, options, placeholder, disabled, muted }
   const selected = options.find((o) => String(o.value) === String(value));
 
   return (
-    <div className="relative w-[150px] ml-auto">
+    <div className="relative w-full max-w-[164px]">
       <button
         type="button"
         onClick={() => !disabled && setOpen(!open)}
         className={cn(
-          "w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-sm rounded-md border transition-all",
+          "w-full flex items-center justify-between gap-1.5 pl-2.5 pr-2 py-1.5 text-[13px] rounded-lg border transition-all",
           "bg-[var(--bg-base)] border-[var(--border-default)]",
-          open && "border-[var(--accent)] shadow-[0_0_0_1px_var(--accent)]",
+          open && "border-[var(--accent)] ring-2 ring-[var(--accent)]/15",
           !open && "hover:border-[var(--border-hover)]",
           disabled && "opacity-50 cursor-not-allowed",
           !disabled && "cursor-pointer",
           selected && !muted ? "text-[var(--fg-primary)]" : "text-[var(--fg-muted)]"
         )}
       >
-        <span className="truncate">{selected ? selected.label : (placeholder || "Select...")}</span>
-        <Icon name="chevronDown" size={12} className={cn("shrink-0 text-[var(--fg-muted)] transition-transform", open && "rotate-180")} />
+        <span className="truncate font-medium">{selected ? selected.label : (placeholder || "Select...")}</span>
+        <Icon name="chevronDown" size={12} className={cn("shrink-0 text-[var(--fg-muted)] transition-transform duration-150", open && "rotate-180")} />
       </button>
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full mt-1 z-50 w-full min-w-[150px] max-h-[200px] overflow-y-auto rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-lg shadow-black/20 py-1">
+          <div className="absolute right-0 top-full mt-1.5 z-50 w-full min-w-[164px] max-h-[220px] overflow-y-auto rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-elevated)] py-1 animate-slide-down">
             {options.map((opt) => (
               <button
                 key={opt.value}
                 type="button"
                 onClick={() => { onChange(opt.value); setOpen(false); }}
                 className={cn(
-                  "w-full px-3 py-1.5 text-sm text-center transition-colors",
+                  "w-full flex items-center justify-between gap-2 px-3 py-1.5 text-[13px] text-left transition-colors",
                   String(opt.value) === String(value)
                     ? "bg-[var(--accent)]/10 text-[var(--accent)] font-medium"
-                    : "text-[var(--fg-secondary)] hover:bg-[var(--bg-base)] hover:text-[var(--fg-primary)]"
+                    : "text-[var(--fg-secondary)] hover:bg-[var(--bg-surface)] hover:text-[var(--fg-primary)]"
                 )}
               >
-                {opt.label}
+                <span className="truncate">{opt.label}</span>
+                {String(opt.value) === String(value) && (
+                  <Icon name="check" size={12} className="shrink-0" />
+                )}
               </button>
             ))}
           </div>

@@ -3,6 +3,7 @@
  */
 import { useState, useEffect } from "react";
 import { assetsApi } from "../../services/api";
+import { useToast } from "../../contexts/toast";
 import Badge from "../ui/Badge";
 import Button from "../ui/Button";
 import Icon from "../ui/Icon";
@@ -10,6 +11,7 @@ import Icon from "../ui/Icon";
 function cn(...p) { return p.filter(Boolean).join(" "); }
 
 export default function AssignmentsTab() {
+  const toast = useToast();
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeOnly, setActiveOnly] = useState(false);
@@ -23,15 +25,20 @@ export default function AssignmentsTab() {
       if (activeOnly) params.active_only = "true";
       const data = await assetsApi.getAssignments(params);
       setRecords(data);
-    } catch { /* silent */ }
+    } catch (e) {
+      toast.error(e?.message || "Failed to load assignment history");
+    }
     finally { setLoading(false); }
   }
 
   async function handleCheckin(record) {
     try {
       await assetsApi.checkin(record.asset_id, {});
+      toast.success("Asset checked in");
       load();
-    } catch { /* silent */ }
+    } catch (e) {
+      toast.error(e?.message || "Failed to check in asset");
+    }
   }
 
   const fmtDate = (d) => d

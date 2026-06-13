@@ -51,7 +51,7 @@ export default function Input({
           className={cn(
             // Base styles
             "w-full bg-[var(--bg-elevated)] text-[var(--fg-primary)] rounded-lg",
-            "border border-[var(--border-default)]",
+            "border border-[var(--border-default)] hover:border-[var(--border-hover)]",
             "placeholder:text-[var(--fg-muted)]",
             // Size
             sizeStyles[size],
@@ -123,7 +123,7 @@ export function Textarea({
         className={cn(
           // Base styles
           "w-full bg-[var(--bg-elevated)] text-[var(--fg-primary)] rounded-lg",
-          "border border-[var(--border-default)]",
+          "border border-[var(--border-default)] hover:border-[var(--border-hover)]",
           "placeholder:text-[var(--fg-muted)]",
           "resize-none",
           // Size
@@ -187,7 +187,7 @@ export function Select({
           className={cn(
             // Base styles
             "w-full bg-[var(--bg-elevated)] text-[var(--fg-primary)] rounded-lg",
-            "border border-[var(--border-default)]",
+            "border border-[var(--border-default)] hover:border-[var(--border-hover)]",
             "appearance-none cursor-pointer",
             // Size
             sizeStyles[size],
@@ -306,7 +306,7 @@ export function SearchableSelect({
           onClick={() => !disabled && setIsOpen(!isOpen)}
           className={cn(
             "w-full text-left bg-[var(--bg-elevated)] rounded-lg",
-            "border border-[var(--border-default)]",
+            "border border-[var(--border-default)] hover:border-[var(--border-hover)]",
             sizeStyles[size],
             "pr-10",
             "focus:outline-none focus:border-[var(--accent)]",
@@ -338,11 +338,11 @@ export function SearchableSelect({
         {/* Dropdown */}
         {isOpen && (
           <div className={cn(
-            "absolute z-50 w-full mt-1",
+            "absolute z-50 w-full mt-1.5",
             "bg-[var(--bg-elevated)] rounded-lg",
             "border border-[var(--border-default)]",
-            "shadow-lg shadow-black/20",
-            "overflow-hidden"
+            "shadow-[var(--shadow-elevated)]",
+            "overflow-hidden animate-slide-down"
           )}>
             {/* Search Input */}
             <div className="p-2 border-b border-[var(--border-default)]">
@@ -359,7 +359,7 @@ export function SearchableSelect({
                   className={cn(
                     "w-full pl-9 pr-3 py-2 text-sm",
                     "bg-[var(--bg-base)] text-[var(--fg-primary)] rounded-md",
-                    "border border-[var(--border-default)]",
+                    "border border-[var(--border-default)] hover:border-[var(--border-hover)]",
                     "placeholder:text-[var(--fg-muted)]",
                     "focus:outline-none focus:border-[var(--accent)]",
                     "transition-all duration-200"
@@ -443,7 +443,7 @@ export function SearchInput({
         className={cn(
           // Base styles
           "w-full bg-[var(--bg-elevated)] text-[var(--fg-primary)] rounded-lg",
-          "border border-[var(--border-default)]",
+          "border border-[var(--border-default)] hover:border-[var(--border-hover)]",
           "placeholder:text-[var(--fg-muted)]",
           // Size
           sizeStyles[size],

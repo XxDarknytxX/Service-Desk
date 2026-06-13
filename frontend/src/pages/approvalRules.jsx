@@ -14,6 +14,7 @@ import Icon from "../components/ui/Icon";
 import Card from "../components/ui/Card";
 import Modal from "../components/ui/Modal";
 import Input, { Textarea } from "../components/ui/Input";
+import useConfirm from "../components/ui/useConfirm";
 
 function cn(...parts) {
   return parts.filter(Boolean).join(" ");
@@ -66,6 +67,7 @@ const EMPTY_FORM = {
 export default function ApprovalRules() {
   const { meta } = useMeta();
   const toast = useToast();
+  const { confirm, confirmDialog } = useConfirm();
   const [rules, setRules] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -113,6 +115,7 @@ export default function ApprovalRules() {
       setRules(data.rules || []);
     } catch (error) {
       console.error("Failed to load rules:", error);
+      toast.error(error.message || "Failed to load approval rules");
     } finally {
       setLoading(false);
     }
@@ -197,14 +200,28 @@ export default function ApprovalRules() {
     }
   }
 
-  async function handleDelete(id) {
-    try {
-      await approvalsApi.deleteRule(id);
-      toast.success("Rule deleted");
-      loadRules();
-    } catch (error) {
-      toast.error(error.message || "Failed to delete rule");
-    }
+  function handleDelete(rule) {
+    confirm({
+      title: "Delete approval rule?",
+      message: (
+        <>
+          This will permanently delete{" "}
+          <strong className="text-[var(--fg-primary)]">{rule.name}</strong>.
+          Tickets currently pending approval under this rule are not affected,
+          but new tickets will no longer match it.
+        </>
+      ),
+      confirmText: "Delete Rule",
+      onConfirm: async () => {
+        try {
+          await approvalsApi.deleteRule(rule.id);
+          toast.success("Rule deleted");
+          loadRules();
+        } catch (error) {
+          toast.error(error.message || "Failed to delete rule");
+        }
+      },
+    });
   }
 
   async function toggleActive(rule) {
@@ -436,7 +453,7 @@ export default function ApprovalRules() {
                       <Icon name="pencil" size={14} />
                     </button>
                     <button
-                      onClick={() => handleDelete(rule.id)}
+                      onClick={() => handleDelete(rule)}
                       className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-rose-400 hover:bg-rose-500/10 transition-all"
                     >
                       <Icon name="trash" size={14} />
@@ -1064,6 +1081,8 @@ export default function ApprovalRules() {
           </label>
         </form>
       </Modal>
+
+      {confirmDialog}
     </div>
   );
 }

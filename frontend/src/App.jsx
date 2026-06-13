@@ -4,6 +4,7 @@ import { MetaProvider } from "./contexts/meta";
 import { ThemeProvider } from "./contexts/theme";
 import { ToastProvider } from "./contexts/toast";
 import AppLayout from "./components/AppLayout";
+import LoadingScreen from "./components/ui/LoadingScreen";
 import Login from "./pages/login";
 import Dashboard from "./pages/dashboard";
 import Tickets from "./pages/tickets";
@@ -21,10 +22,13 @@ import TemplateBuilder from "./pages/templateBuilder";
 import Organizations from "./pages/organizations";
 import Departments from "./pages/departments";
 import Profile from "./pages/profile";
+import Forms from "./pages/forms";
+import FormPreview from "./pages/formPreview";
+import PublicForm from "./pages/publicForm";
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
-  if (loading) return <div className="p-6">Loading...</div>;
+  if (loading) return <LoadingScreen />;
   return user ? children : <Navigate to="/login" replace />;
 }
 
@@ -53,6 +57,8 @@ export default function App() {
           <MetaProvider>
             <Routes>
               <Route path="/login" element={<Login />} />
+              {/* Public customer form — the token in the URL is the credential */}
+              <Route path="/f/:token" element={<PublicForm />} />
               <Route
                 path="/dashboard"
                 element={
@@ -241,6 +247,33 @@ export default function App() {
                       <AppLayout>
                         <Departments />
                       </AppLayout>
+                    </RoleRoute>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/forms"
+                element={
+                  <ProtectedRoute>
+                    <RoleRoute roles={["admin", "agent"]}>
+                      <ModuleRoute moduleKey="forms">
+                        <AppLayout>
+                          <Forms />
+                        </AppLayout>
+                      </ModuleRoute>
+                    </RoleRoute>
+                  </ProtectedRoute>
+                }
+              />
+              {/* Full-tab form preview — customer view, no app chrome */}
+              <Route
+                path="/forms/preview/:id"
+                element={
+                  <ProtectedRoute>
+                    <RoleRoute roles={["admin", "agent"]}>
+                      <ModuleRoute moduleKey="forms">
+                        <FormPreview />
+                      </ModuleRoute>
                     </RoleRoute>
                   </ProtectedRoute>
                 }

@@ -399,7 +399,7 @@ export default function FaqChatBar() {
         }
 
         .markdown-content code {
-          background-color: rgba(0, 0, 0, 0.1);
+          background-color: var(--bg-sunken);
           padding: 0.125rem 0.375rem;
           border-radius: 0.25rem;
           font-size: 0.9em;
@@ -407,7 +407,7 @@ export default function FaqChatBar() {
         }
 
         .markdown-content pre {
-          background-color: rgba(0, 0, 0, 0.1);
+          background-color: var(--bg-sunken);
           padding: 0.75rem;
           border-radius: 0.5rem;
           overflow-x: auto;
@@ -434,7 +434,7 @@ export default function FaqChatBar() {
         }
 
         .markdown-content th {
-          background-color: rgba(0, 0, 0, 0.05);
+          background-color: var(--bg-surface);
           font-weight: 600;
         }
 

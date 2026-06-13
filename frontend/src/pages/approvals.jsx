@@ -15,6 +15,7 @@ import Icon from "../components/ui/Icon";
 import Card from "../components/ui/Card";
 import Modal from "../components/ui/Modal";
 import Input, { Textarea } from "../components/ui/Input";
+import useConfirm from "../components/ui/useConfirm";
 
 function cn(...parts) {
   return parts.filter(Boolean).join(" ");
@@ -26,6 +27,7 @@ export default function Approvals() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const toast = useToast();
+  const { confirm, confirmDialog } = useConfirm();
   const [activeTab, setActiveTab] = useState("pending");
   const [approvals, setApprovals] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -184,6 +186,14 @@ export default function Approvals() {
       toast.error("Start and end dates are required for temporary delegations");
       return;
     }
+    if (delegationType === "temporary" && new Date(delegationEndDate) <= new Date(delegationStartDate)) {
+      toast.error("End date must be after the start date");
+      return;
+    }
+    if (delegationType === "temporary" && new Date(delegationEndDate) <= new Date()) {
+      toast.error("End date must be in the future");
+      return;
+    }
     setSubmitting(true);
     try {
       await approvalsApi.createDelegation({
@@ -234,17 +244,29 @@ export default function Approvals() {
     }
   }
 
-  async function handleRevokeDelegation(id) {
-    setSubmitting(true);
-    try {
-      await approvalsApi.revokeDelegation(id);
-      toast.success("Delegation revoked");
-      loadDelegations();
-    } catch (error) {
-      toast.error(error.message || "Failed to revoke delegation");
-    } finally {
-      setSubmitting(false);
-    }
+  function handleRevokeDelegation(d) {
+    confirm({
+      title: "Revoke delegation?",
+      message: (
+        <>
+          This ends the delegation to{" "}
+          <strong className="text-[var(--fg-primary)]">
+            {d.delegate_name || "the delegate"}
+          </strong>
+          . Pending approvals will return to you.
+        </>
+      ),
+      confirmText: "Revoke",
+      onConfirm: async () => {
+        try {
+          await approvalsApi.revokeDelegation(d.id);
+          toast.success("Delegation revoked");
+          loadDelegations();
+        } catch (error) {
+          toast.error(error.message || "Failed to revoke delegation");
+        }
+      },
+    });
   }
 
   function formatDate(dateStr) {
@@ -587,7 +609,7 @@ export default function Approvals() {
             </div>
           ) : (
             <div className={cn(
-              "rounded-xl overflow-hidden",
+              "rounded-xl overflow-hidden overflow-x-auto",
               "bg-[var(--bg-elevated)]",
               "border border-[var(--border-default)]"
             )}>
@@ -648,7 +670,7 @@ export default function Approvals() {
                             <Button
                               variant="secondary"
                               size="sm"
-                              onClick={() => handleRevokeDelegation(d.id)}
+                              onClick={() => handleRevokeDelegation(d)}
                               className="text-rose-400 hover:bg-rose-500/10"
                             >
                               Revoke
@@ -960,6 +982,8 @@ export default function Approvals() {
           </p>
         </div>
       </Modal>
+
+      {confirmDialog}
     </div>
   );
 }

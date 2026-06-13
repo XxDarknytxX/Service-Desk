@@ -8,5 +8,5 @@ export default function TicketNew() {
     navigate("/tickets?create=1", { replace: true });
   }, [navigate]);
 
-  return <div className="text-sm text-slate-500">Redirecting to ticket workspace...</div>;
+  return <div className="text-sm text-[var(--fg-muted)] p-6">Redirecting to ticket workspace...</div>;
 }
