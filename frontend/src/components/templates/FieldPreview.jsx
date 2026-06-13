@@ -452,7 +452,7 @@ export default function FieldPreview({
           ? "border-[var(--accent)] shadow-[0_0_0_1px_var(--accent),0_0_12px_rgba(230,0,0,0.15)]"
           : "border-[var(--border-default)] hover:border-[var(--border-hover)]",
         // Hover shadow
-        !isSelected && "hover:shadow-[0_2px_8px_rgba(0,0,0,0.2)]"
+        !isSelected && "hover:shadow-[var(--shadow-card)]"
       )}
     >
       {/* Top-right controls */}
@@ -523,7 +523,7 @@ export default function FieldPreview({
           className={cn(
             "p-1 rounded-md transition-all duration-150",
             "text-[var(--fg-muted)]",
-            "hover:bg-red-500/10 hover:text-red-400"
+            "hover:bg-rose-500/10 hover:text-rose-500"
           )}
           title="Remove field"
         >

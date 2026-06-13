@@ -61,18 +61,23 @@ export default function FieldToolbox({ onAddField }) {
       className={cn(
         "h-full flex flex-col overflow-hidden",
         "bg-[var(--bg-elevated)]",
-        "border border-[var(--border-default)] rounded-xl",
-        "shadow-[0_0_0_1px_var(--border-default),0_2px_8px_rgba(0,0,0,0.3)]"
+        "border border-[var(--border-default)] rounded-2xl",
+        "shadow-[var(--shadow-card)]"
       )}
     >
       {/* Header — pinned */}
-      <div className="px-4 py-3.5 border-b border-[var(--border-default)] shrink-0">
-        <h3 className="text-sm font-semibold text-[var(--fg-primary)] tracking-tight">
-          Field Toolbox
-        </h3>
-        <p className="text-[11px] text-[var(--fg-muted)] mt-0.5">
-          Drag or click to add
-        </p>
+      <div className="flex items-center gap-2.5 px-4 py-3.5 border-b border-[var(--border-default)] shrink-0">
+        <span className="h-8 w-8 rounded-lg bg-[var(--accent)]/10 text-[var(--accent)] flex items-center justify-center shrink-0">
+          <Icon name="grid" size={15} />
+        </span>
+        <div className="min-w-0">
+          <h3 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight leading-none">
+            Field Toolbox
+          </h3>
+          <p className="text-[11px] text-[var(--fg-muted)] mt-1">
+            Drag or click to add
+          </p>
+        </div>
       </div>
 
       {/* Categories — scrollable, no visible scrollbar */}

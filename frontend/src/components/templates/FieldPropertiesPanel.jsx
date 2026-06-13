@@ -170,7 +170,7 @@ function OptionsEditor({ options = [], onChange }) {
               "text-[var(--fg-muted)]",
               options.length <= 1
                 ? "opacity-30 cursor-not-allowed"
-                : "hover:bg-red-500/10 hover:text-red-400"
+                : "hover:bg-rose-500/10 hover:text-rose-500"
             )}
           >
             <Icon name="close" size={12} />
@@ -259,7 +259,7 @@ function GroupsEditor({ groups = [], onChange }) {
                 "text-[var(--fg-muted)]",
                 groups.length <= 1
                   ? "opacity-30 cursor-not-allowed"
-                  : "hover:bg-red-500/10 hover:text-red-400"
+                  : "hover:bg-rose-500/10 hover:text-rose-500"
               )}
             >
               <Icon name="trash" size={12} />
@@ -386,7 +386,7 @@ function ConditionsEditor({ conditions = [], allFields = [], onChange }) {
             className={cn(
               "p-1 rounded-md shrink-0 transition-colors duration-150",
               "text-[var(--fg-muted)]",
-              "hover:bg-red-500/10 hover:text-red-400"
+              "hover:bg-rose-500/10 hover:text-rose-500"
             )}
           >
             <Icon name="close" size={12} />
@@ -434,19 +434,24 @@ export default function FieldPropertiesPanel({
       className={cn(
         "h-full flex flex-col overflow-hidden",
         "bg-[var(--bg-elevated)]",
-        "border border-[var(--border-default)] rounded-xl",
-        "shadow-[0_0_0_1px_var(--border-default),0_2px_8px_rgba(0,0,0,0.3)]"
+        "border border-[var(--border-default)] rounded-2xl",
+        "shadow-[var(--shadow-card)]"
       )}
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3.5 border-b border-[var(--border-default)] shrink-0">
-        <div>
-          <h3 className="text-sm font-semibold text-[var(--fg-primary)] tracking-tight">
-            Field Properties
-          </h3>
-          <p className="text-[11px] text-[var(--fg-muted)] mt-0.5 capitalize">
-            {field.type.replace(/_/g, " ")}
-          </p>
+      <div className="flex items-center justify-between gap-2 px-4 py-3.5 border-b border-[var(--border-default)] shrink-0">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <span className="h-8 w-8 rounded-lg bg-blue-500/10 text-blue-500 flex items-center justify-center shrink-0">
+            <Icon name="settings" size={15} />
+          </span>
+          <div className="min-w-0">
+            <h3 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight leading-none">
+              Field Properties
+            </h3>
+            <p className="text-[11px] text-[var(--fg-muted)] mt-1 capitalize truncate">
+              {field.type.replace(/_/g, " ")}
+            </p>
+          </div>
         </div>
         <button
           type="button"

@@ -11,15 +11,26 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { templatesApi } from "../../services/api";
 import { useToast } from "../../contexts/toast";
 import Icon from "../ui/Icon";
-import Card from "../ui/Card";
 import Badge from "../ui/Badge";
 import Button from "../ui/Button";
+import EmptyState from "../ui/EmptyState";
+import Skeleton from "../ui/Skeleton";
 
 function cn(...parts) {
   return parts.filter(Boolean).join(" ");
 }
 
-const categoryTints = ["violet", "blue", "cyan", "teal", "indigo", "emerald", "amber", "rose"];
+/* Per-card accent palette — static class strings (no dynamic Tailwind). */
+const CARD_ACCENTS = [
+  { tile: "bg-violet-500/10 text-violet-500 border-violet-500/15", glow: "bg-violet-500" },
+  { tile: "bg-blue-500/10 text-blue-500 border-blue-500/15", glow: "bg-blue-500" },
+  { tile: "bg-cyan-500/10 text-cyan-500 border-cyan-500/15", glow: "bg-cyan-500" },
+  { tile: "bg-teal-500/10 text-teal-500 border-teal-500/15", glow: "bg-teal-500" },
+  { tile: "bg-indigo-500/10 text-indigo-500 border-indigo-500/15", glow: "bg-indigo-500" },
+  { tile: "bg-emerald-500/10 text-emerald-500 border-emerald-500/15", glow: "bg-emerald-500" },
+  { tile: "bg-amber-500/10 text-amber-500 border-amber-500/15", glow: "bg-amber-500" },
+  { tile: "bg-rose-500/10 text-rose-500 border-rose-500/15", glow: "bg-rose-500" },
+];
 
 const iconMap = {
   lock: "lock",
@@ -127,7 +138,7 @@ export default function TemplateGallery({ onSelectTemplate, onBack }) {
           <button
             onClick={onBack}
             className={cn(
-              "p-2 rounded-lg",
+              "p-2 rounded-lg shrink-0",
               "text-[var(--fg-muted)] hover:text-[var(--fg-primary)]",
               "hover:bg-[var(--bg-surface)]",
               "transition-all duration-150"
@@ -136,7 +147,10 @@ export default function TemplateGallery({ onSelectTemplate, onBack }) {
             <Icon name="arrowLeft" size={18} />
           </button>
         )}
-        <div>
+        <span className="h-10 w-10 rounded-xl bg-[var(--accent)]/10 text-[var(--accent)] border border-[var(--accent)]/15 flex items-center justify-center shrink-0">
+          <Icon name="clipboard" size={18} />
+        </span>
+        <div className="min-w-0">
           <h2 className="text-lg font-semibold text-[var(--fg-primary)] tracking-tight">
             Choose a Template
           </h2>
@@ -170,149 +184,167 @@ export default function TemplateGallery({ onSelectTemplate, onBack }) {
 
       {/* Category Pills */}
       {!loading && gallery.length > 0 && (
-        <div
-          ref={categoryScrollRef}
-          className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide"
-          style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
-        >
-          {categories.map((cat, idx) => {
-            const isActive = selectedCategory === cat.id;
-            return (
-              <button
-                key={cat.id}
-                onClick={() => setSelectedCategory(cat.id)}
-                className={cn(
-                  "flex-shrink-0 px-4 py-2 rounded-lg text-sm font-medium",
-                  "transition-all duration-200 whitespace-nowrap",
-                  isActive
-                    ? "bg-[var(--accent)] text-white shadow-[0_0_12px_rgba(230,0,0,0.3)]"
-                    : cn(
-                        "bg-[var(--bg-surface)] text-[var(--fg-secondary)]",
-                        "border border-[var(--border-default)]",
-                        "hover:bg-[var(--bg-surface-hover)] hover:text-[var(--fg-primary)]",
-                        "hover:border-[var(--border-hover)]"
-                      )
-                )}
-              >
-                {cat.name}
-              </button>
-            );
-          })}
+        <div className="overflow-x-auto scrollbar-none -mx-1 px-1">
+          <div
+            ref={categoryScrollRef}
+            className="inline-flex items-center gap-1 p-1 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-default)]"
+          >
+            {categories.map((cat) => {
+              const isActive = selectedCategory === cat.id;
+              return (
+                <button
+                  key={cat.id}
+                  onClick={() => setSelectedCategory(cat.id)}
+                  className={cn(
+                    "flex-shrink-0 px-3.5 py-2 rounded-lg text-sm font-medium",
+                    "transition-all duration-200 whitespace-nowrap",
+                    isActive
+                      ? "bg-[var(--bg-elevated)] text-[var(--fg-primary)] shadow-[var(--shadow-sm)]"
+                      : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
+                  )}
+                >
+                  {cat.name}
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
 
       {/* Content Area */}
       {loading ? (
-        <div className="flex items-center justify-center py-16">
-          <div className="text-center">
-            <div className="inline-block animate-spin rounded-full h-10 w-10 border-4 border-[var(--border-default)] border-t-[var(--accent)] mb-3" />
-            <p className="text-sm text-[var(--fg-secondary)]">Loading templates...</p>
-          </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div
+              key={i}
+              className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] p-5"
+            >
+              <div className="flex items-start gap-3 mb-3">
+                <Skeleton className="h-10 w-10" rounded="rounded-xl" />
+                <div className="flex-1 space-y-2 pt-0.5">
+                  <Skeleton className="h-3.5 w-28" rounded="rounded-md" />
+                  <Skeleton className="h-2.5 w-16" rounded="rounded-md" />
+                </div>
+              </div>
+              <Skeleton className="h-3 w-full mb-2" rounded="rounded-md" />
+              <Skeleton className="h-3 w-2/3 mb-4" rounded="rounded-md" />
+              <div className="pt-3 border-t border-[var(--border-default)]">
+                <Skeleton className="h-3 w-32" rounded="rounded-md" />
+              </div>
+            </div>
+          ))}
         </div>
       ) : error ? (
-        <div className={cn(
-          "text-center py-16 rounded-xl",
-          "bg-[var(--bg-elevated)]",
-          "border border-[var(--border-default)]"
-        )}>
-          <div className={cn(
-            "inline-flex items-center justify-center w-14 h-14 rounded-xl mb-4",
-            "bg-red-500/10 border border-red-500/20"
-          )}>
-            <Icon name="alert" size={28} className="text-red-400" />
-          </div>
-          <p className="text-sm font-semibold text-[var(--fg-primary)] mb-1">Something went wrong</p>
-          <p className="text-sm text-[var(--fg-secondary)] mb-4">{error}</p>
-          <Button variant="secondary" onClick={() => loadGallery(search)} icon={<Icon name="refresh" size={16} />}>
-            Retry
-          </Button>
+        <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]">
+          <EmptyState
+            icon="alertTriangle"
+            tone="rose"
+            title="Something went wrong"
+            description={error}
+            action={
+              <Button variant="secondary" onClick={() => loadGallery(search)} icon={<Icon name="refresh" size={16} />}>
+                Retry
+              </Button>
+            }
+          />
         </div>
       ) : filteredTemplates.length === 0 ? (
-        <div className={cn(
-          "text-center py-16 rounded-xl",
-          "bg-[var(--bg-elevated)]",
-          "border border-[var(--border-default)]"
-        )}>
-          <div className={cn(
-            "inline-flex items-center justify-center w-14 h-14 rounded-xl mb-4",
-            "bg-[var(--bg-base)] border border-[var(--border-default)]"
-          )}>
-            <Icon name="fileText" size={28} className="text-[var(--fg-muted)]" />
-          </div>
-          <p className="text-sm font-semibold text-[var(--fg-primary)] mb-1">No templates found</p>
-          <p className="text-sm text-[var(--fg-secondary)]">
-            {search ? "Try adjusting your search or category filter" : "No templates are available yet"}
-          </p>
+        <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]">
+          <EmptyState
+            icon="clipboard"
+            title="No templates found"
+            description={
+              search
+                ? "Try adjusting your search or category filter."
+                : "No templates are available yet."
+            }
+          />
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredTemplates.map((template, idx) => {
             const isLoadingThis = loadingTemplateId === template.id;
-            const tint = categoryTints[idx % categoryTints.length];
+            const accent = CARD_ACCENTS[idx % CARD_ACCENTS.length];
             const iconName = iconMap[template.icon] || iconMap[template.categoryIcon] || "fileText";
             const fieldCount = template.field_count || template.fields_count || 0;
             const usageCount = template.usage_count || 0;
 
             return (
-              <Card
+              <button
                 key={template.id}
-                tint={tint}
-                spotlight
-                hover
+                type="button"
                 onClick={() => !isLoadingThis && handleSelectTemplate(template)}
+                disabled={isLoadingThis}
                 className={cn(
-                  "cursor-pointer",
+                  "group relative text-left overflow-hidden rounded-2xl p-5 flex flex-col",
+                  "bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]",
+                  "transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--border-hover)] hover:shadow-[var(--shadow-card-hover)]",
+                  "focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-base)]",
+                  "animate-fade-up",
                   isLoadingThis && "opacity-70 pointer-events-none"
                 )}
+                style={{ animationDelay: `${Math.min(idx, 8) * 40}ms` }}
               >
-                <div className="flex flex-col h-full">
-                  {/* Icon and Title */}
-                  <div className="flex items-start gap-3 mb-3">
-                    <div className={cn(
-                      "w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0",
-                      "bg-[var(--bg-base)] border border-[var(--border-default)]",
-                      "transition-transform duration-200 group-hover:scale-110"
-                    )}>
-                      {isLoadingThis ? (
-                        <div className="animate-spin rounded-full h-5 w-5 border-2 border-[var(--border-default)] border-t-[var(--accent)]" />
-                      ) : (
-                        <Icon name={iconName} size={18} className="text-[var(--fg-secondary)]" />
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-sm font-semibold text-[var(--fg-primary)] truncate">
-                        {template.name}
-                      </h3>
-                      {template.categoryName && (
-                        <p className="text-[11px] text-[var(--fg-muted)] mt-0.5">
-                          {template.categoryName}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Description */}
-                  {template.description && (
-                    <p className="text-xs text-[var(--fg-secondary)] leading-relaxed mb-4 line-clamp-2 flex-1">
-                      {template.description}
-                    </p>
+                {/* decorative corner glow */}
+                <div
+                  className={cn(
+                    "pointer-events-none absolute -top-12 -right-10 h-32 w-32 rounded-full opacity-[0.07] blur-2xl transition-opacity duration-300 group-hover:opacity-[0.14]",
+                    accent.glow
                   )}
-                  {!template.description && <div className="flex-1" />}
+                />
 
-                  {/* Footer Stats */}
-                  <div className="flex items-center gap-3 pt-3 border-t border-[var(--border-default)]">
-                    <span className="text-[11px] text-[var(--fg-muted)] flex items-center gap-1.5">
-                      <Icon name="list" size={12} />
-                      {fieldCount} {fieldCount === 1 ? "field" : "fields"}
-                    </span>
-                    <span className="text-[var(--border-default)]">|</span>
-                    <span className="text-[11px] text-[var(--fg-muted)] flex items-center gap-1.5">
-                      <Icon name="activity" size={12} />
-                      {usageCount} {usageCount === 1 ? "use" : "uses"}
-                    </span>
+                {/* Icon and Title */}
+                <div className="relative flex items-start gap-3 mb-3">
+                  <div className={cn(
+                    "w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 border",
+                    "transition-transform duration-200 group-hover:scale-110",
+                    accent.tile
+                  )}>
+                    {isLoadingThis ? (
+                      <div className="animate-spin rounded-full h-5 w-5 border-2 border-current/30 border-t-current" />
+                    ) : (
+                      <Icon name={iconName} size={18} />
+                    )}
                   </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-sm font-semibold text-[var(--fg-primary)] truncate group-hover:text-[var(--accent)] transition-colors">
+                      {template.name}
+                    </h3>
+                    {template.categoryName && (
+                      <p className="text-[11px] text-[var(--fg-muted)] mt-0.5 truncate">
+                        {template.categoryName}
+                      </p>
+                    )}
+                  </div>
+                  <Icon
+                    name="arrowRight"
+                    size={15}
+                    className="text-[var(--fg-muted)] opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all shrink-0 mt-1"
+                  />
                 </div>
-              </Card>
+
+                {/* Description */}
+                {template.description ? (
+                  <p className="relative text-xs text-[var(--fg-secondary)] leading-relaxed mb-4 line-clamp-2 flex-1">
+                    {template.description}
+                  </p>
+                ) : (
+                  <div className="flex-1" />
+                )}
+
+                {/* Footer Stats */}
+                <div className="relative flex items-center gap-3 pt-3 border-t border-[var(--border-default)]">
+                  <span className="text-[11px] text-[var(--fg-muted)] flex items-center gap-1.5">
+                    <Icon name="list" size={12} />
+                    {fieldCount} {fieldCount === 1 ? "field" : "fields"}
+                  </span>
+                  <span className="h-3 w-px bg-[var(--border-default)]" />
+                  <span className="text-[11px] text-[var(--fg-muted)] flex items-center gap-1.5">
+                    <Icon name="activity" size={12} />
+                    {usageCount} {usageCount === 1 ? "use" : "uses"}
+                  </span>
+                </div>
+              </button>
             );
           })}
         </div>

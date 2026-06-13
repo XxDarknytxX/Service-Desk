@@ -11,9 +11,12 @@ import { useToast } from "../contexts/toast";
 import Button from "../components/ui/Button";
 import Badge from "../components/ui/Badge";
 import Icon from "../components/ui/Icon";
-import Card from "../components/ui/Card";
 import Modal from "../components/ui/Modal";
 import Input, { Textarea, Select } from "../components/ui/Input";
+import Tabs from "../components/ui/Tabs";
+import PageHeader from "../components/ui/PageHeader";
+import EmptyState from "../components/ui/EmptyState";
+import Skeleton from "../components/ui/Skeleton";
 import useConfirm from "../components/ui/useConfirm";
 import TemplateCategoryManager from "../components/templates/TemplateCategoryManager";
 import TemplateFormBuilder from "../components/templates/TemplateFormBuilder";
@@ -23,7 +26,15 @@ function cn(...parts) {
   return parts.filter(Boolean).join(" ");
 }
 
-const cardTints = ["violet", "blue", "cyan", "teal", "indigo", "emerald"];
+/* Per-card accent palette — static class strings (no dynamic Tailwind). */
+const CARD_ACCENTS = [
+  { tile: "bg-violet-500/10 text-violet-500 border-violet-500/15", glow: "bg-violet-500" },
+  { tile: "bg-blue-500/10 text-blue-500 border-blue-500/15", glow: "bg-blue-500" },
+  { tile: "bg-cyan-500/10 text-cyan-500 border-cyan-500/15", glow: "bg-cyan-500" },
+  { tile: "bg-teal-500/10 text-teal-500 border-teal-500/15", glow: "bg-teal-500" },
+  { tile: "bg-indigo-500/10 text-indigo-500 border-indigo-500/15", glow: "bg-indigo-500" },
+  { tile: "bg-emerald-500/10 text-emerald-500 border-emerald-500/15", glow: "bg-emerald-500" },
+];
 
 const iconOptions = [
   { value: "lock", label: "Lock" },
@@ -506,26 +517,36 @@ export default function TemplateBuilder() {
   return (
     <div className="flex flex-col h-[calc(100vh-64px-4rem)] animate-fade-in">
       {/* Page Header — fixed, never scrolls */}
-      <div className="rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] px-6 py-5 flex-shrink-0 mb-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-semibold text-[var(--fg-primary)] tracking-tight">
-              Ticket Templates
-            </h1>
-            <p className="text-sm text-[var(--fg-secondary)] mt-1">
-              Create and manage templates for standardized ticket creation
-            </p>
-          </div>
-          <Button onClick={openCreateModal} icon={<Icon name="plus" size={16} />}>
-            Create Template
-          </Button>
-        </div>
+      <div className="flex-shrink-0 mb-5">
+        <PageHeader
+          icon="clipboard"
+          title="Ticket Templates"
+          subtitle="Create and manage templates for standardized ticket creation"
+          actions={
+            <>
+              <button
+                onClick={() => loadTemplates()}
+                title="Refresh templates"
+                className={cn(
+                  "h-10 w-10 inline-flex items-center justify-center rounded-lg transition-all duration-150",
+                  "bg-[var(--bg-elevated)] border border-[var(--border-default)]",
+                  "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)] hover:border-[var(--border-hover)]"
+                )}
+              >
+                <Icon name="refresh" size={16} className={cn(loading && "animate-spin")} />
+              </button>
+              <Button onClick={openCreateModal} icon={<Icon name="plus" size={16} />}>
+                Create Template
+              </Button>
+            </>
+          }
+        />
       </div>
 
       {/* Main 2-Column Layout — fills remaining height */}
-      <div className="flex gap-6 flex-1 min-h-0">
+      <div className="flex gap-5 flex-1 min-h-0">
         {/* Left Sidebar - Category Manager (self-scrolling) */}
-        <div className="w-64 flex-shrink-0 overflow-y-auto">
+        <div className="w-64 flex-shrink-0 overflow-y-auto scrollbar-none animate-fade-up">
           <TemplateCategoryManager
             categories={categories}
             selectedCategoryId={selectedCategoryId}
@@ -561,64 +582,92 @@ export default function TemplateBuilder() {
           </div>
 
           {/* Template Grid — THIS is the only part that scrolls */}
-          <div className="flex-1 overflow-y-auto min-h-0 pr-1">
+          <div className="flex-1 overflow-y-auto min-h-0 pr-1 scrollbar-none">
             {loading ? (
-              <div className="flex items-center justify-center py-20">
-                <div className="text-center">
-                  <div className="inline-block animate-spin rounded-full h-10 w-10 border-4 border-[var(--border-default)] border-t-[var(--accent)] mb-3" />
-                  <p className="text-sm text-[var(--fg-secondary)]">Loading templates...</p>
-                </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 pb-2">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div
+                    key={i}
+                    className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] p-5"
+                  >
+                    <div className="flex items-start gap-3 mb-4">
+                      <Skeleton className="h-10 w-10" rounded="rounded-lg" />
+                      <div className="flex-1 space-y-2 pt-0.5">
+                        <Skeleton className="h-4 w-40" rounded="rounded-md" />
+                        <Skeleton className="h-3 w-full" rounded="rounded-md" />
+                      </div>
+                    </div>
+                    <Skeleton className="h-5 w-24 mb-4" rounded="rounded-full" />
+                    <div className="grid grid-cols-3 gap-4 pt-3 border-t border-[var(--border-default)]">
+                      {Array.from({ length: 3 }).map((__, j) => (
+                        <div key={j} className="space-y-1.5">
+                          <Skeleton className="h-2.5 w-12" rounded="rounded-md" />
+                          <Skeleton className="h-4 w-8" rounded="rounded-md" />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
             ) : templates.length === 0 ? (
-              <div
-                className={cn(
-                  "text-center py-20 rounded-xl",
-                  "bg-[var(--bg-elevated)]",
-                  "border border-[var(--border-default)]",
-                  "shadow-[var(--shadow-card)]"
-                )}
-              >
-                <div
-                  className={cn(
-                    "inline-flex items-center justify-center w-16 h-16 rounded-xl mb-4",
-                    "bg-[var(--bg-base)] border border-[var(--border-default)]"
-                  )}
-                >
-                  <Icon name="fileText" size={32} className="text-[var(--fg-muted)]" />
-                </div>
-                <p className="text-sm font-semibold text-[var(--fg-primary)] mb-1">No templates found</p>
-                <p className="text-sm text-[var(--fg-secondary)] mb-4">
-                  {search || selectedCategoryId
-                    ? "Try adjusting your search or category filter"
-                    : "Create your first template to get started"}
-                </p>
-                {!search && !selectedCategoryId && (
-                  <Button onClick={openCreateModal} icon={<Icon name="plus" size={16} />}>
-                    Create First Template
-                  </Button>
-                )}
+              <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]">
+                <EmptyState
+                  icon="clipboard"
+                  title="No templates found"
+                  description={
+                    search || selectedCategoryId
+                      ? "Try adjusting your search or category filter."
+                      : "Create your first template to get started."
+                  }
+                  action={
+                    !search && !selectedCategoryId ? (
+                      <Button onClick={openCreateModal} icon={<Icon name="plus" size={16} />}>
+                        Create First Template
+                      </Button>
+                    ) : undefined
+                  }
+                />
               </div>
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 pb-2">
                 {templates.map((template, idx) => {
-                  const tint = cardTints[idx % cardTints.length];
+                  const accent = CARD_ACCENTS[idx % CARD_ACCENTS.length];
                   const fieldCount =
                     (template.fields_schema?.length || 0) +
                     Object.keys(template.standard_field_config || {}).length;
                   const usageCount = template.usage_count || 0;
 
                   return (
-                    <Card key={template.id} tint={tint} spotlight hover>
+                    <div
+                      key={template.id}
+                      className={cn(
+                        "group relative overflow-hidden rounded-2xl p-5",
+                        "bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]",
+                        "transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--border-hover)] hover:shadow-[var(--shadow-card-hover)]",
+                        "animate-fade-up",
+                        !template.is_active && "opacity-75"
+                      )}
+                      style={{ animationDelay: `${Math.min(idx, 8) * 50}ms` }}
+                    >
+                      {/* decorative corner glow */}
+                      <div
+                        className={cn(
+                          "pointer-events-none absolute -top-12 -right-10 h-32 w-32 rounded-full opacity-[0.07] blur-2xl transition-opacity duration-300 group-hover:opacity-[0.14]",
+                          accent.glow
+                        )}
+                      />
+
                       {/* Header */}
-                      <div className="flex items-start justify-between mb-3">
+                      <div className="relative flex items-start justify-between mb-3">
                         <div className="flex items-start gap-3 flex-1 min-w-0">
                           <div
                             className={cn(
-                              "w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0",
-                              "bg-[var(--bg-base)] border border-[var(--border-default)]"
+                              "w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 border",
+                              "transition-transform duration-200 group-hover:scale-110",
+                              accent.tile
                             )}
                           >
-                            <Icon name={template.icon || "fileText"} size={18} className="text-[var(--fg-secondary)]" />
+                            <Icon name={template.icon || "fileText"} size={18} />
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-0.5">
@@ -626,7 +675,7 @@ export default function TemplateBuilder() {
                                 {template.name}
                               </h3>
                               {template.is_active ? (
-                                <Badge tone="emerald" size="sm">Active</Badge>
+                                <Badge tone="emerald" size="sm" dot>Active</Badge>
                               ) : (
                                 <Badge tone="slate" size="sm">Inactive</Badge>
                               )}
@@ -640,14 +689,14 @@ export default function TemplateBuilder() {
                         </div>
 
                         {/* Action Buttons */}
-                        <div className="flex items-center gap-1 ml-2 flex-shrink-0">
+                        <div className="flex items-center gap-0.5 ml-2 flex-shrink-0">
                           <button
                             onClick={() => toggleActive(template)}
                             className={cn(
                               "p-2 rounded-lg transition-all",
                               template.is_active
-                                ? "text-emerald-400 hover:bg-emerald-500/10"
-                                : "text-[var(--fg-muted)] hover:bg-[var(--bg-base)]"
+                                ? "text-emerald-500 hover:bg-emerald-500/10"
+                                : "text-[var(--fg-muted)] hover:bg-[var(--bg-surface)] hover:text-[var(--fg-primary)]"
                             )}
                             title={template.is_active ? "Disable template" : "Enable template"}
                           >
@@ -655,21 +704,21 @@ export default function TemplateBuilder() {
                           </button>
                           <button
                             onClick={() => openEditModal(template)}
-                            className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-base)] transition-all"
+                            className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-surface)] transition-all"
                             title="Edit template"
                           >
                             <Icon name="pencil" size={14} />
                           </button>
                           <button
                             onClick={() => handleDuplicate(template.id)}
-                            className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-blue-400 hover:bg-blue-500/10 transition-all"
+                            className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-blue-500 hover:bg-blue-500/10 transition-all"
                             title="Duplicate template"
                           >
-                            <Icon name="clipboard" size={14} />
+                            <Icon name="copy" size={14} />
                           </button>
                           <button
                             onClick={() => handleDelete(template)}
-                            className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-rose-400 hover:bg-rose-500/10 transition-all"
+                            className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-rose-500 hover:bg-rose-500/10 transition-all"
                             title="Delete template"
                           >
                             <Icon name="trash" size={14} />
@@ -678,36 +727,32 @@ export default function TemplateBuilder() {
                       </div>
 
                       {/* Meta Info */}
-                      <div className="flex flex-wrap gap-2 mb-4">
-                        {template.category_name && (
-                          <Badge tone="violet" size="sm">{template.category_name}</Badge>
-                        )}
-                      </div>
+                      {template.category_name && (
+                        <div className="relative flex flex-wrap gap-2 mb-4">
+                          <Badge tone="violet" size="sm" icon={<Icon name="tag" size={11} />}>
+                            {template.category_name}
+                          </Badge>
+                        </div>
+                      )}
 
                       {/* Footer Stats */}
-                      <div className="pt-3 border-t border-[var(--border-default)]">
+                      <div className="relative pt-3 border-t border-[var(--border-default)]">
                         <div className="grid grid-cols-3 gap-4">
                           <div>
-                            <p className="text-[11px] font-medium text-[var(--fg-muted)] uppercase tracking-wider mb-0.5">
-                              Fields
-                            </p>
-                            <p className="text-sm font-semibold text-[var(--fg-primary)]">{fieldCount}</p>
+                            <p className="text-label mb-0.5">Fields</p>
+                            <p className="text-lg font-semibold text-[var(--fg-primary)] tabular-nums">{fieldCount}</p>
                           </div>
                           <div>
-                            <p className="text-[11px] font-medium text-[var(--fg-muted)] uppercase tracking-wider mb-0.5">
-                              Uses
-                            </p>
-                            <p className="text-sm font-semibold text-[var(--fg-primary)]">{usageCount}</p>
+                            <p className="text-label mb-0.5">Uses</p>
+                            <p className="text-lg font-semibold text-[var(--fg-primary)] tabular-nums">{usageCount}</p>
                           </div>
                           <div>
-                            <p className="text-[11px] font-medium text-[var(--fg-muted)] uppercase tracking-wider mb-0.5">
-                              Order
-                            </p>
-                            <p className="text-sm font-semibold text-[var(--fg-primary)]">{template.sort_order || 0}</p>
+                            <p className="text-label mb-0.5">Order</p>
+                            <p className="text-lg font-semibold text-[var(--fg-primary)] tabular-nums">{template.sort_order || 0}</p>
                           </div>
                         </div>
                       </div>
-                    </Card>
+                    </div>
                   );
                 })}
               </div>
@@ -741,23 +786,14 @@ export default function TemplateBuilder() {
       >
         <div className="flex flex-col flex-1 min-h-0">
         {/* Tabs */}
-        <div className="flex gap-1 mb-6 p-1 rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)] shrink-0">
-          {tabs.map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
-              className={cn(
-                "flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-sm font-medium",
-                "transition-all duration-200",
-                activeTab === tab.key
-                  ? "bg-[var(--accent)] text-white shadow-[0_0_12px_rgba(230,0,0,0.25)]"
-                  : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)]"
-              )}
-            >
-              <Icon name={tab.icon} size={16} />
-              {tab.label}
-            </button>
-          ))}
+        <div className="mb-6 shrink-0">
+          <Tabs
+            variant="pills"
+            value={activeTab}
+            onChange={setActiveTab}
+            tabs={tabs.map((tab) => ({ value: tab.key, label: tab.label, icon: tab.icon }))}
+            className="w-full flex-wrap"
+          />
         </div>
 
         {/* Tab 1: Basic Info */}
@@ -863,9 +899,11 @@ export default function TemplateBuilder() {
         {activeTab === "standard" && (
           <div className="flex-1 min-h-0 overflow-y-auto scrollbar-none">
           <div className="space-y-4">
-            <div className="flex items-start gap-3 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
-              <Icon name="alert" size={16} className="text-amber-400 flex-shrink-0 mt-0.5" />
-              <p className="text-xs text-[var(--fg-secondary)]">
+            <div className="flex items-start gap-3 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/15">
+              <span className="h-8 w-8 rounded-lg bg-amber-500/10 text-amber-500 flex items-center justify-center shrink-0">
+                <Icon name="info" size={16} />
+              </span>
+              <p className="text-xs text-[var(--fg-secondary)] leading-relaxed pt-1">
                 Configure which standard ticket fields are shown when using this template. Set visibility
                 and default values for each field.
               </p>
@@ -873,27 +911,21 @@ export default function TemplateBuilder() {
 
             <div
               className={cn(
-                "rounded-xl overflow-hidden",
+                "rounded-2xl overflow-hidden",
                 "border border-[var(--border-default)]",
-                "bg-[var(--bg-elevated)]"
+                "bg-[var(--bg-elevated)] shadow-[var(--shadow-card)]"
               )}
             >
               {/* Table Header */}
               <div
                 className={cn(
                   "grid grid-cols-[180px_160px_1fr] gap-4 px-5 py-3",
-                  "bg-[var(--bg-surface)] border-b border-[var(--border-default)]"
+                  "bg-[var(--bg-surface)]/60 border-b border-[var(--border-default)]"
                 )}
               >
-                <span className="text-[11px] font-semibold text-[var(--fg-muted)] uppercase tracking-wider">
-                  Field Name
-                </span>
-                <span className="text-[11px] font-semibold text-[var(--fg-muted)] uppercase tracking-wider">
-                  Visibility
-                </span>
-                <span className="text-[11px] font-semibold text-[var(--fg-muted)] uppercase tracking-wider">
-                  Default Value
-                </span>
+                <span className="text-label">Field Name</span>
+                <span className="text-label">Visibility</span>
+                <span className="text-label">Default Value</span>
               </div>
 
               {/* Table Rows */}
@@ -903,7 +935,7 @@ export default function TemplateBuilder() {
                   className={cn(
                     "grid grid-cols-[180px_160px_1fr] gap-4 px-5 py-3 items-center",
                     idx < standardFields.length - 1 && "border-b border-[var(--border-default)]",
-                    "hover:bg-[var(--bg-surface)]/50 transition-colors duration-150"
+                    "hover:bg-[var(--bg-surface)] transition-colors duration-150"
                   )}
                 >
                   {/* Field Name */}

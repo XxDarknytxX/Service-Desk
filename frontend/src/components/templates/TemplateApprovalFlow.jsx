@@ -497,7 +497,7 @@ export default function TemplateApprovalFlow({ templateId, fieldsSchema = [], on
                               {step.name || "Unnamed Step"}
                             </span>
                             {!step.is_active && (
-                              <Badge variant="muted" size="sm">Disabled</Badge>
+                              <Badge tone="slate" size="sm">Disabled</Badge>
                             )}
                           </div>
 
@@ -1330,7 +1330,7 @@ function SimulationModal({ templateId, steps, fieldsSchema, onClose }) {
                         Step {sim.step_order}: {sim.name}
                       </span>
                       {!sim.will_execute && (
-                        <Badge variant="muted" size="sm">Skipped</Badge>
+                        <Badge tone="slate" size="sm">Skipped</Badge>
                       )}
                     </div>
 

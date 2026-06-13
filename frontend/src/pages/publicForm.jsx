@@ -36,16 +36,39 @@ function isEmptyValue(v) {
    full-tab preview at /forms/preview/:id) */
 export function Shell({ children }) {
   return (
-    <div data-theme="light" className="min-h-screen bg-[#F4F5F7] flex flex-col">
+    <div data-theme="light" className="relative min-h-screen bg-[#F4F5F7] flex flex-col overflow-hidden">
       {/* Brand band */}
       <div
-        className="h-2 w-full shrink-0"
+        className="h-2 w-full shrink-0 relative z-10"
         style={{ background: "linear-gradient(90deg, #E60000 0%, #a30b14 55%, #2a060a 100%)" }}
       />
-      <div className="flex-1 flex flex-col items-center px-4 sm:px-6 py-10">
+
+      {/* Branded backdrop — soft red glow + faint grid, all behind content */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div
+          className="absolute -top-40 left-1/2 -translate-x-1/2 h-[520px] w-[820px] rounded-full blur-3xl"
+          style={{ background: "radial-gradient(closest-side, rgba(230,0,0,0.14), rgba(230,0,0,0) 70%)" }}
+        />
+        <div
+          className="absolute -bottom-48 -left-40 h-[420px] w-[420px] rounded-full blur-3xl"
+          style={{ background: "radial-gradient(closest-side, rgba(230,0,0,0.07), rgba(230,0,0,0) 70%)" }}
+        />
+        <div
+          className="absolute inset-0 opacity-[0.5]"
+          style={{
+            backgroundImage:
+              "linear-gradient(rgba(20,3,5,0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(20,3,5,0.035) 1px, transparent 1px)",
+            backgroundSize: "44px 44px",
+            maskImage: "radial-gradient(ellipse 90% 60% at 50% 0%, #000 35%, transparent 100%)",
+            WebkitMaskImage: "radial-gradient(ellipse 90% 60% at 50% 0%, #000 35%, transparent 100%)",
+          }}
+        />
+      </div>
+
+      <div className="relative z-10 flex-1 flex flex-col items-center px-4 sm:px-6 py-10">
         {children}
       </div>
-      <footer className="pb-8 pt-2 flex flex-col items-center gap-1.5">
+      <footer className="relative z-10 pb-8 pt-2 flex flex-col items-center gap-1.5">
         <div className="flex items-center gap-2">
           <VodafoneLogo size={16} />
           <span className="text-[12px] font-medium text-black/45">
@@ -60,12 +83,16 @@ export function Shell({ children }) {
   );
 }
 
-function StateCard({ icon, iconCls, title, message, children }) {
+export function StateCard({ icon, iconCls, title, message, children }) {
   return (
     <div className="w-full max-w-md mt-[12vh] animate-fade-up">
-      <div className="bg-white rounded-2xl border border-black/[0.07] shadow-[0_20px_60px_rgba(20,3,5,0.10)] p-8 text-center">
-        <div className={cn("w-16 h-16 rounded-2xl mx-auto mb-5 flex items-center justify-center", iconCls)}>
-          <Icon name={icon} size={28} />
+      <div className="relative overflow-hidden bg-white rounded-3xl border border-black/[0.07] shadow-[0_28px_70px_rgba(20,3,5,0.12)] p-8 sm:p-9 text-center">
+        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#E60000]/40 to-transparent" />
+        <div className="relative mx-auto mb-5 w-16 h-16">
+          <div className={cn("absolute inset-0 rounded-2xl blur-xl opacity-50", iconCls)} />
+          <div className={cn("relative w-16 h-16 rounded-2xl flex items-center justify-center", iconCls)}>
+            <Icon name={icon} size={28} />
+          </div>
         </div>
         <h1 className="text-xl font-semibold text-[#111318] tracking-tight mb-2">{title}</h1>
         <p className="text-sm text-black/50 leading-relaxed">{message}</p>
@@ -235,12 +262,17 @@ export default function PublicForm() {
     <Shell>
       <div id="public-form-top" className="w-full max-w-[760px]">
         {/* Form header card */}
-        <div className="bg-white rounded-2xl border border-black/[0.07] shadow-[0_20px_60px_rgba(20,3,5,0.08)] overflow-hidden mb-5 animate-fade-up">
+        <div className="relative bg-white rounded-3xl border border-black/[0.07] shadow-[0_24px_64px_rgba(20,3,5,0.10)] overflow-hidden mb-5 animate-fade-up">
           <div
             className="h-1.5 w-full"
             style={{ background: "linear-gradient(90deg, #E60000, #ff4d4d)" }}
           />
-          <div className="p-7 sm:p-8">
+          {/* faint corner glow */}
+          <div
+            className="pointer-events-none absolute -top-16 -right-16 h-40 w-40 rounded-full blur-2xl"
+            style={{ background: "radial-gradient(closest-side, rgba(230,0,0,0.10), transparent 70%)" }}
+          />
+          <div className="relative p-7 sm:p-8">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
                 <h1 className="text-2xl font-semibold tracking-tight text-[#111318] leading-snug">
@@ -298,7 +330,7 @@ export default function PublicForm() {
         {/* The form */}
         <form onSubmit={handleSubmit}>
           <div
-            className="bg-white rounded-2xl border border-black/[0.07] shadow-[0_20px_60px_rgba(20,3,5,0.08)] p-6 sm:p-8 animate-fade-up"
+            className="bg-white rounded-3xl border border-black/[0.07] shadow-[0_24px_64px_rgba(20,3,5,0.10)] p-6 sm:p-8 animate-fade-up"
             style={{ animationDelay: "140ms" }}
           >
             <TemplateRenderer

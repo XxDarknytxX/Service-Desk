@@ -256,10 +256,10 @@ export default function TemplateFormBuilder({ schema = [], onChange }) {
         <div className="flex-1 overflow-y-auto scrollbar-none min-h-0">
           <div
             className={cn(
-              "max-w-3xl mx-auto p-6 rounded-xl",
+              "max-w-3xl mx-auto p-6 rounded-2xl",
               "bg-[var(--bg-elevated)]",
               "border border-[var(--border-default)]",
-              "shadow-[0_0_0_1px_var(--border-default),0_4px_16px_rgba(0,0,0,0.3)]"
+              "shadow-[var(--shadow-card)]"
             )}
           >
             {schema.length === 0 ? (

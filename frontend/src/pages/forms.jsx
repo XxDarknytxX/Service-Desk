@@ -21,6 +21,9 @@ import Badge from "../components/ui/Badge";
 import Icon from "../components/ui/Icon";
 import Modal from "../components/ui/Modal";
 import Input, { Textarea } from "../components/ui/Input";
+import PageHeader from "../components/ui/PageHeader";
+import EmptyState from "../components/ui/EmptyState";
+import Skeleton from "../components/ui/Skeleton";
 import useConfirm from "../components/ui/useConfirm";
 import TemplateFormBuilder from "../components/templates/TemplateFormBuilder";
 import TemplateRenderer from "../components/templates/TemplateRenderer";
@@ -446,24 +449,35 @@ export default function Forms() {
     return (
       <div className="space-y-5 animate-fade-in">
         {/* Workspace header */}
-        <div className="rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] px-5 py-4">
-          <div className="flex flex-wrap items-center gap-3">
+        <div className="relative overflow-hidden rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] px-5 py-4 sm:px-6 sm:py-5">
+          <div className="pointer-events-none absolute -top-24 -right-16 h-56 w-56 rounded-full bg-[var(--accent)] opacity-[0.07] blur-3xl" />
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[var(--accent)] to-transparent opacity-40" />
+          <div className="relative flex flex-wrap items-center gap-3">
             <button
               onClick={closeWorkspace}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)] border border-[var(--border-default)] transition-all"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)] border border-[var(--border-default)] hover:border-[var(--border-hover)] transition-all"
             >
               <Icon name="arrowLeft" size={15} />
               All forms
             </button>
+            <span className="hidden sm:flex shrink-0 h-10 w-10 items-center justify-center rounded-xl bg-[var(--accent)]/10 text-[var(--accent)] border border-[var(--accent)]/15 shadow-[0_2px_12px_rgba(230,0,0,0.12)]">
+              <Icon name="fileText" size={18} />
+            </span>
             <div className="min-w-0 flex-1">
-              <h1 className="text-lg font-semibold text-[var(--fg-primary)] tracking-tight truncate">
+              <h1 className="text-lg sm:text-xl font-semibold text-[var(--fg-primary)] tracking-tight truncate leading-tight">
                 {loadingForm ? "Loading…" : draft.name || form?.name}
               </h1>
-              <p className="text-xs text-[var(--fg-muted)]">
-                {countInputFields(draft.fields_schema)} questions · {stats.sent} sent ·{" "}
-                {stats.completed} completed
+              <p className="mt-0.5 text-xs text-[var(--fg-muted)] flex flex-wrap items-center gap-x-1.5">
+                <span className="tabular-nums">{countInputFields(draft.fields_schema)} questions</span>
+                <span className="text-[var(--fg-subtle)]">·</span>
+                <span className="tabular-nums">{stats.sent} sent</span>
+                <span className="text-[var(--fg-subtle)]">·</span>
+                <span className="tabular-nums">{stats.completed} completed</span>
                 {isDirty && (
-                  <span className="ml-2 text-amber-400 font-medium">• Unsaved changes</span>
+                  <span className="inline-flex items-center gap-1 ml-1 px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-500 font-medium text-[10px]">
+                    <span className="w-1 h-1 rounded-full bg-amber-500" />
+                    Unsaved changes
+                  </span>
                 )}
               </p>
             </div>
@@ -506,24 +520,24 @@ export default function Forms() {
           </div>
 
           {/* Pipeline tabs */}
-          <div className="mt-4 inline-flex items-center gap-1 p-1 rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)] overflow-x-auto max-w-full">
+          <div className="relative mt-4 inline-flex items-center gap-1 p-1 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-default)] overflow-x-auto max-w-full scrollbar-none">
             {WORKSPACE_TABS.map((t, i) => (
               <div key={t.key} className="flex items-center">
                 <button
                   onClick={() => switchTab(t.key)}
                   className={cn(
-                    "flex items-center gap-2 px-4 py-2 rounded-md text-[13px] font-medium transition-all whitespace-nowrap",
+                    "flex items-center gap-2 px-4 py-2 rounded-lg text-[13px] font-medium transition-all duration-200 whitespace-nowrap",
                     activeTab === t.key
-                      ? "bg-[var(--accent)] text-white shadow-[0_0_12px_rgba(230,0,0,0.25)]"
-                      : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)]"
+                      ? "bg-[var(--accent)] text-white shadow-[0_2px_8px_rgba(230,0,0,0.25)]"
+                      : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-elevated)]"
                   )}
                 >
                   <span
                     className={cn(
-                      "w-4.5 h-4.5 min-w-[18px] min-h-[18px] rounded-full text-[10px] font-bold flex items-center justify-center",
+                      "w-[18px] h-[18px] min-w-[18px] min-h-[18px] rounded-full text-[10px] font-bold flex items-center justify-center transition-colors",
                       activeTab === t.key
                         ? "bg-white/20 text-white"
-                        : "bg-[var(--bg-surface)] text-[var(--fg-muted)]"
+                        : "bg-[var(--bg-base)] text-[var(--fg-muted)]"
                     )}
                   >
                     {t.step}
@@ -531,7 +545,7 @@ export default function Forms() {
                   {t.label}
                 </button>
                 {i < WORKSPACE_TABS.length - 1 && (
-                  <Icon name="chevronRight" size={12} className="text-[var(--fg-subtle)] mx-0.5" />
+                  <Icon name="chevronRight" size={12} className="text-[var(--fg-subtle)] mx-0.5 shrink-0" />
                 )}
               </div>
             ))}
@@ -539,35 +553,59 @@ export default function Forms() {
         </div>
 
         {loadingForm ? (
-          <div className="h-72 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)] animate-pulse" />
+          <div className="space-y-5">
+            <Skeleton className="h-32" rounded="rounded-2xl" />
+            <Skeleton className="h-[460px]" rounded="rounded-2xl" />
+          </div>
         ) : (
           <>
             {/* ── BUILD ── */}
             {activeTab === "build" && (
               <div className="space-y-5">
-                <div className="rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-sm)] p-5">
-                  <div className="grid lg:grid-cols-2 gap-4">
-                    <Input
-                      label="Form name"
-                      value={draft.name}
-                      onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                      required
-                    />
-                    <Textarea
-                      label="Description (shown to the customer)"
-                      rows={2}
-                      value={draft.description}
-                      onChange={(e) => setDraft({ ...draft, description: e.target.value })}
-                    />
+                <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] animate-fade-up">
+                  <div className="flex items-center gap-2.5 px-5 py-4 border-b border-[var(--border-default)]">
+                    <span className="h-8 w-8 rounded-lg bg-[var(--accent)]/10 text-[var(--accent)] flex items-center justify-center">
+                      <Icon name="fileText" size={16} />
+                    </span>
+                    <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">
+                      Form details
+                    </h2>
+                  </div>
+                  <div className="p-5">
+                    <div className="grid lg:grid-cols-2 gap-4">
+                      <Input
+                        label="Form name"
+                        value={draft.name}
+                        onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                        required
+                      />
+                      <Textarea
+                        label="Description (shown to the customer)"
+                        rows={2}
+                        value={draft.description}
+                        onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+                      />
+                    </div>
                   </div>
                 </div>
 
-                <div className="rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-sm)] p-4">
-                  <div className="h-[calc(100vh-380px)] min-h-[460px] flex flex-col">
-                    <TemplateFormBuilder
-                      schema={draft.fields_schema}
-                      onChange={(schema) => setDraft({ ...draft, fields_schema: schema })}
-                    />
+                <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] animate-fade-up" style={{ animationDelay: "80ms" }}>
+                  <div className="flex items-center gap-2.5 px-5 py-4 border-b border-[var(--border-default)]">
+                    <span className="h-8 w-8 rounded-lg bg-violet-500/10 text-violet-500 flex items-center justify-center">
+                      <Icon name="list" size={16} />
+                    </span>
+                    <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">
+                      Questions
+                    </h2>
+                    <Badge tone="slate" size="sm">{countInputFields(draft.fields_schema)}</Badge>
+                  </div>
+                  <div className="p-4">
+                    <div className="h-[calc(100vh-440px)] min-h-[460px] flex flex-col">
+                      <TemplateFormBuilder
+                        schema={draft.fields_schema}
+                        onChange={(schema) => setDraft({ ...draft, fields_schema: schema })}
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -649,11 +687,16 @@ export default function Forms() {
             {activeTab === "send" && (
               <div className="grid lg:grid-cols-5 gap-5 items-start">
                 {/* New recipient */}
-                <div className="lg:col-span-2 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-sm)] p-5">
-                  <p className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider mb-4 flex items-center gap-2">
-                    <Icon name="userPlus" size={13} /> New recipient
-                  </p>
-                  <div className="space-y-4">
+                <div className="lg:col-span-2 rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] animate-fade-up">
+                  <div className="flex items-center gap-2.5 px-5 py-4 border-b border-[var(--border-default)]">
+                    <span className="h-8 w-8 rounded-lg bg-[var(--accent)]/10 text-[var(--accent)] flex items-center justify-center">
+                      <Icon name="userPlus" size={16} />
+                    </span>
+                    <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">
+                      New recipient
+                    </h2>
+                  </div>
+                  <div className="p-5 space-y-4">
                     <div className="relative">
                       <Input
                         label="Email address"
@@ -736,26 +779,30 @@ export default function Forms() {
                 </div>
 
                 {/* Sent links */}
-                <div className="lg:col-span-3 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-sm)]">
-                  <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border-default)]">
-                    <p className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider flex items-center gap-2">
-                      <Icon name="send" size={13} /> Sent links
-                    </p>
+                <div className="lg:col-span-3 rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] overflow-hidden animate-fade-up" style={{ animationDelay: "80ms" }}>
+                  <div className="flex items-center gap-2.5 px-5 py-4 border-b border-[var(--border-default)]">
+                    <span className="h-8 w-8 rounded-lg bg-blue-500/10 text-blue-500 flex items-center justify-center">
+                      <Icon name="send" size={16} />
+                    </span>
+                    <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">
+                      Sent links
+                    </h2>
                     <Badge tone="slate" size="sm">{invites.length}</Badge>
                   </div>
                   {invites.length === 0 ? (
-                    <div className="text-center py-14 px-5">
-                      <Icon name="send" size={26} className="text-[var(--fg-muted)] mx-auto mb-3" />
-                      <p className="text-sm font-medium text-[var(--fg-primary)] mb-1">Nothing sent yet</p>
-                      <p className="text-xs text-[var(--fg-secondary)]">Create a link on the left to get started</p>
-                    </div>
+                    <EmptyState
+                      icon="send"
+                      title="Nothing sent yet"
+                      description="Create a one-time link on the left to share this form with a recipient."
+                      compact
+                    />
                   ) : (
                     <div className="divide-y divide-[var(--border-default)] max-h-[520px] overflow-y-auto">
                       {invites.map((inv) => {
                         const st = INVITE_STATUS[inv.status] || INVITE_STATUS.pending;
                         return (
-                          <div key={inv.id} className="flex items-center gap-3 px-5 py-3.5">
-                            <span className="h-9 w-9 rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)] flex items-center justify-center text-[11px] font-bold text-[var(--fg-secondary)] shrink-0">
+                          <div key={inv.id} className="flex items-center gap-3 px-5 py-3.5 hover:bg-[var(--bg-surface)] transition-colors">
+                            <span className="h-9 w-9 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-default)] flex items-center justify-center text-[11px] font-bold text-[var(--fg-secondary)] shrink-0">
                               {(inv.recipient_name || inv.recipient_email)[0].toUpperCase()}
                             </span>
                             <div className="min-w-0 flex-1">
@@ -818,30 +865,30 @@ export default function Forms() {
             {activeTab === "results" && (
               <div className="space-y-5">
                 {/* KPI rail */}
-                <div className="grid grid-cols-2 lg:grid-cols-4 rounded-xl overflow-hidden bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]">
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                   {[
-                    { label: "Links sent", value: stats.sent, icon: "send", cls: "bg-blue-500/10 text-blue-400" },
-                    { label: "Completed", value: stats.completed, icon: "checkCircle", cls: "bg-emerald-500/10 text-emerald-400" },
-                    { label: "Completion rate", value: `${stats.rate}%`, icon: "trendingUp", cls: "bg-violet-500/10 text-violet-400" },
-                    { label: "Avg time to complete", value: stats.avgTime, icon: "clock", cls: "bg-amber-500/10 text-amber-400" },
+                    { label: "Links sent", value: stats.sent, icon: "send", iconCls: "bg-blue-500/10 text-blue-500 border-blue-500/15" },
+                    { label: "Completed", value: stats.completed, icon: "checkCircle", iconCls: "bg-emerald-500/10 text-emerald-500 border-emerald-500/15" },
+                    { label: "Completion rate", value: `${stats.rate}%`, icon: "trendingUp", iconCls: "bg-violet-500/10 text-violet-500 border-violet-500/15" },
+                    { label: "Avg time to complete", value: stats.avgTime, icon: "clock", iconCls: "bg-amber-500/10 text-amber-500 border-amber-500/15" },
                   ].map((k, i) => (
                     <div
                       key={k.label}
                       className={cn(
-                        "p-5 border-[var(--border-default)]",
-                        i < 3 && "lg:border-r",
-                        i % 2 === 0 && "border-r lg:border-r",
-                        i === 3 && "border-r-0",
-                        i >= 2 && "border-t lg:border-t-0"
+                        "group relative overflow-hidden rounded-2xl p-5",
+                        "bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]",
+                        "transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--border-hover)] hover:shadow-[var(--shadow-card-hover)]",
+                        "animate-kpi-rise"
                       )}
+                      style={{ animationDelay: `${i * 70}ms` }}
                     >
-                      <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center justify-between mb-4">
                         <span className="text-label">{k.label}</span>
-                        <span className={cn("w-8 h-8 rounded-lg flex items-center justify-center", k.cls)}>
-                          <Icon name={k.icon} size={15} />
+                        <span className={cn("h-9 w-9 rounded-xl flex items-center justify-center border transition-transform duration-200 group-hover:scale-110", k.iconCls)}>
+                          <Icon name={k.icon} size={16} />
                         </span>
                       </div>
-                      <p className="text-[26px] leading-none font-semibold tracking-tight text-[var(--fg-primary)]">
+                      <p className="text-[28px] leading-none font-semibold tracking-tight text-[var(--fg-primary)] tabular-nums">
                         {k.value}
                       </p>
                     </div>
@@ -849,28 +896,32 @@ export default function Forms() {
                 </div>
 
                 {loadingSubs ? (
-                  <div className="h-64 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)] animate-pulse" />
+                  <div className="grid lg:grid-cols-3 gap-5 items-start">
+                    <Skeleton className="lg:col-span-2 h-64" rounded="rounded-2xl" />
+                    <Skeleton className="h-64" rounded="rounded-2xl" />
+                  </div>
                 ) : submissions.length === 0 ? (
-                  <div className="text-center py-16 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)]">
-                    <div className="w-14 h-14 rounded-xl bg-[var(--bg-base)] border border-[var(--border-default)] flex items-center justify-center mx-auto mb-4">
-                      <Icon name="barChart" size={24} className="text-[var(--fg-muted)]" />
-                    </div>
-                    <p className="text-sm font-medium text-[var(--fg-primary)] mb-1">No responses yet</p>
-                    <p className="text-xs text-[var(--fg-secondary)] mb-5">
-                      Results appear here the moment a recipient submits
-                    </p>
-                    <Button size="sm" variant="secondary" onClick={() => switchTab("send")} icon={<Icon name="send" size={13} />}>
-                      Send the form
-                    </Button>
+                  <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]">
+                    <EmptyState
+                      icon="barChart"
+                      title="No responses yet"
+                      description="Results appear here the moment a recipient submits the form."
+                      action={
+                        <Button size="sm" variant="secondary" onClick={() => switchTab("send")} icon={<Icon name="send" size={13} />}>
+                          Send the form
+                        </Button>
+                      }
+                    />
                   </div>
                 ) : (
                   <div className="grid lg:grid-cols-3 gap-5 items-start">
                     {/* Question breakdowns */}
                     <div className="lg:col-span-2 space-y-4">
-                      {questionBreakdowns.map((q) => (
+                      {questionBreakdowns.map((q, qi) => (
                         <div
                           key={q.field.id}
-                          className="rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-sm)] p-5"
+                          className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] p-5 animate-fade-up"
+                          style={{ animationDelay: `${qi * 60}ms` }}
                         >
                           <div className="flex items-start justify-between gap-3 mb-4">
                             <p className="text-sm font-semibold text-[var(--fg-primary)] leading-snug">
@@ -927,11 +978,14 @@ export default function Forms() {
                     </div>
 
                     {/* Individual responses */}
-                    <div className="rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-sm)] overflow-hidden">
-                      <div className="px-5 py-4 border-b border-[var(--border-default)] flex items-center justify-between">
-                        <p className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider flex items-center gap-2">
-                          <Icon name="inbox" size={13} /> Responses
-                        </p>
+                    <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] overflow-hidden animate-fade-up" style={{ animationDelay: "120ms" }}>
+                      <div className="flex items-center gap-2.5 px-5 py-4 border-b border-[var(--border-default)]">
+                        <span className="h-8 w-8 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center">
+                          <Icon name="inbox" size={16} />
+                        </span>
+                        <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">
+                          Responses
+                        </h2>
                         <Badge tone="emerald" size="sm">{submissions.length}</Badge>
                       </div>
                       <div className="divide-y divide-[var(--border-default)] max-h-[560px] overflow-y-auto">
@@ -941,7 +995,7 @@ export default function Forms() {
                             onClick={() => setViewingSub(sub)}
                             className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-[var(--bg-surface)] transition-colors group"
                           >
-                            <span className="h-8 w-8 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center text-[11px] font-bold shrink-0">
+                            <span className="h-8 w-8 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center text-[11px] font-bold shrink-0">
                               {(sub.recipient_name || sub.recipient_email)[0].toUpperCase()}
                             </span>
                             <span className="min-w-0 flex-1">
@@ -998,73 +1052,81 @@ export default function Forms() {
   // LIST VIEW
   // ════════════════════════════════════════════════════════════════
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-5 animate-fade-in">
       {/* Header */}
-      <div className="rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] px-6 py-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-semibold text-[var(--fg-primary)] tracking-tight">
-              Customer Forms
-            </h1>
-            <p className="text-[var(--fg-secondary)] mt-1 text-sm">
-              Build → preview → send one-time links → track results, all in one place
-            </p>
-          </div>
+      <PageHeader
+        icon="send"
+        title="Customer Forms"
+        subtitle="Build, preview, send one-time links and track results — all in one place"
+        actions={
           <Button onClick={() => setShowCreate(true)} icon={<Icon name="plus" size={16} />}>
             New Form
           </Button>
-        </div>
-      </div>
+        }
+      />
 
-      {/* Search */}
-      <div className="flex flex-wrap items-center gap-4">
-        <div className="flex-1 max-w-sm">
-          <Input
-            icon="search"
-            placeholder="Search forms..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+      {/* Search toolbar */}
+      <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] p-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative flex-1 min-w-[200px] max-w-sm">
+            <Icon name="search" className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--fg-muted)] pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Search forms..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className={cn(
+                "w-full pl-10 pr-4 py-2.5 rounded-lg text-sm",
+                "bg-[var(--bg-base)] text-[var(--fg-primary)] placeholder:text-[var(--fg-muted)]",
+                "border border-[var(--border-default)]",
+                "focus:outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/20",
+                "transition-all duration-200"
+              )}
+            />
+          </div>
+          <Badge tone="slate" size="md">{filtered.length} {filtered.length === 1 ? "form" : "forms"}</Badge>
         </div>
-        <Badge tone="slate">{filtered.length} forms</Badge>
       </div>
 
       {/* Forms grid */}
       {loading ? (
         <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
           {[...Array(3)].map((_, i) => (
-            <div key={i} className="h-56 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)] animate-pulse" />
+            <Skeleton key={i} className="h-64" rounded="rounded-2xl" />
           ))}
         </div>
       ) : filtered.length === 0 ? (
-        <div className="text-center py-20 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]">
-          <div className="flex items-center justify-center w-20 h-20 mx-auto mb-5 rounded-xl bg-[var(--bg-base)] border border-[var(--border-default)]">
-            <Icon name="send" size={32} className="text-[var(--fg-muted)]" />
-          </div>
-          <h3 className="text-lg font-semibold text-[var(--fg-primary)] mb-2">
-            {search ? "No forms found" : "No customer forms yet"}
-          </h3>
-          <p className="text-sm text-[var(--fg-secondary)] mb-5">
-            {search ? "Try a different search term" : "Create your first form and send it to a customer in minutes"}
-          </p>
-          {!search && (
-            <Button onClick={() => setShowCreate(true)} icon={<Icon name="plus" size={16} />}>
-              Create a form
-            </Button>
-          )}
+        <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]">
+          <EmptyState
+            icon="send"
+            title={search ? "No forms found" : "No customer forms yet"}
+            description={
+              search
+                ? "Try a different search term, or clear the search to see all forms."
+                : "Create your first form and send it to a customer in minutes."
+            }
+            action={
+              !search && (
+                <Button onClick={() => setShowCreate(true)} icon={<Icon name="plus" size={16} />}>
+                  Create a form
+                </Button>
+              )
+            }
+          />
         </div>
       ) : (
         <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3 stagger">
           {filtered.map((f, idx) => {
             const tint = formTints[idx % formTints.length];
             const tintIcon = {
-              violet: "bg-violet-500/10 text-violet-400",
-              blue: "bg-blue-500/10 text-blue-400",
-              cyan: "bg-cyan-500/10 text-cyan-400",
-              teal: "bg-teal-500/10 text-teal-400",
-              indigo: "bg-indigo-500/10 text-indigo-400",
-              emerald: "bg-emerald-500/10 text-emerald-400",
+              violet: "bg-violet-500/10 text-violet-500",
+              blue: "bg-blue-500/10 text-blue-500",
+              cyan: "bg-cyan-500/10 text-cyan-500",
+              teal: "bg-teal-500/10 text-teal-500",
+              indigo: "bg-indigo-500/10 text-indigo-500",
+              emerald: "bg-emerald-500/10 text-emerald-500",
             }[tint];
+            const questionCount = countInputFields(f.fields_schema);
             const completion = f.invite_count > 0
               ? Math.round((f.completed_count / f.invite_count) * 100)
               : null;
@@ -1073,7 +1135,7 @@ export default function Forms() {
                 key={f.id}
                 onClick={() => openWorkspace(f.id, "build")}
                 className={cn(
-                  "group relative flex flex-col rounded-xl p-5 cursor-pointer",
+                  "group relative flex flex-col rounded-2xl p-5 cursor-pointer",
                   "bg-[var(--bg-elevated)] border border-[var(--border-default)]",
                   "shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-card-hover)]",
                   "hover:border-[var(--border-hover)] hover:-translate-y-0.5",
@@ -1081,27 +1143,34 @@ export default function Forms() {
                 )}
               >
                 <div className="flex items-start justify-between mb-4">
-                  <div className={cn("h-11 w-11 rounded-xl flex items-center justify-center", tintIcon)}>
+                  <div className={cn("h-11 w-11 rounded-xl flex items-center justify-center transition-transform duration-200 group-hover:scale-110", tintIcon)}>
                     <Icon name="fileText" size={20} />
                   </div>
-                  <div
-                    className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <button
-                      onClick={() => window.open(`/forms/preview/${f.id}`, "_blank", "noopener")}
-                      title="Open full preview"
-                      className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)] transition-all"
+                  <div className="flex items-center gap-2">
+                    {questionCount > 0 ? (
+                      <Badge tone="emerald" size="sm" dot>Ready</Badge>
+                    ) : (
+                      <Badge tone="slate" size="sm">Draft</Badge>
+                    )}
+                    <div
+                      className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+                      onClick={(e) => e.stopPropagation()}
                     >
-                      <Icon name="externalLink" size={14} />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(f)}
-                      title="Archive form"
-                      className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-rose-400 hover:bg-rose-500/10 transition-all"
-                    >
-                      <Icon name="archive" size={14} />
-                    </button>
+                      <button
+                        onClick={() => window.open(`/forms/preview/${f.id}`, "_blank", "noopener")}
+                        title="Open full preview"
+                        className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)] transition-all"
+                      >
+                        <Icon name="externalLink" size={14} />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(f)}
+                        title="Archive form"
+                        className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-rose-500 hover:bg-rose-500/10 transition-all"
+                      >
+                        <Icon name="archive" size={14} />
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -1115,13 +1184,13 @@ export default function Forms() {
                 <div className="flex items-center gap-4 text-xs text-[var(--fg-muted)] mb-4">
                   <span className="flex items-center gap-1.5">
                     <Icon name="list" size={12} />
-                    {countInputFields(f.fields_schema)} questions
+                    {questionCount} questions
                   </span>
                   <span className="flex items-center gap-1.5">
                     <Icon name="send" size={12} />
                     {f.invite_count || 0} sent
                   </span>
-                  <span className="flex items-center gap-1.5 text-emerald-400">
+                  <span className="flex items-center gap-1.5 text-emerald-500">
                     <Icon name="checkCircle" size={12} />
                     {f.completed_count || 0}
                   </span>
@@ -1132,11 +1201,11 @@ export default function Forms() {
                   <div className="mb-4">
                     <div className="h-1.5 rounded-full bg-[var(--bg-surface)] overflow-hidden">
                       <div
-                        className="h-full rounded-full bg-emerald-500 transition-all duration-500"
-                        style={{ width: `${completion}%` }}
+                        className="h-full rounded-full bg-emerald-500 transition-all duration-700 ease-out"
+                        style={{ width: `${Math.max(completion, completion > 0 ? 6 : 0)}%` }}
                       />
                     </div>
-                    <p className="mt-1 text-[10px] text-[var(--fg-muted)]">{completion}% completion</p>
+                    <p className="mt-1.5 text-[10px] text-[var(--fg-muted)] tabular-nums">{completion}% completion</p>
                   </div>
                 )}
 

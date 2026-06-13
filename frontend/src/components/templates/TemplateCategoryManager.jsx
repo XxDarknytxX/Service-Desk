@@ -164,13 +164,16 @@ export default function TemplateCategoryManager({
       className={cn(
         "h-full flex flex-col overflow-hidden",
         "bg-[var(--bg-elevated)]",
-        "border border-[var(--border-default)] rounded-xl",
-        "shadow-[0_0_0_1px_var(--border-default),0_2px_8px_rgba(0,0,0,0.3)]"
+        "border border-[var(--border-default)] rounded-2xl",
+        "shadow-[var(--shadow-card)]"
       )}
     >
       {/* Header */}
-      <div className="px-4 py-3.5 border-b border-[var(--border-default)] shrink-0">
-        <h3 className="text-sm font-semibold text-[var(--fg-primary)] tracking-tight">
+      <div className="flex items-center gap-2.5 px-4 py-3.5 border-b border-[var(--border-default)] shrink-0">
+        <span className="h-8 w-8 rounded-lg bg-violet-500/10 text-violet-500 flex items-center justify-center shrink-0">
+          <Icon name="folder" size={15} />
+        </span>
+        <h3 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">
           Categories
         </h3>
       </div>
@@ -209,7 +212,7 @@ export default function TemplateCategoryManager({
                   key={cat.id}
                   className={cn(
                     "px-3 py-2.5 rounded-lg",
-                    "bg-red-500/5 border border-red-500/20"
+                    "bg-rose-500/10 border border-rose-500/15"
                   )}
                 >
                   <p className="text-xs text-[var(--fg-secondary)] mb-2">
@@ -339,7 +342,7 @@ export default function TemplateCategoryManager({
                     className={cn(
                       "p-1 rounded-md transition-colors duration-150",
                       "text-[var(--fg-muted)]",
-                      "hover:bg-red-500/10 hover:text-red-400"
+                      "hover:bg-rose-500/10 hover:text-rose-500"
                     )}
                     title="Delete category"
                   >
@@ -353,8 +356,8 @@ export default function TemplateCategoryManager({
 
         {/* Error display */}
         {error && (
-          <div className="mx-2 mt-2 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20">
-            <p className="text-xs text-red-400">{error}</p>
+          <div className="mx-2 mt-2 px-3 py-2 rounded-lg bg-rose-500/10 border border-rose-500/15">
+            <p className="text-xs text-rose-500">{error}</p>
           </div>
         )}
       </div>
