@@ -1,18 +1,15 @@
 /**
  * LoadingScreen — full-screen branded loader.
- * Vodafone speechmark wrapped in a spinning accent arc, ambient glow,
- * and staggered loading dots. Used while the session bootstraps.
+ *
+ * A 3×3 grid of glossy red chips that ripple in a diagonal wave. Tiles stay
+ * vibrantly red (the wave is a scale + brightness pop, not a fade), with a top
+ * gloss highlight, inner shade, and soft glow for depth, plus a subtle
+ * light→deep diagonal colour gradient. No text — just the animated mark.
+ * Used for the post-login splash and while the session bootstraps.
  */
 
-// Faces of the tumbling cube — each rotated/pushed out to form a 3D cube.
-const CUBE_FACES = [
-  "rotateY(0deg) translateZ(26px)",
-  "rotateY(180deg) translateZ(26px)",
-  "rotateY(90deg) translateZ(26px)",
-  "rotateY(-90deg) translateZ(26px)",
-  "rotateX(90deg) translateZ(26px)",
-  "rotateX(-90deg) translateZ(26px)",
-];
+// Vivid red per diagonal band (row + col, 0‑4): top‑left lighter → bottom‑right deeper.
+const TILE_COLORS = ["#FF5A5A", "#F23636", "#E60000", "#D10005", "#B3000F"];
 
 export default function LoadingScreen({ message = "Loading your workspace..." }) {
   return (
@@ -22,43 +19,30 @@ export default function LoadingScreen({ message = "Loading your workspace..." })
       aria-live="polite"
     >
       {/* Ambient accent glow */}
-      <div className="absolute w-[480px] h-[480px] rounded-full bg-[var(--accent)]/[0.06] blur-3xl animate-pulse-glow pointer-events-none" />
+      <div className="absolute w-[540px] h-[540px] rounded-full bg-[var(--accent)]/[0.06] blur-3xl animate-pulse-glow pointer-events-none" />
 
-      <div className="relative flex flex-col items-center animate-fade-in">
-        {/* Creative 3D tumbling cube loader */}
-        <div className="h-20 w-20 flex items-center justify-center" style={{ perspective: "240px" }}>
-          <div
-            className="relative animate-cube-tumble"
-            style={{ width: "52px", height: "52px", transformStyle: "preserve-3d" }}
-          >
-            {CUBE_FACES.map((t, i) => (
-              <span
-                key={i}
-                className="absolute inset-0 rounded-[7px] border border-[var(--accent)]/50 bg-[var(--accent)]/15"
-                style={{ transform: t, boxShadow: "inset 0 0 16px rgba(230,0,0,0.3)" }}
-              />
-            ))}
-          </div>
-        </div>
-
-        <h1 className="mt-7 text-base font-semibold text-[var(--fg-primary)] tracking-tight">
-          Service Desk
-        </h1>
-        <p className="mt-1 text-xs text-[var(--fg-muted)]">Vodafone Fiji</p>
-
-        {/* Staggered dots */}
-        <div className="mt-6 flex items-center gap-1.5" aria-hidden="true">
-          {[0, 1, 2].map((i) => (
+      {/* Pulsating chip grid (diagonal ripple) */}
+      <div className="relative grid grid-cols-3 gap-3 animate-fade-in">
+        {Array.from({ length: 9 }).map((_, i) => {
+          const row = Math.floor(i / 3);
+          const col = i % 3;
+          const color = TILE_COLORS[row + col];
+          return (
             <span
               key={i}
-              className="w-1.5 h-1.5 rounded-full bg-[var(--accent)] animate-loading-dot"
-              style={{ animationDelay: `${i * 0.16}s` }}
+              className="h-11 w-11 rounded-[13px] animate-tile-pulse"
+              style={{
+                background: color,
+                boxShadow:
+                  "inset 0 2px 0 rgba(255,255,255,0.5), inset 0 -5px 9px rgba(120,0,0,0.28), 0 5px 14px rgba(230,0,0,0.3)",
+                animationDelay: `${(row + col) * 0.1}s`,
+              }}
             />
-          ))}
-        </div>
-
-        <span className="sr-only">{message}</span>
+          );
+        })}
       </div>
+
+      <span className="sr-only">{message}</span>
     </div>
   );
 }

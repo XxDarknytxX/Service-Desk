@@ -166,7 +166,7 @@ export default function AppLayout({ children }) {
           bottom edge of the top chrome (y=64px), running seamlessly across the
           sidebar and header as one continuous live pulse. */}
       <div
-        className="pointer-events-none absolute left-0 right-0 top-16 h-[2px] z-[55] animate-header-wave"
+        className="pointer-events-none absolute left-0 right-0 top-16 h-[2px] z-30 lg:z-[55] animate-header-wave"
         style={{
           background:
             "linear-gradient(90deg, rgba(230,0,0,0.04) 0%, rgba(230,0,0,0.55) 22%, #E60000 50%, rgba(230,0,0,0.55) 78%, rgba(230,0,0,0.04) 100%)",

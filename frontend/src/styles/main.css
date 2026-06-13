@@ -543,12 +543,12 @@
   }
   .animate-header-wave { animation: header-wave 6s ease-in-out infinite; }
 
-  /* 3D tumbling cube — creative app loader (replaces the static logo glyph) */
-  @keyframes cube-tumble {
-    0%   { transform: rotateX(-24deg) rotateY(0deg); }
-    100% { transform: rotateX(336deg) rotateY(360deg); }
+  /* Pulsating chip grid — app loader (tiles ripple in a diagonal wave) */
+  @keyframes tile-pulse {
+    0%, 70%, 100% { transform: scale(0.8); opacity: 0.72; }
+    35% { transform: scale(1.06); opacity: 1; }
   }
-  .animate-cube-tumble { animation: cube-tumble 3s cubic-bezier(0.66, 0, 0.34, 1) infinite; }
+  .animate-tile-pulse { animation: tile-pulse 1.5s cubic-bezier(0.45, 0, 0.3, 1) infinite; }
 
   /* Animation delays */
   .delay-75 { animation-delay: 75ms; }
