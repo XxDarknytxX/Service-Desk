@@ -4,7 +4,15 @@
  * and staggered loading dots. Used while the session bootstraps.
  */
 
-import VodafoneLogo from "./VodafoneLogo";
+// Faces of the tumbling cube — each rotated/pushed out to form a 3D cube.
+const CUBE_FACES = [
+  "rotateY(0deg) translateZ(26px)",
+  "rotateY(180deg) translateZ(26px)",
+  "rotateY(90deg) translateZ(26px)",
+  "rotateY(-90deg) translateZ(26px)",
+  "rotateX(90deg) translateZ(26px)",
+  "rotateX(-90deg) translateZ(26px)",
+];
 
 export default function LoadingScreen({ message = "Loading your workspace..." }) {
   return (
@@ -17,12 +25,19 @@ export default function LoadingScreen({ message = "Loading your workspace..." })
       <div className="absolute w-[480px] h-[480px] rounded-full bg-[var(--accent)]/[0.06] blur-3xl animate-pulse-glow pointer-events-none" />
 
       <div className="relative flex flex-col items-center animate-fade-in">
-        {/* Logo with spinning arc + pulsing halo */}
-        <div className="relative h-20 w-20">
-          <span className="absolute inset-0 rounded-full border border-[var(--accent)]/40 animate-ping" />
-          <div className="absolute inset-0 rounded-full border-2 border-[var(--accent)]/15 border-t-[var(--accent)] animate-spin" />
-          <div className="absolute inset-[10px] flex items-center justify-center">
-            <VodafoneLogo size={60} className="drop-shadow-[0_0_20px_rgba(230,0,0,0.35)]" />
+        {/* Creative 3D tumbling cube loader */}
+        <div className="h-20 w-20 flex items-center justify-center" style={{ perspective: "240px" }}>
+          <div
+            className="relative animate-cube-tumble"
+            style={{ width: "52px", height: "52px", transformStyle: "preserve-3d" }}
+          >
+            {CUBE_FACES.map((t, i) => (
+              <span
+                key={i}
+                className="absolute inset-0 rounded-[7px] border border-[var(--accent)]/50 bg-[var(--accent)]/15"
+                style={{ transform: t, boxShadow: "inset 0 0 16px rgba(230,0,0,0.3)" }}
+              />
+            ))}
           </div>
         </div>
 

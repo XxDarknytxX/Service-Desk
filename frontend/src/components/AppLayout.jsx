@@ -158,9 +158,21 @@ export default function AppLayout({ children }) {
     );
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[var(--bg-base)]">
+    <div className="relative flex h-screen overflow-hidden bg-[var(--bg-base)]">
       {/* Floating background blobs */}
       <FloatingBlobs variant="minimal" />
+
+      {/* Flowing Vodafone-red accent line — spans the FULL screen width along the
+          bottom edge of the top chrome (y=64px), running seamlessly across the
+          sidebar and header as one continuous live pulse. */}
+      <div
+        className="pointer-events-none absolute left-0 right-0 top-16 h-[2px] z-[55] animate-header-wave"
+        style={{
+          background:
+            "linear-gradient(90deg, rgba(230,0,0,0.04) 0%, rgba(230,0,0,0.55) 22%, #E60000 50%, rgba(230,0,0,0.55) 78%, rgba(230,0,0,0.04) 100%)",
+          backgroundSize: "200% 100%",
+        }}
+      />
 
       {/* Mobile overlay */}
       {mobileOpen && (
@@ -357,20 +369,11 @@ export default function AppLayout({ children }) {
         {/* Header — same surface + border as the sidebar so the chrome is one piece */}
         <header
           className={cn(
-            "relative h-16 flex-shrink-0 z-20",
+            "h-16 flex-shrink-0 z-20",
             "bg-[var(--bg-elevated)]",
             "border-b border-[var(--border-default)]"
           )}
         >
-          {/* Flowing Vodafone-red accent line — gentle pulse along the header edge */}
-          <div
-            className="pointer-events-none absolute bottom-0 left-0 w-full h-[2px] z-10 animate-header-wave"
-            style={{
-              background:
-                "linear-gradient(90deg, rgba(230,0,0,0.04) 0%, rgba(230,0,0,0.55) 25%, #E60000 50%, rgba(230,0,0,0.55) 75%, rgba(230,0,0,0.04) 100%)",
-              backgroundSize: "200% 100%",
-            }}
-          />
           <div className="h-full flex items-center justify-between gap-4 px-4 sm:px-6">
             {/* Left: hamburger (mobile) + search */}
             <div className="flex items-center gap-3 flex-1 min-w-0">

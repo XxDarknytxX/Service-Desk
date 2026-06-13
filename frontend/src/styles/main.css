@@ -543,6 +543,13 @@
   }
   .animate-header-wave { animation: header-wave 6s ease-in-out infinite; }
 
+  /* 3D tumbling cube — creative app loader (replaces the static logo glyph) */
+  @keyframes cube-tumble {
+    0%   { transform: rotateX(-24deg) rotateY(0deg); }
+    100% { transform: rotateX(336deg) rotateY(360deg); }
+  }
+  .animate-cube-tumble { animation: cube-tumble 3s cubic-bezier(0.66, 0, 0.34, 1) infinite; }
+
   /* Animation delays */
   .delay-75 { animation-delay: 75ms; }
   .delay-150 { animation-delay: 150ms; }
