@@ -1,13 +1,15 @@
 /**
- * Page Header Component
- * Linear/Modern Design System
+ * Page Header — consistent, premium page title block.
  *
- * Features:
- * - Tight tracking headline
- * - Gradient text option
- * - Responsive layout
- * - Actions slot
+ * Backward compatible (title / subtitle / actions / gradient still work) and
+ * adds optional branded treatment:
+ *  • icon    — string Icon name or node, shown in a Vodafone-red tile
+ *  • eyebrow — small uppercase accent label above the title (section context)
+ *
+ * Used at the top of every redesigned page so headers feel like one product.
  */
+
+import Icon from "./Icon";
 
 function cn(...parts) {
   return parts.filter(Boolean).join(" ");
@@ -17,6 +19,8 @@ export default function PageHeader({
   title,
   subtitle,
   actions,
+  icon,
+  eyebrow,
   className,
   gradient = false,
 }) {
@@ -27,27 +31,33 @@ export default function PageHeader({
         className
       )}
     >
-      <div>
-        <h1
-          className={cn(
-            "text-2xl sm:text-3xl font-semibold tracking-tight",
-            gradient
-              ? "text-gradient"
-              : "text-[var(--fg-primary)]"
-          )}
-        >
-          {title}
-        </h1>
-        {subtitle && (
-          <p className="text-[var(--fg-secondary)] mt-1 text-sm">
-            {subtitle}
-          </p>
+      <div className="flex items-start gap-3.5 min-w-0">
+        {icon && (
+          <div className="hidden sm:flex shrink-0 mt-0.5 h-11 w-11 items-center justify-center rounded-xl bg-[var(--accent)]/10 text-[var(--accent)] border border-[var(--accent)]/15 shadow-[0_2px_12px_rgba(230,0,0,0.12)]">
+            {typeof icon === "string" ? <Icon name={icon} size={20} /> : icon}
+          </div>
         )}
+        <div className="min-w-0">
+          {eyebrow && (
+            <p className="text-label mb-1 !text-[var(--accent)]">{eyebrow}</p>
+          )}
+          <h1
+            className={cn(
+              "text-2xl sm:text-[28px] font-semibold tracking-tight leading-tight",
+              gradient ? "text-gradient" : "text-[var(--fg-primary)]"
+            )}
+          >
+            {title}
+          </h1>
+          {subtitle && (
+            <p className="text-[var(--fg-secondary)] mt-1 text-sm leading-relaxed">
+              {subtitle}
+            </p>
+          )}
+        </div>
       </div>
       {actions && (
-        <div className="flex flex-wrap items-center gap-3">
-          {actions}
-        </div>
+        <div className="flex flex-wrap items-center gap-2.5 shrink-0">{actions}</div>
       )}
     </div>
   );
@@ -56,12 +66,7 @@ export default function PageHeader({
 /**
  * Section Header - For subsections within a page
  */
-export function SectionHeader({
-  title,
-  subtitle,
-  actions,
-  className,
-}) {
+export function SectionHeader({ title, subtitle, actions, icon, className }) {
   return (
     <div
       className={cn(
@@ -69,20 +74,23 @@ export function SectionHeader({
         className
       )}
     >
-      <div>
-        <h2 className="text-lg font-semibold text-[var(--fg-primary)] tracking-tight">
-          {title}
-        </h2>
-        {subtitle && (
-          <p className="text-sm text-[var(--fg-secondary)] mt-0.5">
-            {subtitle}
-          </p>
+      <div className="flex items-center gap-2.5 min-w-0">
+        {icon && (
+          <span className="shrink-0 text-[var(--fg-muted)]">
+            {typeof icon === "string" ? <Icon name={icon} size={18} /> : icon}
+          </span>
         )}
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold text-[var(--fg-primary)] tracking-tight">
+            {title}
+          </h2>
+          {subtitle && (
+            <p className="text-sm text-[var(--fg-secondary)] mt-0.5">{subtitle}</p>
+          )}
+        </div>
       </div>
       {actions && (
-        <div className="flex flex-wrap items-center gap-2">
-          {actions}
-        </div>
+        <div className="flex flex-wrap items-center gap-2">{actions}</div>
       )}
     </div>
   );

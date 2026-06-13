@@ -489,6 +489,44 @@
   .animate-shake { animation: shake 0.4s var(--ease-out-expo); }
   .animate-drift-ring { animation: drift-ring 80s linear infinite; }
 
+  /* ========== SKELETON SHIMMER (theme-aware loading state) ========== */
+  @keyframes shimmer-sweep {
+    100% { transform: translateX(100%); }
+  }
+  .skeleton {
+    position: relative;
+    overflow: hidden;
+    background: var(--bg-surface);
+  }
+  .skeleton::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 255, 255, 0.07),
+      transparent
+    );
+    animation: shimmer-sweep 1.6s var(--ease-out-expo) infinite;
+  }
+  [data-theme="light"] .skeleton::after {
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 255, 255, 0.65),
+      transparent
+    );
+  }
+
+  /* Animated count-up / entrance for numeric KPIs */
+  @keyframes kpi-rise {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .animate-kpi-rise { animation: kpi-rise 0.5s var(--ease-out-expo) both; }
+
   /* Animation delays */
   .delay-75 { animation-delay: 75ms; }
   .delay-150 { animation-delay: 150ms; }
