@@ -37,6 +37,50 @@ const defaultForm = {
   requesterId: "",
 };
 
+// ─── Presentational helpers (visual only) ──────────────────────────
+// A labelled section heading with a tinted icon tile, mirroring the
+// panel-header language used across the app's reference pages.
+function SectionHeading({ icon, tone = "accent", title, hint }) {
+  const toneCls = {
+    accent: "bg-[var(--accent)]/10 text-[var(--accent)]",
+    blue: "bg-blue-500/10 text-blue-500",
+    violet: "bg-violet-500/10 text-violet-500",
+    emerald: "bg-emerald-500/10 text-emerald-500",
+    amber: "bg-amber-500/10 text-amber-500",
+    indigo: "bg-indigo-500/10 text-indigo-500",
+    slate: "bg-slate-500/10 text-slate-400",
+  };
+  return (
+    <div className="flex items-center gap-2.5">
+      <span className={cn("h-7 w-7 rounded-lg flex items-center justify-center shrink-0", toneCls[tone] || toneCls.accent)}>
+        <Icon name={icon} size={14} />
+      </span>
+      <div className="min-w-0">
+        <h3 className="text-[13px] font-semibold text-[var(--fg-primary)] tracking-tight">{title}</h3>
+        {hint && <p className="text-[11px] text-[var(--fg-muted)] leading-snug">{hint}</p>}
+      </div>
+    </div>
+  );
+}
+
+// A semantic inline banner (info / error / brand etc.) used for hints
+// and validation feedback.
+const BANNER_TONES = {
+  info: { wrap: "bg-blue-500/10 border-blue-500/20", text: "text-blue-500", icon: "info" },
+  error: { wrap: "bg-red-500/10 border-red-500/20", text: "text-red-500", icon: "alert" },
+  emerald: { wrap: "bg-emerald-500/5 border-emerald-500/20", text: "text-emerald-500", icon: "checkCircle" },
+  muted: { wrap: "bg-[var(--bg-base)] border-[var(--border-default)]", text: "text-[var(--fg-secondary)]", icon: "info" },
+};
+function Banner({ tone = "info", icon, children }) {
+  const t = BANNER_TONES[tone] || BANNER_TONES.info;
+  return (
+    <div className={cn("flex items-center gap-3 px-4 py-3 rounded-xl border", t.wrap)}>
+      <Icon name={icon || t.icon} size={16} className={cn("shrink-0", t.text)} />
+      <p className={cn("text-sm font-medium", t.text)}>{children}</p>
+    </div>
+  );
+}
+
 export default function TicketCreateModal({ open, onClose, meta, user, onCreated }) {
   const toast = useToast();
   // Mode: null (choosing), 'manual', 'template_gallery', 'template_form',
@@ -366,14 +410,16 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
           type="button"
           onClick={() => setCreateOnBehalf(true)}
           className={cn(
-            "flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium w-full",
+            "group flex items-center gap-2.5 px-4 py-3 rounded-xl text-sm font-medium w-full",
             "border border-dashed border-[var(--border-default)]",
             "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]",
             "hover:border-[var(--accent)] hover:bg-[var(--accent)]/5",
             "transition-all duration-150"
           )}
         >
-          <Icon name="users" size={16} className="text-[var(--fg-muted)]" />
+          <span className="h-7 w-7 rounded-lg bg-[var(--bg-surface)] text-[var(--fg-muted)] flex items-center justify-center group-hover:bg-[var(--accent)]/10 group-hover:text-[var(--accent)] transition-colors">
+            <Icon name="userPlus" size={15} />
+          </span>
           Create on behalf of another user
         </button>
       );
@@ -387,15 +433,18 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
     const selectedRequester = users.find((u) => String(u.id) === String(form.requesterId));
 
     return (
-      <div className="rounded-lg border border-[var(--border-default)] bg-[var(--bg-base)] p-3 space-y-2">
+      <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-base)] p-4 space-y-3">
         <div className="flex items-center justify-between">
-          <label className="text-xs font-medium text-[var(--fg-secondary)]">
-            Creating on behalf of
-          </label>
+          <div className="flex items-center gap-2">
+            <Icon name="userPlus" size={14} className="text-[var(--accent)]" />
+            <label className="text-xs font-semibold text-[var(--fg-primary)]">
+              Creating on behalf of
+            </label>
+          </div>
           <button
             type="button"
             onClick={() => { setCreateOnBehalf(false); updateField("requesterId", ""); setRequesterSearch(""); setRequesterOpen(false); }}
-            className="text-xs text-[var(--fg-muted)] hover:text-[var(--fg-primary)] transition-colors"
+            className="text-xs font-medium text-[var(--fg-muted)] hover:text-[var(--fg-primary)] transition-colors"
           >
             Cancel
           </button>
@@ -403,16 +452,16 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
         <div ref={requesterRef} className="relative">
           <div
             className={cn(
-              "flex items-center gap-2 px-3 py-2 rounded-lg cursor-text",
+              "flex items-center gap-2.5 px-3.5 py-2.5 rounded-lg cursor-text",
               "bg-[var(--bg-elevated)] border",
-              requesterOpen ? "border-[var(--accent)] ring-2 ring-[var(--accent)]/20" : "border-[var(--border-default)]",
+              requesterOpen ? "border-[var(--accent)] ring-2 ring-[var(--accent)]/20" : "border-[var(--border-default)] hover:border-[var(--border-hover)]",
               "transition-all duration-150"
             )}
             onClick={() => setRequesterOpen(true)}
           >
             <Icon name="user" size={15} className="text-[var(--fg-muted)] flex-shrink-0" />
             {form.requesterId ? (
-              <span className="flex-1 text-sm text-[var(--fg-primary)]">
+              <span className="flex-1 text-sm text-[var(--fg-primary)] font-medium">
                 {selectedRequester?.full_name || selectedRequester?.email || "Selected user"}
               </span>
             ) : (
@@ -441,9 +490,9 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
 
           {requesterOpen && !form.requesterId && (
             <div className={cn(
-              "absolute z-50 left-0 right-0 mt-1 max-h-52 overflow-y-auto",
+              "absolute z-50 left-0 right-0 mt-1.5 max-h-52 overflow-y-auto p-1",
               "bg-[var(--bg-elevated)] border border-[var(--border-default)]",
-              "rounded-lg shadow-lg"
+              "rounded-xl shadow-[var(--shadow-elevated)] animate-slide-down"
             )}>
               {filteredUsers.slice(0, 20).map((u) => (
                 <button
@@ -455,7 +504,7 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
                     setRequesterSearch("");
                     setRequesterOpen(false);
                   }}
-                  className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-[var(--bg-surface-hover)] transition-colors"
+                  className="w-full flex items-center gap-3 px-3 py-2.5 text-left rounded-lg hover:bg-[var(--bg-surface-hover)] transition-colors"
                 >
                   <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 bg-[var(--accent)]/10 text-[var(--accent)] text-xs font-semibold">
                     {(u.full_name || u.email || "U")[0].toUpperCase()}
@@ -487,94 +536,75 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
 
   // ─── Mode Selection Screen ─────────────────────────
   function renderModeSelection() {
+    const modeCards = [
+      {
+        key: "manual",
+        icon: "pencil",
+        tint: "bg-[var(--accent)]/10 text-[var(--accent)] group-hover:bg-[var(--accent)]/20",
+        title: "Manual ticket",
+        desc: "Capture standard fields — subject, description, priority and routing.",
+        onClick: () => setMode("manual"),
+      },
+      {
+        key: "template_gallery",
+        icon: "clipboard",
+        tint: "bg-blue-500/10 text-blue-500 group-hover:bg-blue-500/20",
+        title: "From template",
+        desc: "Start from a pre-built form for common request types.",
+        onClick: () => setMode("template_gallery"),
+      },
+      ...(isAgent
+        ? [{
+            key: "form_pick",
+            icon: "send",
+            tint: "bg-emerald-500/10 text-emerald-500 group-hover:bg-emerald-500/20",
+            title: "Customer form",
+            desc: "Raise a ticket that sends a form to a customer — replies attach automatically.",
+            badge: "Agent",
+            onClick: () => setMode("form_pick"),
+          }]
+        : []),
+    ];
+
     return (
-      <div className="space-y-6">
-        <p className="text-sm text-[var(--fg-secondary)] text-center">
+      <div className="space-y-5">
+        <p className="text-sm text-[var(--fg-secondary)]">
           How would you like to create this ticket?
         </p>
         <div className={cn("grid gap-4", isAgent ? "sm:grid-cols-3" : "sm:grid-cols-2")}>
-          {/* Manual Option */}
-          <button
-            type="button"
-            onClick={() => setMode("manual")}
-            className={cn(
-              "group relative flex flex-col items-center gap-4 p-6 rounded-xl",
-              "bg-[var(--bg-surface)] border border-[var(--border-default)]",
-              "hover:border-[var(--accent)]/50 hover:bg-[var(--bg-surface-hover)]",
-              "transition-all duration-200 text-left"
-            )}
-          >
-            <div className={cn(
-              "w-14 h-14 rounded-xl flex items-center justify-center",
-              "bg-[var(--accent)]/10 text-[var(--accent)]",
-              "group-hover:bg-[var(--accent)]/20 transition-colors"
-            )}>
-              <Icon name="pencil" size={24} />
-            </div>
-            <div className="text-center">
-              <h3 className="text-sm font-semibold text-[var(--fg-primary)]">Manual Ticket</h3>
-              <p className="mt-1 text-xs text-[var(--fg-muted)]">
-                Create with standard fields — subject, description, priority, and more
-              </p>
-            </div>
-          </button>
-
-          {/* Template Option */}
-          <button
-            type="button"
-            onClick={() => setMode("template_gallery")}
-            className={cn(
-              "group relative flex flex-col items-center gap-4 p-6 rounded-xl",
-              "bg-[var(--bg-surface)] border border-[var(--border-default)]",
-              "hover:border-[var(--accent)]/50 hover:bg-[var(--bg-surface-hover)]",
-              "transition-all duration-200 text-left"
-            )}
-          >
-            <div className={cn(
-              "w-14 h-14 rounded-xl flex items-center justify-center",
-              "bg-blue-500/10 text-blue-400",
-              "group-hover:bg-blue-500/20 transition-colors"
-            )}>
-              <Icon name="clipboard" size={24} />
-            </div>
-            <div className="text-center">
-              <h3 className="text-sm font-semibold text-[var(--fg-primary)]">From Template</h3>
-              <p className="mt-1 text-xs text-[var(--fg-muted)]">
-                Use a pre-built form template for common request types
-              </p>
-            </div>
-          </button>
-
-          {/* Customer Form Option — agents/admins only */}
-          {isAgent && (
+          {modeCards.map((card, i) => (
             <button
+              key={card.key}
               type="button"
-              onClick={() => setMode("form_pick")}
+              onClick={card.onClick}
+              style={{ animationDelay: `${i * 60}ms` }}
               className={cn(
-                "group relative flex flex-col items-center gap-4 p-6 rounded-xl",
-                "bg-[var(--bg-surface)] border border-[var(--border-default)]",
-                "hover:border-[var(--accent)]/50 hover:bg-[var(--bg-surface-hover)]",
-                "transition-all duration-200 text-left"
+                "group relative flex flex-col gap-4 p-5 rounded-2xl text-left animate-fade-up",
+                "bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]",
+                "transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--border-hover)] hover:shadow-[var(--shadow-card-hover)]",
+                "focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-base)]"
               )}
             >
-              <span className="absolute top-3 right-3 text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400">
-                Agent
-              </span>
-              <div className={cn(
-                "w-14 h-14 rounded-xl flex items-center justify-center",
-                "bg-emerald-500/10 text-emerald-400",
-                "group-hover:bg-emerald-500/20 transition-colors"
+              {card.badge && (
+                <span className="absolute top-3.5 right-3.5 text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500">
+                  {card.badge}
+                </span>
+              )}
+              <span className={cn(
+                "h-12 w-12 rounded-xl flex items-center justify-center transition-colors duration-200",
+                card.tint
               )}>
-                <Icon name="send" size={24} />
+                <Icon name={card.icon} size={22} />
+              </span>
+              <div>
+                <h3 className="text-sm font-semibold text-[var(--fg-primary)] tracking-tight">{card.title}</h3>
+                <p className="mt-1.5 text-xs text-[var(--fg-muted)] leading-relaxed">{card.desc}</p>
               </div>
-              <div className="text-center">
-                <h3 className="text-sm font-semibold text-[var(--fg-primary)]">Customer Form</h3>
-                <p className="mt-1 text-xs text-[var(--fg-muted)]">
-                  Raise a ticket that sends a form to a customer — their response attaches automatically
-                </p>
-              </div>
+              <span className="mt-auto inline-flex items-center gap-1 text-xs font-medium text-[var(--accent)] opacity-0 group-hover:opacity-100 group-hover:gap-1.5 transition-all">
+                Continue <Icon name="arrowRight" size={13} />
+              </span>
             </button>
-          )}
+          ))}
         </div>
       </div>
     );
@@ -583,49 +613,52 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
   // ─── Customer Form: picker ─────────────────────────
   function renderFormPicker() {
     return (
-      <div className="space-y-4">
+      <div className="space-y-3">
         {loadingCustomerForms ? (
           <div className="space-y-3">
-            {[...Array(2)].map((_, i) => (
-              <div key={i} className="h-20 rounded-xl bg-[var(--bg-surface)] animate-pulse" />
+            {[...Array(3)].map((_, i) => (
+              <div key={i} className="h-[72px] rounded-2xl bg-[var(--bg-surface)] animate-pulse" />
             ))}
           </div>
         ) : customerForms.length === 0 ? (
-          <div className="text-center py-10">
-            <Icon name="send" size={28} className="text-[var(--fg-muted)] mx-auto mb-3" />
-            <p className="text-sm font-medium text-[var(--fg-primary)] mb-1">No customer forms yet</p>
+          <div className="text-center py-12">
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-emerald-500/10 text-emerald-500 mb-4">
+              <Icon name="send" size={26} />
+            </div>
+            <p className="text-sm font-semibold text-[var(--fg-primary)] mb-1">No customer forms yet</p>
             <p className="text-xs text-[var(--fg-secondary)]">
-              Build one under Operations → Customer Forms first
+              Build one under Operations → Customer Forms first.
             </p>
           </div>
         ) : (
-          customerForms.map((cf) => (
+          customerForms.map((cf, i) => (
             <button
               key={cf.id}
               type="button"
               onClick={() => pickCustomerForm(cf)}
+              style={{ animationDelay: `${i * 50}ms` }}
               className={cn(
-                "w-full flex items-center gap-4 p-4 rounded-xl text-left group",
-                "bg-[var(--bg-surface)] border border-[var(--border-default)]",
-                "hover:border-[var(--accent)]/50 hover:bg-[var(--bg-surface-hover)]",
-                "transition-all duration-200"
+                "w-full flex items-center gap-4 p-4 rounded-2xl text-left group animate-fade-up",
+                "bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]",
+                "transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--border-hover)] hover:shadow-[var(--shadow-card-hover)]"
               )}
             >
-              <span className="w-11 h-11 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center shrink-0">
+              <span className="h-11 w-11 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center shrink-0 transition-transform duration-200 group-hover:scale-110">
                 <Icon name="fileText" size={20} />
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block text-sm font-semibold text-[var(--fg-primary)] group-hover:text-[var(--accent)] transition-colors">
+                <span className="block text-sm font-semibold text-[var(--fg-primary)] truncate group-hover:text-[var(--accent)] transition-colors">
                   {cf.name}
                 </span>
                 <span className="block text-xs text-[var(--fg-muted)] truncate mt-0.5">
                   {cf.description || "No description"}
                 </span>
               </span>
-              <span className="text-[11px] text-[var(--fg-muted)] shrink-0">
+              <span className="hidden sm:inline-flex items-center gap-1.5 text-[11px] text-[var(--fg-muted)] shrink-0">
+                <Icon name="list" size={12} />
                 {(cf.fields_schema || []).filter((f) => !["section_header", "info_text", "divider"].includes(f.type)).length} questions
               </span>
-              <Icon name="chevronRight" size={15} className="text-[var(--fg-muted)] group-hover:text-[var(--accent)] transition-colors shrink-0" />
+              <Icon name="chevronRight" size={15} className="text-[var(--fg-muted)] group-hover:text-[var(--accent)] group-hover:translate-x-0.5 transition-all shrink-0" />
             </button>
           ))
         )}
@@ -638,77 +671,84 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
     if (!selectedCustomerForm) return null;
     const matched = users.find((u) => (u.email || "").toLowerCase() === cfEmail.trim().toLowerCase());
     return (
-      <form id="ticket-create-form" onSubmit={onSubmitFormTicket} className="space-y-5">
+      <form id="ticket-create-form" onSubmit={onSubmitFormTicket} className="space-y-6">
         {/* Chosen form summary */}
-        <div className={cn("flex items-center gap-3 px-4 py-3 rounded-lg", "bg-emerald-500/5", "border border-emerald-500/20")}>
-          <div className="w-10 h-10 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
-            <Icon name="send" size={18} />
+        <div className="flex items-center gap-3.5 px-4 py-3.5 rounded-2xl bg-emerald-500/5 border border-emerald-500/20">
+          <div className="h-11 w-11 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center shrink-0">
+            <Icon name="send" size={20} />
           </div>
           <div className="min-w-0 flex-1">
-            <h3 className="text-sm font-semibold text-[var(--fg-primary)] truncate">{selectedCustomerForm.name}</h3>
-            <p className="text-xs text-[var(--fg-muted)]">
-              The recipient gets a one-time link — their response attaches to this ticket automatically
+            <h3 className="text-sm font-semibold text-[var(--fg-primary)] truncate tracking-tight">{selectedCustomerForm.name}</h3>
+            <p className="text-xs text-[var(--fg-muted)] leading-snug mt-0.5">
+              The recipient gets a one-time link — their response attaches to this ticket automatically.
             </p>
           </div>
         </div>
 
         {/* Recipient */}
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div>
+        <section className="space-y-3.5">
+          <SectionHeading icon="mail" tone="emerald" title="Recipient" hint="Where the form link is sent." />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <Input
+                label="Send to (email)"
+                placeholder="customer@company.com"
+                value={cfEmail}
+                onChange={(e) => setCfEmail(e.target.value)}
+                required
+              />
+              {matched && (
+                <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-blue-500">
+                  <Icon name="userCheck" size={12} />
+                  Existing user — the ticket will be raised on their behalf
+                </p>
+              )}
+            </div>
             <Input
-              label="Send to (email)"
-              placeholder="customer@company.com"
-              value={cfEmail}
-              onChange={(e) => setCfEmail(e.target.value)}
-              required
+              label="Recipient name (optional)"
+              placeholder="Customer name"
+              value={cfName}
+              onChange={(e) => setCfName(e.target.value)}
             />
-            {matched && (
-              <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-blue-400">
-                <Icon name="userCheck" size={12} />
-                Existing user — the ticket will be raised on their behalf
-              </p>
-            )}
           </div>
+        </section>
+
+        {/* Ticket details */}
+        <section className="space-y-3.5">
+          <SectionHeading icon="tickets" tone="accent" title="Ticket details" hint="Where the ticket lives and how it's prioritised." />
           <Input
-            label="Recipient name (optional)"
-            placeholder="Customer name"
-            value={cfName}
-            onChange={(e) => setCfName(e.target.value)}
+            label="Ticket subject"
+            value={form.subject}
+            onChange={(e) => updateField("subject", e.target.value)}
+            required
           />
-        </div>
 
-        <Input
-          label="Ticket subject"
-          value={form.subject}
-          onChange={(e) => updateField("subject", e.target.value)}
-          required
-        />
+          <div className="grid gap-4 md:grid-cols-3">
+            <Select label="Priority" value={form.priorityKey} onChange={(e) => updateField("priorityKey", e.target.value)}>
+              {priorities.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+            </Select>
+            <Select label="Team" value={form.teamId} onChange={(e) => updateField("teamId", e.target.value)} required>
+              <option value="">Select a team *</option>
+              {teams.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </Select>
+            <Select label="Assignee" value={form.assigneeId} onChange={(e) => updateField("assigneeId", e.target.value)} disabled={!form.teamId || loadingMembers}>
+              <option value="">Unassigned (Team Queue)</option>
+              {teamMembers.map((member) => (
+                <option key={member.id} value={member.id}>
+                  {member.full_name || member.email} {member.is_lead ? "(Manager)" : ""}
+                </option>
+              ))}
+            </Select>
+          </div>
 
-        <div className="grid gap-4 md:grid-cols-3">
-          <Select label="Priority" value={form.priorityKey} onChange={(e) => updateField("priorityKey", e.target.value)}>
-            {priorities.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
-          </Select>
-          <Select label="Team" value={form.teamId} onChange={(e) => updateField("teamId", e.target.value)} required>
-            <option value="">Select a team *</option>
-            {teams.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-          </Select>
-          <Select label="Assignee" value={form.assigneeId} onChange={(e) => updateField("assigneeId", e.target.value)} disabled={!form.teamId || loadingMembers}>
-            <option value="">Unassigned (Team Queue)</option>
-            {teamMembers.map((member) => (
-              <option key={member.id} value={member.id}>
-                {member.full_name || member.email} {member.is_lead ? "(Manager)" : ""}
-              </option>
-            ))}
-          </Select>
-        </div>
-
-        <Textarea
-          label="Internal note (optional)"
-          rows={2}
-          placeholder="Context for the team — defaults to a note about the form that was sent"
-          value={form.description}
-          onChange={(e) => updateField("description", e.target.value)}
-        />
+          <Textarea
+            label="Internal note (optional)"
+            rows={2}
+            placeholder="Context for the team — defaults to a note about the form that was sent"
+            value={form.description}
+            onChange={(e) => updateField("description", e.target.value)}
+          />
+        </section>
       </form>
     );
   }
@@ -719,17 +759,17 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
     const link = `${window.location.origin}/f/${cfResult.token}`;
     return (
       <div className="text-center py-4 space-y-5">
-        <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center mx-auto animate-scale-in">
+        <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center mx-auto animate-scale-in">
           <Icon name="checkCircle" size={30} />
         </div>
         <div>
-          <h3 className="text-lg font-semibold text-[var(--fg-primary)]">Ticket created & form ready</h3>
-          <p className="text-sm text-[var(--fg-secondary)] mt-1">
+          <h3 className="text-lg font-semibold text-[var(--fg-primary)] tracking-tight">Ticket created & form ready</h3>
+          <p className="text-sm text-[var(--fg-secondary)] mt-1.5 max-w-md mx-auto leading-relaxed">
             Share this one-time link with <strong className="text-[var(--fg-primary)]">{cfResult.email}</strong> —
             their response will land on the ticket automatically.
           </p>
         </div>
-        <div className="flex items-center gap-2 p-3 rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)] max-w-lg mx-auto">
+        <div className="flex items-center gap-2 p-2 pl-3.5 rounded-xl bg-[var(--bg-base)] border border-[var(--border-default)] max-w-lg mx-auto">
           <Icon name="link" size={14} className="text-[var(--fg-muted)] shrink-0" />
           <code className="flex-1 text-[12px] text-[var(--fg-secondary)] truncate text-left">{link}</code>
           <Button
@@ -759,86 +799,90 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
   // ─── Manual Form ─────────────────────────
   function renderManualForm() {
     return (
-      <form id="ticket-create-form" onSubmit={onSubmit} className="space-y-5">
-        <Input
-          label="Subject"
-          value={form.subject}
-          onChange={(e) => updateField("subject", e.target.value)}
-          placeholder="Short summary of the request"
-          required
-        />
+      <form id="ticket-create-form" onSubmit={onSubmit} className="space-y-6">
+        {/* Request details */}
+        <section className="space-y-3.5">
+          <SectionHeading icon="pencil" tone="accent" title="Request details" hint="Tell us what's needed and why." />
+          <Input
+            label="Subject"
+            value={form.subject}
+            onChange={(e) => updateField("subject", e.target.value)}
+            placeholder="Short summary of the request"
+            required
+          />
 
-        <Textarea
-          label="Description"
-          rows={4}
-          value={form.description}
-          onChange={(e) => updateField("description", e.target.value)}
-          placeholder="Provide context, impact, and desired outcome"
-        />
+          <Textarea
+            label="Description"
+            rows={4}
+            value={form.description}
+            onChange={(e) => updateField("description", e.target.value)}
+            placeholder="Provide context, impact, and desired outcome"
+          />
 
-        {/* Create on behalf — agents/admins only */}
-        {renderOnBehalfSection()}
+          {/* Create on behalf — agents/admins only */}
+          {renderOnBehalfSection()}
+        </section>
 
-        <div className="grid gap-4 md:grid-cols-3">
-          <Select label="Priority" value={form.priorityKey} onChange={(e) => updateField("priorityKey", e.target.value)}>
-            {priorities.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
-          </Select>
-          <Select label="Type" value={form.typeKey} onChange={(e) => updateField("typeKey", e.target.value)}>
-            {types.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
-          </Select>
-          <Select label="Channel" value={form.channelKey} onChange={(e) => updateField("channelKey", e.target.value)}>
-            {channels.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
-          </Select>
-        </div>
+        {/* Classification */}
+        <section className="space-y-3.5">
+          <SectionHeading icon="tag" tone="violet" title="Classification" hint="Helps route and prioritise the ticket." />
+          <div className="grid gap-4 md:grid-cols-3">
+            <Select label="Priority" value={form.priorityKey} onChange={(e) => updateField("priorityKey", e.target.value)}>
+              {priorities.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+            </Select>
+            <Select label="Type" value={form.typeKey} onChange={(e) => updateField("typeKey", e.target.value)}>
+              {types.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+            </Select>
+            <Select label="Channel" value={form.channelKey} onChange={(e) => updateField("channelKey", e.target.value)}>
+              {channels.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+            </Select>
+          </div>
+        </section>
 
-        <div className="grid gap-4 md:grid-cols-3">
-          <Select label="Organization" value={form.organizationId} onChange={(e) => updateField("organizationId", e.target.value)}>
-            <option value="">None</option>
-            {organizations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-          </Select>
+        {/* Routing */}
+        <section className="space-y-3.5">
+          <SectionHeading icon="teams" tone="blue" title="Routing" hint="Where this ticket should land." />
+          <div className="grid gap-4 md:grid-cols-3">
+            <Select label="Organization" value={form.organizationId} onChange={(e) => updateField("organizationId", e.target.value)}>
+              <option value="">None</option>
+              {organizations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </Select>
 
-          {isAgent ? (
-            <>
-              <Select label="Team" value={form.teamId} onChange={(e) => updateField("teamId", e.target.value)} required>
-                <option value="">Select a team *</option>
-                {teams.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </Select>
-              <Select label="Assignee" value={form.assigneeId} onChange={(e) => updateField("assigneeId", e.target.value)} disabled={!form.teamId || loadingMembers}>
-                <option value="">Unassigned (Team Queue)</option>
-                {loadingMembers ? (
-                  <option disabled>Loading team members...</option>
-                ) : teamMembers.length === 0 && form.teamId ? (
-                  <option disabled>No team members available</option>
-                ) : (
-                  teamMembers.map((member) => (
-                    <option key={member.id} value={member.id}>
-                      {member.full_name || member.email} {member.is_lead ? "(Manager)" : ""}
-                    </option>
-                  ))
-                )}
-              </Select>
-            </>
-          ) : (
-            <div className={cn("md:col-span-2 px-4 py-3 rounded-lg", "bg-[var(--bg-base)]", "border border-[var(--border-default)]", "text-sm text-[var(--fg-secondary)]", "flex items-center gap-3")}>
-              <Icon name="info" size={16} className="text-[var(--fg-muted)] flex-shrink-0" />
-              Assignments are managed by support agents after submission.
-            </div>
+            {isAgent ? (
+              <>
+                <Select label="Team" value={form.teamId} onChange={(e) => updateField("teamId", e.target.value)} required>
+                  <option value="">Select a team *</option>
+                  {teams.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </Select>
+                <Select label="Assignee" value={form.assigneeId} onChange={(e) => updateField("assigneeId", e.target.value)} disabled={!form.teamId || loadingMembers}>
+                  <option value="">Unassigned (Team Queue)</option>
+                  {loadingMembers ? (
+                    <option disabled>Loading team members...</option>
+                  ) : teamMembers.length === 0 && form.teamId ? (
+                    <option disabled>No team members available</option>
+                  ) : (
+                    teamMembers.map((member) => (
+                      <option key={member.id} value={member.id}>
+                        {member.full_name || member.email} {member.is_lead ? "(Manager)" : ""}
+                      </option>
+                    ))
+                  )}
+                </Select>
+              </>
+            ) : (
+              <div className="md:col-span-2 px-4 py-3 rounded-xl bg-[var(--bg-base)] border border-[var(--border-default)] text-sm text-[var(--fg-secondary)] flex items-center gap-3">
+                <Icon name="info" size={16} className="text-[var(--fg-muted)] flex-shrink-0" />
+                Assignments are managed by support agents after submission.
+              </div>
+            )}
+          </div>
+
+          {isAgent && form.teamId && !form.assigneeId && (
+            <Banner tone="info">Ticket will be added to the team queue. Any team member can pick it up.</Banner>
           )}
-        </div>
+        </section>
 
-        {isAgent && form.teamId && !form.assigneeId && (
-          <div className={cn("flex items-center gap-3 px-4 py-3 rounded-lg", "bg-blue-500/10", "border border-blue-500/20")}>
-            <Icon name="info" size={16} className="text-blue-400 flex-shrink-0" />
-            <p className="text-sm text-blue-400">Ticket will be added to the team queue. Any team member can pick it up.</p>
-          </div>
-        )}
-
-        {error && (
-          <div className={cn("flex items-center gap-3 p-4 rounded-lg", "bg-red-500/10", "border border-red-500/20")}>
-            <Icon name="alert" size={16} className="text-red-400 flex-shrink-0" />
-            <p className="text-sm font-medium text-red-400">{error}</p>
-          </div>
-        )}
+        {error && <Banner tone="error">{error}</Banner>}
       </form>
     );
   }
@@ -848,25 +892,29 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
     if (!selectedTemplate) return null;
     const schema = selectedTemplate.fields_schema || [];
     const stdConfig = selectedTemplate.standard_field_config || {};
+    const hasStdDetails = isStdFieldVisible("subject") || isStdFieldVisible("description");
+    const hasClassification = isStdFieldVisible("priority") || isStdFieldVisible("type") || isStdFieldVisible("channel");
+    const hasRouting = isStdFieldVisible("organization") || (isAgent && (isStdFieldVisible("team") || isStdFieldVisible("assignee")));
 
     return (
       <form id="ticket-create-form" onSubmit={onSubmit} className="space-y-6">
         {/* Template header */}
-        <div className={cn("flex items-center gap-3 px-4 py-3 rounded-lg", "bg-[var(--accent)]/5", "border border-[var(--accent)]/20")}>
-          <div className={cn("w-10 h-10 rounded-lg flex items-center justify-center", "bg-[var(--accent)]/10 text-[var(--accent)]")}>
+        <div className="flex items-center gap-3.5 px-4 py-3.5 rounded-2xl bg-[var(--accent)]/5 border border-[var(--accent)]/20">
+          <div className="h-11 w-11 rounded-xl flex items-center justify-center bg-[var(--accent)]/10 text-[var(--accent)] shrink-0">
             <Icon name={selectedTemplate.icon || "fileText"} size={20} />
           </div>
-          <div>
-            <h3 className="text-sm font-semibold text-[var(--fg-primary)]">{selectedTemplate.name}</h3>
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold text-[var(--fg-primary)] truncate tracking-tight">{selectedTemplate.name}</h3>
             {selectedTemplate.description && (
-              <p className="text-xs text-[var(--fg-muted)]">{selectedTemplate.description}</p>
+              <p className="text-xs text-[var(--fg-muted)] leading-snug mt-0.5">{selectedTemplate.description}</p>
             )}
           </div>
         </div>
 
         {/* Standard ticket fields (only visible ones) */}
-        {(isStdFieldVisible("subject") || isStdFieldVisible("description")) && (
-          <div className="space-y-4">
+        {hasStdDetails && (
+          <section className="space-y-3.5">
+            <SectionHeading icon="pencil" tone="accent" title="Request details" />
             {isStdFieldVisible("subject") && (
               <Input
                 label="Subject"
@@ -885,95 +933,97 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
                 placeholder="Additional context"
               />
             )}
-          </div>
+            {/* Create on behalf — agents/admins only */}
+            {renderOnBehalfSection()}
+          </section>
         )}
 
-        {/* Create on behalf — agents/admins only */}
-        {renderOnBehalfSection()}
+        {/* If standard details are hidden, the on-behalf picker still belongs near the top */}
+        {!hasStdDetails && renderOnBehalfSection()}
 
         {/* Standard field row: priority, type, channel */}
-        {(isStdFieldVisible("priority") || isStdFieldVisible("type") || isStdFieldVisible("channel")) && (
-          <div className="grid gap-4 md:grid-cols-3">
-            {isStdFieldVisible("priority") && (
-              <Select label="Priority" value={form.priorityKey} onChange={(e) => updateField("priorityKey", e.target.value)}>
-                {priorities.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
-              </Select>
-            )}
-            {isStdFieldVisible("type") && (
-              <Select label="Type" value={form.typeKey} onChange={(e) => updateField("typeKey", e.target.value)}>
-                {types.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
-              </Select>
-            )}
-            {isStdFieldVisible("channel") && (
-              <Select label="Channel" value={form.channelKey} onChange={(e) => updateField("channelKey", e.target.value)}>
-                {channels.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
-              </Select>
-            )}
-          </div>
+        {hasClassification && (
+          <section className="space-y-3.5">
+            <SectionHeading icon="tag" tone="violet" title="Classification" />
+            <div className="grid gap-4 md:grid-cols-3">
+              {isStdFieldVisible("priority") && (
+                <Select label="Priority" value={form.priorityKey} onChange={(e) => updateField("priorityKey", e.target.value)}>
+                  {priorities.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+                </Select>
+              )}
+              {isStdFieldVisible("type") && (
+                <Select label="Type" value={form.typeKey} onChange={(e) => updateField("typeKey", e.target.value)}>
+                  {types.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+                </Select>
+              )}
+              {isStdFieldVisible("channel") && (
+                <Select label="Channel" value={form.channelKey} onChange={(e) => updateField("channelKey", e.target.value)}>
+                  {channels.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+                </Select>
+              )}
+            </div>
+          </section>
         )}
 
         {/* Organization / Team / Assignee (if visible) */}
-        {(isStdFieldVisible("organization") || (isAgent && (isStdFieldVisible("team") || isStdFieldVisible("assignee")))) && (
-          <div className="grid gap-4 md:grid-cols-3">
-            {isStdFieldVisible("organization") && (
-              <Select label="Organization" value={form.organizationId} onChange={(e) => updateField("organizationId", e.target.value)}>
-                <option value="">None</option>
-                {organizations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </Select>
-            )}
-            {isAgent && isStdFieldVisible("team") && (
-              <Select label="Team" value={form.teamId} onChange={(e) => updateField("teamId", e.target.value)}>
-                <option value="">Select a team</option>
-                {teams.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </Select>
-            )}
-            {isAgent && isStdFieldVisible("assignee") && (
-              <Select label="Assignee" value={form.assigneeId} onChange={(e) => updateField("assigneeId", e.target.value)} disabled={!form.teamId || loadingMembers}>
-                <option value="">Unassigned (Team Queue)</option>
-                {loadingMembers ? (
-                  <option disabled>Loading team members...</option>
-                ) : teamMembers.length === 0 && form.teamId ? (
-                  <option disabled>No team members available</option>
-                ) : (
-                  teamMembers.map((member) => (
-                    <option key={member.id} value={member.id}>
-                      {member.full_name || member.email} {member.is_lead ? "(Manager)" : ""}
-                    </option>
-                  ))
-                )}
-              </Select>
-            )}
-          </div>
-        )}
+        {hasRouting && (
+          <section className="space-y-3.5">
+            <SectionHeading icon="teams" tone="blue" title="Routing" />
+            <div className="grid gap-4 md:grid-cols-3">
+              {isStdFieldVisible("organization") && (
+                <Select label="Organization" value={form.organizationId} onChange={(e) => updateField("organizationId", e.target.value)}>
+                  <option value="">None</option>
+                  {organizations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </Select>
+              )}
+              {isAgent && isStdFieldVisible("team") && (
+                <Select label="Team" value={form.teamId} onChange={(e) => updateField("teamId", e.target.value)}>
+                  <option value="">Select a team</option>
+                  {teams.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </Select>
+              )}
+              {isAgent && isStdFieldVisible("assignee") && (
+                <Select label="Assignee" value={form.assigneeId} onChange={(e) => updateField("assigneeId", e.target.value)} disabled={!form.teamId || loadingMembers}>
+                  <option value="">Unassigned (Team Queue)</option>
+                  {loadingMembers ? (
+                    <option disabled>Loading team members...</option>
+                  ) : teamMembers.length === 0 && form.teamId ? (
+                    <option disabled>No team members available</option>
+                  ) : (
+                    teamMembers.map((member) => (
+                      <option key={member.id} value={member.id}>
+                        {member.full_name || member.email} {member.is_lead ? "(Manager)" : ""}
+                      </option>
+                    ))
+                  )}
+                </Select>
+              )}
+            </div>
 
-        {/* Info banner when team selected but no assignee */}
-        {isAgent && form.teamId && !form.assigneeId && isStdFieldVisible("assignee") && (
-          <div className={cn("flex items-center gap-3 px-4 py-3 rounded-lg", "bg-blue-500/10", "border border-blue-500/20")}>
-            <Icon name="info" size={16} className="text-blue-400 flex-shrink-0" />
-            <p className="text-sm text-blue-400">Ticket will be added to the team queue. Any team member can pick it up.</p>
-          </div>
-        )}
-
-        {/* Divider before template fields */}
-        {schema.length > 0 && (
-          <div className="border-t border-[var(--border-default)]" />
+            {/* Info banner when team selected but no assignee */}
+            {isAgent && form.teamId && !form.assigneeId && isStdFieldVisible("assignee") && (
+              <Banner tone="info">Ticket will be added to the team queue. Any team member can pick it up.</Banner>
+            )}
+          </section>
         )}
 
         {/* Dynamic template fields */}
-        <TemplateRenderer
-          schema={schema}
-          values={templateValues}
-          onChange={handleTemplateValueChange}
-          errors={templateErrors}
-          users={users}
-        />
-
-        {error && (
-          <div className={cn("flex items-center gap-3 p-4 rounded-lg", "bg-red-500/10", "border border-red-500/20")}>
-            <Icon name="alert" size={16} className="text-red-400 flex-shrink-0" />
-            <p className="text-sm font-medium text-red-400">{error}</p>
-          </div>
+        {schema.length > 0 && (
+          <section className="space-y-3.5 pt-2 border-t border-[var(--border-default)]">
+            <div className="pt-4">
+              <SectionHeading icon="clipboard" tone="indigo" title="Template fields" hint="Specific to this request type." />
+            </div>
+            <TemplateRenderer
+              schema={schema}
+              values={templateValues}
+              onChange={handleTemplateValueChange}
+              errors={templateErrors}
+              users={users}
+            />
+          </section>
         )}
+
+        {error && <Banner tone="error">{error}</Banner>}
       </form>
     );
   }
@@ -1043,8 +1093,7 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
         ) : (
           <>
             {mode !== null && (
-              <Button type="button" variant="ghost" onClick={goBack}>
-                <Icon name="arrowLeft" size={16} />
+              <Button type="button" variant="ghost" onClick={goBack} icon={<Icon name="arrowLeft" size={16} />}>
                 Back
               </Button>
             )}

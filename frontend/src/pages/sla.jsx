@@ -1,27 +1,44 @@
 /**
- * SLA Management Page
- * Supports both Team SLA (resolution) and Approval SLA (approval stage) policies
- * - Card-based policy type selector (like ticket creation)
- * - Stage-based vs Hierarchy-based approval SLA modes
- * - Org hierarchy level matching with "X and below" option
+ * SLA Management Page — Vodafone Service Desk
+ *
+ * Premium policy-and-compliance experience:
+ *  • Branded PageHeader with refresh + breach-check + create actions
+ *  • Compliance KPI rail (response / resolve / approval / tracked) with share bars
+ *  • Underline Tabs for Policies / Team Tracking / Approval SLA / Analytics
+ *  • Policy cards in a clean grid with priority-target rows and clear status
+ *  • Recharts donut for overall compliance (isAnimationActive={false})
+ *  • Skeleton loading, EmptyState everywhere, premium grouped-section modals
+ *
+ * Supports both Team SLA (resolution) and Approval SLA (approval stage) policies.
+ * Stage-based vs Hierarchy-based approval SLA modes. Org hierarchy level matching
+ * with "X and below" option. All state, effects, handlers, API calls and features
+ * are preserved exactly — this is a visual / layout redesign only.
  */
 
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
+import {
+  PieChart,
+  Pie,
+  Cell,
+  ResponsiveContainer,
+  Tooltip as RTooltip,
+} from "recharts";
 import { slaApi } from "../services/api";
 import Button from "../components/ui/Button";
 import Badge from "../components/ui/Badge";
 import Icon from "../components/ui/Icon";
-import Card, { StatCard } from "../components/ui/Card";
+import PageHeader from "../components/ui/PageHeader";
 import Modal from "../components/ui/Modal";
 import Input, { Textarea } from "../components/ui/Input";
+import Tabs from "../components/ui/Tabs";
+import EmptyState from "../components/ui/EmptyState";
+import Skeleton, { SkeletonKpis } from "../components/ui/Skeleton";
+import { ChartTooltip } from "../components/ui/chart";
 import useConfirm from "../components/ui/useConfirm";
 import { useAuth } from "../contexts/auth";
 import { useMeta } from "../contexts/meta";
 import { useToast } from "../contexts/toast";
-
-const policyTints = ["blue", "cyan", "teal", "indigo", "violet", "emerald"];
-const trackingTints = ["indigo", "violet", "blue", "cyan", "teal", "emerald"];
 
 const APPROVER_TYPES = [
   { value: "", label: "Any Type" },
@@ -50,6 +67,16 @@ const ORG_LEVELS = [
   { value: 7, label: "Level 7 — Staff" },
   { value: 8, label: "Level 8 — Junior / Entry Level" },
 ];
+
+// Time-remaining tone → static utility classes (no dynamic Tailwind)
+const TONE_TEXT = {
+  blue: "text-blue-500",
+  emerald: "text-emerald-500",
+  rose: "text-rose-500",
+  amber: "text-amber-500",
+  violet: "text-violet-500",
+  slate: "text-[var(--fg-muted)]",
+};
 
 function cn(...parts) {
   return parts.filter(Boolean).join(" ");
@@ -413,288 +440,298 @@ export default function SlaManagement() {
     return labels[level] || `L${level}`;
   }
 
+  // ─── Tabs config (with live counts) ────────────────────────────
+  const tabs = [
+    { value: "policies", label: "Policies", icon: "settings", count: policies.length },
+    { value: "tracking", label: "Team Tracking", icon: "clock", count: ticketSlas.length || undefined },
+    { value: "approval-tracking", label: "Approval SLA", icon: "shield", count: approvalSlaList.length || undefined },
+    { value: "analytics", label: "Analytics", icon: "chart" },
+  ];
+
+  // ─── KPI rail (compliance overview) ────────────────────────────
+  const kpis = [
+    {
+      label: "Tracked Tickets",
+      value: stats?.total_tickets || 0,
+      icon: "ticket",
+      iconCls: "bg-blue-500/10 text-blue-500 border-blue-500/15",
+      bar: "bg-blue-500",
+      pct: 100,
+      hint: "Tickets under an SLA policy",
+    },
+    {
+      label: "Response Met",
+      value: `${stats?.response_compliance_pct || 0}%`,
+      icon: "clock",
+      iconCls: "bg-emerald-500/10 text-emerald-500 border-emerald-500/15",
+      bar: "bg-emerald-500",
+      pct: stats?.response_compliance_pct || 0,
+      hint: "First-response compliance",
+    },
+    {
+      label: "Resolve Met",
+      value: `${stats?.resolve_compliance_pct || 0}%`,
+      icon: "checkCircle",
+      iconCls: "bg-teal-500/10 text-teal-500 border-teal-500/15",
+      bar: "bg-teal-500",
+      pct: stats?.resolve_compliance_pct || 0,
+      hint: "Resolution compliance",
+    },
+    {
+      label: "Approval SLA",
+      value: approvalSlaStats ? `${approvalSlaStats.compliance_pct}%` : "N/A",
+      icon: "shield",
+      iconCls: "bg-violet-500/10 text-violet-500 border-violet-500/15",
+      bar: "bg-violet-500",
+      pct: approvalSlaStats?.compliance_pct || 0,
+      hint: "Approver turnaround compliance",
+    },
+  ];
+
   // ─── Render ────────────────────────────────────────────────────
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-5">
       {/* Header */}
-      <div className="rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] px-6 py-5">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-semibold text-[var(--fg-primary)] tracking-tight">SLA Management</h1>
-            <p className="text-sm text-[var(--fg-secondary)] mt-1">Service Level Agreement policies and tracking</p>
-          </div>
-          {isAdmin && view === "policies" && (
-            <Button onClick={openCreateModal} icon={<Icon name="plus" size={16} />}>
-              Create Policy
-            </Button>
-          )}
-        </div>
-      </div>
+      <PageHeader
+        icon="sla"
+        title="SLA Management"
+        subtitle="Service Level Agreement policies, compliance tracking and breach checks"
+        actions={
+          <>
+            <ControlButton title="Refresh" onClick={() => loadData()}>
+              <Icon name="refresh" size={16} className={cn(loading && "animate-spin")} />
+            </ControlButton>
+            {isAdmin && (
+              <Button variant="secondary" onClick={handleCheckBreaches} loading={checkingBreaches} icon={<Icon name="alertTriangle" size={16} />}>
+                Check Breaches
+              </Button>
+            )}
+            {isAdmin && view === "policies" && (
+              <Button onClick={openCreateModal} icon={<Icon name="plus" size={16} />}>
+                Create Policy
+              </Button>
+            )}
+          </>
+        }
+      />
 
-      {/* Stats Cards */}
-      {stats && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatCard
-            label="Total Tracked"
-            value={stats.total_tickets || 0}
-            color="blue"
-            icon={<Icon name="ticket" size={18} />}
-          />
-          <StatCard
-            label="Response Met"
-            value={`${stats.response_compliance_pct || 0}%`}
-            color="emerald"
-            icon={<Icon name="clock" size={18} />}
-          />
-          <StatCard
-            label="Resolve Met"
-            value={`${stats.resolve_compliance_pct || 0}%`}
-            color="teal"
-            icon={<Icon name="check" size={18} />}
-          />
-          <StatCard
-            label="Approval SLA"
-            value={approvalSlaStats ? `${approvalSlaStats.compliance_pct}%` : "N/A"}
-            color="violet"
-            icon={<Icon name="shield" size={18} />}
-          />
-        </div>
-      )}
-
-      {/* Main Tabs */}
-      <div className="flex items-center justify-between">
-        <div className={cn(
-          "flex gap-1 p-1 rounded-lg",
-          "bg-[var(--bg-elevated)] border border-[var(--border-default)]"
-        )}>
-          {[
-            { key: "policies", label: "Policies", icon: "settings" },
-            { key: "tracking", label: "Tracking", icon: "clock" },
-            { key: "approval-tracking", label: "Approval SLA", icon: "shield" },
-            { key: "analytics", label: "Analytics", icon: "chart" },
-          ].map((tab) => (
-            <button key={tab.key} onClick={() => setView(tab.key)}
+      {/* KPI rail */}
+      {loading ? (
+        <SkeletonKpis count={4} />
+      ) : stats ? (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {kpis.map((kpi, i) => (
+            <div
+              key={kpi.label}
+              title={kpi.hint}
               className={cn(
-                "flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all",
-                view === tab.key
-                  ? "bg-[var(--accent)] text-white shadow-[0_0_12px_rgba(230,0,0,0.3)]"
-                  : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-base)]"
-              )}>
-              <Icon name={tab.icon} size={14} />
-              {tab.label}
-            </button>
+                "group relative overflow-hidden rounded-2xl p-5",
+                "bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]",
+                "transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--border-hover)] hover:shadow-[var(--shadow-card-hover)]",
+                "animate-kpi-rise"
+              )}
+              style={{ animationDelay: `${i * 70}ms` }}
+            >
+              <div className="flex items-start justify-between mb-4">
+                <span className="text-label">{kpi.label}</span>
+                <span className={cn("h-9 w-9 rounded-xl flex items-center justify-center border transition-transform duration-200 group-hover:scale-110", kpi.iconCls)}>
+                  <Icon name={kpi.icon} size={16} />
+                </span>
+              </div>
+              <p className="text-[32px] leading-none font-semibold tracking-tight text-[var(--fg-primary)] tabular-nums">
+                {kpi.value}
+              </p>
+              <div className="mt-4">
+                <div className="h-1.5 rounded-full bg-[var(--bg-surface)] overflow-hidden">
+                  <div className={cn("h-full rounded-full transition-all duration-700 ease-out", kpi.bar)} style={{ width: `${Math.max(kpi.pct, 0)}%` }} />
+                </div>
+                <p className="mt-2 text-[11px] text-[var(--fg-muted)]">{kpi.hint}</p>
+              </div>
+            </div>
           ))}
         </div>
-        {isAdmin && (
-          <Button variant="secondary" size="sm" onClick={handleCheckBreaches} loading={checkingBreaches}>
-            Check Breaches
-          </Button>
-        )}
-      </div>
+      ) : null}
+
+      {/* Main Tabs */}
+      <Tabs variant="underline" tabs={tabs} value={view} onChange={setView} />
 
       {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <div className="text-center">
-            <div className="inline-block animate-spin rounded-full h-10 w-10 border-4 border-[var(--border-default)] border-t-[var(--accent)] mb-3" />
-            <p className="text-sm text-[var(--fg-secondary)]">Loading SLA data...</p>
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <Skeleton className="h-56" rounded="rounded-2xl" />
+            <Skeleton className="h-56" rounded="rounded-2xl" />
           </div>
         </div>
       ) : view === "policies" ? (
         /* ═══ POLICIES VIEW ═══ */
-        <div className="space-y-6">
+        <div className="space-y-8">
           {/* ── Team Policies Section ── */}
-          <div>
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-9 h-9 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
-                <Icon name="users" size={18} className="text-blue-400" />
-              </div>
-              <div>
-                <h2 className="text-base font-semibold text-[var(--fg-primary)]">Team / Resolution SLA</h2>
-                <p className="text-xs text-[var(--fg-muted)]">How quickly teams must respond to and resolve tickets</p>
-              </div>
-              <Badge tone="blue" className="ml-auto">{teamPolicies.length}</Badge>
-            </div>
+          <section className="space-y-4 animate-fade-up">
+            <SectionTitle
+              icon="users"
+              tint="blue"
+              title="Team / Resolution SLA"
+              subtitle="How quickly teams must respond to and resolve tickets"
+              count={teamPolicies.length}
+              countTone="blue"
+            />
 
             {teamPolicies.length === 0 ? (
-              <div className={cn(
-                "text-center py-14 rounded-xl",
-                "bg-[var(--bg-elevated)] border border-[var(--border-default)]",
-                "shadow-[var(--shadow-card)]"
-              )}>
-                <Icon name="sla" size={28} className="text-[var(--fg-muted)] mx-auto mb-3" />
-                <p className="text-sm text-[var(--fg-secondary)] mb-3">No team SLA policies yet</p>
-                {isAdmin && (
-                  <Button size="sm" onClick={openCreateModal} icon={<Icon name="plus" size={14} />}>
-                    Create Policy
-                  </Button>
-                )}
-              </div>
+              <Panel>
+                <EmptyState
+                  icon="sla"
+                  title="No team SLA policies yet"
+                  description="Define response and resolution targets so tickets are tracked against a clear standard."
+                  action={isAdmin ? (
+                    <Button size="sm" onClick={openCreateModal} icon={<Icon name="plus" size={14} />}>Create Policy</Button>
+                  ) : undefined}
+                />
+              </Panel>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 {teamPolicies.map((policy, idx) => (
-                  <Card key={policy.id} tint={policyTints[idx % policyTints.length]} spotlight hover>
-                    <div className="flex items-start justify-between mb-5">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <h3 className="text-base font-semibold text-[var(--fg-primary)]">{policy.name}</h3>
-                          <Badge tone="blue">Team</Badge>
-                        </div>
-                        {policy.description && (
-                          <p className="text-xs text-[var(--fg-secondary)] mt-1.5 leading-relaxed">{policy.description}</p>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {policy.is_default === 1 && <Badge tone="brand">Default</Badge>}
-                        {isAdmin && (
-                          <div className="flex items-center gap-1">
-                            <button onClick={() => openEditModal(policy)}
-                              className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-base)] transition-all">
-                              <Icon name="pencil" size={14} />
-                            </button>
-                            <button onClick={() => handleDeletePolicy(policy)}
-                              className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-rose-400 hover:bg-rose-500/10 transition-all">
-                              <Icon name="trash" size={14} />
-                            </button>
+                  <article
+                    key={policy.id}
+                    className={cn(
+                      "rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] p-5",
+                      "transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--border-hover)] hover:shadow-[var(--shadow-card-hover)]",
+                      "animate-fade-up"
+                    )}
+                    style={{ animationDelay: `${idx * 60}ms` }}
+                  >
+                    <div className="flex items-start justify-between gap-3 mb-5">
+                      <div className="flex items-start gap-3 min-w-0">
+                        <span className="shrink-0 h-9 w-9 rounded-lg bg-blue-500/10 text-blue-500 border border-blue-500/15 flex items-center justify-center">
+                          <Icon name="users" size={16} />
+                        </span>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight truncate">{policy.name}</h3>
+                            <Badge tone="blue" size="sm">Team</Badge>
+                            {policy.is_default === 1 && <Badge tone="brand" size="sm">Default</Badge>}
                           </div>
-                        )}
+                          {policy.description && (
+                            <p className="text-xs text-[var(--fg-secondary)] mt-1 leading-relaxed line-clamp-2">{policy.description}</p>
+                          )}
+                        </div>
                       </div>
+                      {isAdmin && <RowActions onEdit={() => openEditModal(policy)} onDelete={() => handleDeletePolicy(policy)} />}
                     </div>
-                    <div className="grid grid-cols-2 gap-4 mb-4">
-                      <div className={cn("rounded-lg p-4", "bg-[var(--bg-base)] border border-[var(--border-default)]")}>
-                        <div className="flex items-center gap-2 mb-2">
-                          <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
-                            <Icon name="clock" size={16} className="text-blue-400" />
-                          </div>
-                          <p className="text-[11px] font-medium text-[var(--fg-muted)] uppercase tracking-wider">Response</p>
-                        </div>
-                        <p className="text-2xl font-bold text-[var(--fg-primary)]">{formatMinutes(policy.response_minutes)}</p>
-                      </div>
-                      <div className={cn("rounded-lg p-4", "bg-[var(--bg-base)] border border-[var(--border-default)]")}>
-                        <div className="flex items-center gap-2 mb-2">
-                          <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center">
-                            <Icon name="check" size={16} className="text-emerald-400" />
-                          </div>
-                          <p className="text-[11px] font-medium text-[var(--fg-muted)] uppercase tracking-wider">Resolution</p>
-                        </div>
-                        <p className="text-2xl font-bold text-[var(--fg-primary)]">{formatMinutes(policy.resolve_minutes)}</p>
-                      </div>
+
+                    <div className="grid grid-cols-2 gap-3 mb-4">
+                      <TargetTile icon="clock" tint="blue" label="Response" value={formatMinutes(policy.response_minutes)} />
+                      <TargetTile icon="checkCircle" tint="emerald" label="Resolution" value={formatMinutes(policy.resolve_minutes)} />
                     </div>
+
                     <div className="pt-4 border-t border-[var(--border-default)] flex flex-wrap gap-2">
-                      {policy.priority_label && <Badge tone="amber">{policy.priority_label}</Badge>}
-                      {policy.team_name && <Badge tone="violet">{policy.team_name}</Badge>}
-                      {policy.use_business_hours === 1 && <Badge tone="blue">Business Hours</Badge>}
-                      {policy.business_hours_name && <Badge tone="slate">{policy.business_hours_name}</Badge>}
+                      {policy.priority_label && <Badge tone="amber" size="sm">{policy.priority_label}</Badge>}
+                      {policy.team_name && <Badge tone="violet" size="sm">{policy.team_name}</Badge>}
+                      {policy.use_business_hours === 1 && <Badge tone="blue" size="sm" dot>Business Hours</Badge>}
+                      {policy.business_hours_name && <Badge tone="slate" size="sm">{policy.business_hours_name}</Badge>}
+                      {!policy.priority_label && !policy.team_name && policy.use_business_hours !== 1 && !policy.business_hours_name && (
+                        <Badge tone="slate" size="sm">Applies to all tickets</Badge>
+                      )}
                     </div>
-                  </Card>
+                  </article>
                 ))}
               </div>
             )}
-          </div>
-
-          {/* Divider */}
-          <div className="border-t border-[var(--border-default)]" />
+          </section>
 
           {/* ── Approval Policies Section ── */}
-          <div>
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-9 h-9 rounded-lg bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
-                <Icon name="shield" size={18} className="text-violet-400" />
-              </div>
-              <div>
-                <h2 className="text-base font-semibold text-[var(--fg-primary)]">Approval SLA</h2>
-                <p className="text-xs text-[var(--fg-muted)]">How quickly approvers must act on approval requests</p>
-              </div>
-              <Badge tone="violet" className="ml-auto">{approvalPolicies.length}</Badge>
-            </div>
+          <section className="space-y-4 animate-fade-up" style={{ animationDelay: "120ms" }}>
+            <SectionTitle
+              icon="shield"
+              tint="violet"
+              title="Approval SLA"
+              subtitle="How quickly approvers must act on approval requests"
+              count={approvalPolicies.length}
+              countTone="violet"
+            />
 
             {approvalPolicies.length === 0 ? (
-              <div className={cn(
-                "text-center py-14 rounded-xl",
-                "bg-[var(--bg-elevated)] border border-[var(--border-default)]",
-                "shadow-[var(--shadow-card)]"
-              )}>
-                <Icon name="shield" size={28} className="text-[var(--fg-muted)] mx-auto mb-3" />
-                <p className="text-sm text-[var(--fg-secondary)] mb-3">No approval SLA policies yet</p>
-                {isAdmin && (
-                  <Button size="sm" onClick={openCreateModal} icon={<Icon name="plus" size={14} />}>
-                    Create Policy
-                  </Button>
-                )}
-              </div>
+              <Panel>
+                <EmptyState
+                  icon="shield"
+                  title="No approval SLA policies yet"
+                  description="Set time targets for each approval stage so requests don't stall waiting on sign-off."
+                  action={isAdmin ? (
+                    <Button size="sm" onClick={openCreateModal} icon={<Icon name="plus" size={14} />}>Create Policy</Button>
+                  ) : undefined}
+                />
+              </Panel>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 {approvalPolicies.map((policy, idx) => (
-                  <Card key={policy.id} tint={policyTints[(idx + 3) % policyTints.length]} spotlight hover>
-                    <div className="flex items-start justify-between mb-5">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <h3 className="text-base font-semibold text-[var(--fg-primary)]">{policy.name}</h3>
-                          <Badge tone="violet">Approval</Badge>
-                          <Badge tone={policy.approval_sla_mode === "hierarchy" ? "amber" : "cyan"}>
-                            {policy.approval_sla_mode === "hierarchy" ? "Hierarchy" : "Stage-based"}
-                          </Badge>
-                        </div>
-                        {policy.description && (
-                          <p className="text-xs text-[var(--fg-secondary)] mt-1.5 leading-relaxed">{policy.description}</p>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {policy.is_default === 1 && <Badge tone="brand">Default</Badge>}
-                        {isAdmin && (
-                          <div className="flex items-center gap-1">
-                            <button onClick={() => openEditModal(policy)}
-                              className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-base)] transition-all">
-                              <Icon name="pencil" size={14} />
-                            </button>
-                            <button onClick={() => handleDeletePolicy(policy)}
-                              className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-rose-400 hover:bg-rose-500/10 transition-all">
-                              <Icon name="trash" size={14} />
-                            </button>
+                  <article
+                    key={policy.id}
+                    className={cn(
+                      "rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] p-5",
+                      "transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--border-hover)] hover:shadow-[var(--shadow-card-hover)]",
+                      "animate-fade-up"
+                    )}
+                    style={{ animationDelay: `${idx * 60}ms` }}
+                  >
+                    <div className="flex items-start justify-between gap-3 mb-4">
+                      <div className="flex items-start gap-3 min-w-0">
+                        <span className="shrink-0 h-9 w-9 rounded-lg bg-violet-500/10 text-violet-500 border border-violet-500/15 flex items-center justify-center">
+                          <Icon name="shield" size={16} />
+                        </span>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight truncate">{policy.name}</h3>
+                            <Badge tone={policy.approval_sla_mode === "hierarchy" ? "amber" : "cyan"} size="sm">
+                              {policy.approval_sla_mode === "hierarchy" ? "Hierarchy" : "Stage-based"}
+                            </Badge>
+                            {policy.is_default === 1 && <Badge tone="brand" size="sm">Default</Badge>}
                           </div>
-                        )}
+                          {policy.description && (
+                            <p className="text-xs text-[var(--fg-secondary)] mt-1 leading-relaxed line-clamp-2">{policy.description}</p>
+                          )}
+                        </div>
                       </div>
+                      {isAdmin && <RowActions onEdit={() => openEditModal(policy)} onDelete={() => handleDeletePolicy(policy)} />}
                     </div>
+
                     {/* Approval policy stages */}
-                    <div className="space-y-3">
+                    <div className="space-y-2.5">
                       {(policy.approval_stages || []).map((stage, si) => (
-                        <div key={si} className={cn(
-                          "rounded-lg p-3",
-                          "bg-[var(--bg-base)] border border-[var(--border-default)]",
-                          !stage.is_active && "opacity-50"
-                        )}>
-                          <div className="flex items-center justify-between mb-2">
-                            <div className="flex items-center gap-2">
-                              <div className={cn(
-                                "w-6 h-6 rounded-md flex items-center justify-center text-[10px] font-bold",
-                                "bg-violet-500/15 text-violet-400 border border-violet-500/30"
-                              )}>
+                        <div
+                          key={si}
+                          className={cn(
+                            "rounded-xl p-3 bg-[var(--bg-base)] border border-[var(--border-default)]",
+                            !stage.is_active && "opacity-50"
+                          )}
+                        >
+                          <div className="flex items-center justify-between gap-2 mb-1.5">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="shrink-0 w-6 h-6 rounded-md flex items-center justify-center text-[10px] font-bold bg-violet-500/15 text-violet-500 border border-violet-500/25">
                                 {si + 1}
-                              </div>
-                              {/* Show different info depending on mode */}
+                              </span>
                               {policy.approval_sla_mode === "hierarchy" ? (
-                                <span className="text-xs font-medium text-[var(--fg-primary)]">
+                                <span className="text-xs font-medium text-[var(--fg-primary)] truncate">
                                   {stage.applies_to_org_level
                                     ? `${orgLevelShort(stage.applies_to_org_level)}${stage.applies_to_org_level_and_below ? " & below" : ""}`
                                     : "Any Org Level"}
                                 </span>
                               ) : (
-                                <span className="text-xs font-medium text-[var(--fg-primary)]">
+                                <span className="text-xs font-medium text-[var(--fg-primary)] truncate">
                                   {stage.applies_to_approval_level ? `Level ${stage.applies_to_approval_level}` : "Any Level"}
                                 </span>
                               )}
                               {stage.applies_to_approver_type && (
-                                <Badge tone="slate">{stage.applies_to_approver_type.replace(/_/g, " ")}</Badge>
+                                <Badge tone="slate" size="sm" className="capitalize">{stage.applies_to_approver_type.replace(/_/g, " ")}</Badge>
                               )}
                             </div>
-                            <span className="text-lg font-bold text-[var(--fg-primary)]">{formatMinutes(stage.target_minutes)}</span>
+                            <span className="shrink-0 text-base font-semibold text-[var(--fg-primary)] tabular-nums">{formatMinutes(stage.target_minutes)}</span>
                           </div>
-                          <div className="flex items-center gap-3 text-[11px] text-[var(--fg-muted)]">
-                            <span>Warning: {formatMinutes(stage.warning_minutes)}</span>
-                            <span className="text-[var(--border-default)]">|</span>
+                          <div className="flex items-center gap-2 flex-wrap text-[11px] text-[var(--fg-muted)] pl-8">
+                            <span>Warning {formatMinutes(stage.warning_minutes)}</span>
+                            <span className="text-[var(--border-strong)]">·</span>
                             <span>On breach: {ESCALATION_ACTIONS.find((a) => a.value === stage.escalation_action)?.label || stage.escalation_action}</span>
                             {stage.approval_rule_name && (
                               <>
-                                <span className="text-[var(--border-default)]">|</span>
+                                <span className="text-[var(--border-strong)]">·</span>
                                 <span>Rule: {stage.approval_rule_name}</span>
                               </>
                             )}
@@ -702,128 +739,95 @@ export default function SlaManagement() {
                         </div>
                       ))}
                     </div>
+
                     <div className="pt-4 mt-3 border-t border-[var(--border-default)] flex flex-wrap gap-2">
-                      {policy.priority_label && <Badge tone="amber">{policy.priority_label}</Badge>}
-                      {policy.team_name && <Badge tone="violet">{policy.team_name}</Badge>}
-                      <Badge tone="violet">
+                      {policy.priority_label && <Badge tone="amber" size="sm">{policy.priority_label}</Badge>}
+                      {policy.team_name && <Badge tone="violet" size="sm">{policy.team_name}</Badge>}
+                      <Badge tone="violet" size="sm">
                         {(policy.approval_stages || []).length} stage{(policy.approval_stages || []).length !== 1 ? "s" : ""}
                       </Badge>
                     </div>
-                  </Card>
+                  </article>
                 ))}
               </div>
             )}
-          </div>
+          </section>
         </div>
       ) : view === "tracking" ? (
         /* ═══ TEAM SLA TRACKING ═══ */
         <div className="space-y-5">
-          <div className={cn(
-            "flex gap-1 p-1 rounded-lg w-fit",
-            "bg-[var(--bg-elevated)] border border-[var(--border-default)]"
-          )}>
-            {[
-              { key: "all", label: "All Tickets" },
-              { key: "active", label: "Active" },
-              { key: "at_risk", label: "At Risk" },
-              { key: "breached", label: "Breached" },
-              { key: "paused", label: "Paused" },
-            ].map((f) => (
-              <button key={f.key} onClick={() => setSlaFilter(f.key)}
-                className={cn(
-                  "px-4 py-2 text-sm font-medium rounded-md transition-all",
-                  slaFilter === f.key
-                    ? "bg-[var(--accent)] text-white shadow-[0_0_12px_rgba(230,0,0,0.3)]"
-                    : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-base)]"
-                )}>
-                {f.label}
-              </button>
-            ))}
-          </div>
+          <Tabs
+            variant="pills"
+            value={slaFilter}
+            onChange={setSlaFilter}
+            tabs={[
+              { value: "all", label: "All Tickets" },
+              { value: "active", label: "Active" },
+              { value: "at_risk", label: "At Risk" },
+              { value: "breached", label: "Breached" },
+              { value: "paused", label: "Paused" },
+            ]}
+          />
 
           {ticketSlas.length === 0 ? (
-            <div className={cn(
-              "text-center py-20 rounded-xl",
-              "bg-[var(--bg-elevated)] border border-[var(--border-default)]",
-              "shadow-[var(--shadow-card)]"
-            )}>
-              <div className={cn(
-                "inline-flex items-center justify-center w-16 h-16 rounded-xl mb-4",
-                "bg-[var(--bg-base)] border border-[var(--border-default)]"
-              )}>
-                <Icon name="sla" size={32} className="text-[var(--fg-muted)]" />
-              </div>
-              <p className="text-sm font-semibold text-[var(--fg-primary)] mb-1">No SLA tracked tickets</p>
-              <p className="text-sm text-[var(--fg-secondary)]">
-                {slaFilter === "breached" ? "No breached SLAs - great job!" : "All tickets are meeting their SLA targets"}
-              </p>
-            </div>
+            <Panel>
+              <EmptyState
+                icon="sla"
+                title="No SLA tracked tickets"
+                description={slaFilter === "breached" ? "No breached SLAs — great job keeping things on track." : "All tickets are meeting their SLA targets."}
+                tone={slaFilter === "breached" ? "emerald" : "default"}
+              />
+            </Panel>
           ) : (
-            <div className="space-y-3">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {ticketSlas.map((sla, idx) => {
                 const responseTime = getTimeRemaining(sla.response_due_at, !!sla.paused_at);
                 const resolveTime = getTimeRemaining(sla.resolve_due_at, !!sla.paused_at);
                 return (
-                  <Card key={sla.ticket_id} tint={trackingTints[idx % trackingTints.length]} spotlight hover className="cursor-pointer"
-                    onClick={() => navigate(`/tickets/${sla.ticket_id}`)}>
-                    <div className="flex items-start justify-between mb-4">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2.5 mb-2">
-                          <span className={cn("text-xs font-mono font-medium px-2 py-1 rounded", "bg-[var(--bg-base)] text-[var(--fg-muted)]")}>
+                  <article
+                    key={sla.ticket_id}
+                    onClick={() => navigate(`/tickets/${sla.ticket_id}`)}
+                    className={cn(
+                      "group cursor-pointer rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] p-5",
+                      "transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--border-hover)] hover:shadow-[var(--shadow-card-hover)]",
+                      "animate-fade-up"
+                    )}
+                    style={{ animationDelay: `${idx * 40}ms` }}
+                  >
+                    <div className="flex items-start justify-between gap-3 mb-4">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                          <span className="text-[11px] font-mono font-medium px-1.5 py-0.5 rounded-md bg-[var(--bg-surface)] text-[var(--accent)]">
                             {sla.ticket_number}
                           </span>
-                          <Badge tone="slate">{sla.status_label}</Badge>
-                          {sla.paused_at && <Badge tone="amber">Paused</Badge>}
+                          <Badge tone="slate" size="sm">{sla.status_label}</Badge>
+                          {sla.paused_at && <Badge tone="amber" size="sm" dot>Paused</Badge>}
                         </div>
-                        <h3 className="text-sm font-semibold text-[var(--fg-primary)] mb-1">{sla.subject}</h3>
+                        <h3 className="text-sm font-semibold text-[var(--fg-primary)] truncate group-hover:text-[var(--accent)] transition-colors">{sla.subject}</h3>
                         {sla.assignee_name && (
-                          <p className="text-xs text-[var(--fg-muted)] flex items-center gap-1.5">
+                          <p className="text-xs text-[var(--fg-muted)] flex items-center gap-1.5 mt-1">
                             <Icon name="user" size={12} />
                             Assigned to {sla.assignee_name}
                           </p>
                         )}
                       </div>
-                      <Badge tone="blue">{sla.policy_name}</Badge>
+                      {sla.policy_name && <Badge tone="blue" size="sm">{sla.policy_name}</Badge>}
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className={cn("rounded-lg p-4", "bg-[var(--bg-base)] border border-[var(--border-default)]")}>
-                        <div className="flex items-center gap-2 mb-2">
-                          <Icon name="clock" size={14} className="text-[var(--fg-muted)]" />
-                          <p className="text-[11px] font-medium text-[var(--fg-muted)] uppercase tracking-wider">Response SLA</p>
-                        </div>
-                        {sla.response_met_at ? (
-                          <div className="flex items-center gap-1.5">
-                            <Icon name="check" size={14} className="text-emerald-400" />
-                            <span className="text-xs text-emerald-400 font-semibold">Met</span>
-                          </div>
-                        ) : sla.response_breached ? (
-                          <Badge tone="rose">Breached</Badge>
-                        ) : responseTime ? (
-                          <Badge tone={responseTime.tone}>{responseTime.text}</Badge>
-                        ) : (
-                          <span className="text-xs text-[var(--fg-muted)]">N/A</span>
-                        )}
-                      </div>
-                      <div className={cn("rounded-lg p-4", "bg-[var(--bg-base)] border border-[var(--border-default)]")}>
-                        <div className="flex items-center gap-2 mb-2">
-                          <Icon name="check" size={14} className="text-[var(--fg-muted)]" />
-                          <p className="text-[11px] font-medium text-[var(--fg-muted)] uppercase tracking-wider">Resolution SLA</p>
-                        </div>
-                        {sla.resolve_met_at ? (
-                          <div className="flex items-center gap-1.5">
-                            <Icon name="check" size={14} className="text-emerald-400" />
-                            <span className="text-xs text-emerald-400 font-semibold">Met</span>
-                          </div>
-                        ) : sla.resolve_breached ? (
-                          <Badge tone="rose">Breached</Badge>
-                        ) : resolveTime ? (
-                          <Badge tone={resolveTime.tone}>{resolveTime.text}</Badge>
-                        ) : (
-                          <span className="text-xs text-[var(--fg-muted)]">N/A</span>
-                        )}
-                      </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <SlaStatusTile
+                        label="Response SLA"
+                        met={!!sla.response_met_at}
+                        breached={!!sla.response_breached}
+                        time={responseTime}
+                      />
+                      <SlaStatusTile
+                        label="Resolution SLA"
+                        met={!!sla.resolve_met_at}
+                        breached={!!sla.resolve_breached}
+                        time={resolveTime}
+                      />
                     </div>
-                  </Card>
+                  </article>
                 );
               })}
             </div>
@@ -832,28 +836,18 @@ export default function SlaManagement() {
       ) : view === "approval-tracking" ? (
         /* ═══ APPROVAL SLA TRACKING ═══ */
         <div className="space-y-5">
-          <div className={cn(
-            "flex gap-1 p-1 rounded-lg w-fit",
-            "bg-[var(--bg-elevated)] border border-[var(--border-default)]"
-          )}>
-            {[
-              { key: "all", label: "All" },
-              { key: "active", label: "Active" },
-              { key: "at_risk", label: "At Risk" },
-              { key: "breached", label: "Breached" },
-              { key: "met", label: "Met" },
-            ].map((f) => (
-              <button key={f.key} onClick={() => setApprovalSlaFilter(f.key)}
-                className={cn(
-                  "px-4 py-2 text-sm font-medium rounded-md transition-all",
-                  approvalSlaFilter === f.key
-                    ? "bg-violet-500 text-white shadow-[0_0_12px_rgba(139,92,246,0.3)]"
-                    : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-base)]"
-                )}>
-                {f.label}
-              </button>
-            ))}
-          </div>
+          <Tabs
+            variant="pills"
+            value={approvalSlaFilter}
+            onChange={setApprovalSlaFilter}
+            tabs={[
+              { value: "all", label: "All" },
+              { value: "active", label: "Active" },
+              { value: "at_risk", label: "At Risk" },
+              { value: "breached", label: "Breached" },
+              { value: "met", label: "Met" },
+            ]}
+          />
 
           {/* Approval SLA stats summary */}
           {approvalSlaStats && approvalSlaStats.total > 0 && (
@@ -864,96 +858,83 @@ export default function SlaManagement() {
                 { label: "Breached", value: approvalSlaStats.breached, tone: "rose" },
                 { label: "Pending", value: approvalSlaStats.pending, tone: "amber" },
                 { label: "Escalated", value: approvalSlaStats.escalated, tone: "violet" },
-              ].map((s) => {
-                const toneText = {
-                  blue: "text-blue-400",
-                  emerald: "text-emerald-400",
-                  rose: "text-rose-400",
-                  amber: "text-amber-400",
-                  violet: "text-violet-400",
-                }[s.tone] || "text-[var(--fg-primary)]";
-                return (
-                  <div key={s.label} className={cn(
-                    "rounded-lg p-3 text-center",
-                    "bg-[var(--bg-elevated)] border border-[var(--border-default)]"
-                  )}>
-                    <p className={cn("text-2xl font-bold", toneText)}>{s.value}</p>
-                    <p className="text-[11px] text-[var(--fg-muted)] mt-1">{s.label}</p>
-                  </div>
-                );
-              })}
+              ].map((s) => (
+                <div key={s.label} className="rounded-2xl p-4 bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]">
+                  <p className={cn("text-2xl font-semibold tracking-tight tabular-nums", TONE_TEXT[s.tone] || "text-[var(--fg-primary)]")}>{s.value}</p>
+                  <p className="text-[11px] text-[var(--fg-muted)] mt-1">{s.label}</p>
+                </div>
+              ))}
             </div>
           )}
 
           {approvalSlaList.length === 0 ? (
-            <div className={cn(
-              "text-center py-20 rounded-xl",
-              "bg-[var(--bg-elevated)] border border-[var(--border-default)]"
-            )}>
-              <div className={cn(
-                "inline-flex items-center justify-center w-16 h-16 rounded-xl mb-4",
-                "bg-[var(--bg-base)] border border-[var(--border-default)]"
-              )}>
-                <Icon name="shield" size={32} className="text-[var(--fg-muted)]" />
-              </div>
-              <p className="text-sm font-semibold text-[var(--fg-primary)] mb-1">No approval SLAs tracked</p>
-              <p className="text-sm text-[var(--fg-secondary)]">
-                Approval SLAs will appear here when tickets with approval policies are created
-              </p>
-            </div>
+            <Panel>
+              <EmptyState
+                icon="shield"
+                title="No approval SLAs tracked"
+                description="Approval SLAs appear here when tickets with approval policies move through their stages."
+              />
+            </Panel>
           ) : (
-            <div className="space-y-3">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {approvalSlaList.map((sla, idx) => {
                 const timeLeft = getTimeRemaining(sla.due_at, !!sla.paused_at);
                 const statusLabel = sla.met ? "Met" : sla.breached ? "Breached" : sla.paused_at ? "Paused" : "Active";
                 const statusColor = sla.met ? "emerald" : sla.breached ? "rose" : sla.paused_at ? "slate" : "blue";
 
                 return (
-                  <Card key={sla.id} tint={trackingTints[idx % trackingTints.length]} spotlight hover
-                    className="cursor-pointer" onClick={() => navigate(`/tickets/${sla.ticket_id}`)}>
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className={cn("text-xs font-mono font-medium px-2 py-1 rounded", "bg-[var(--bg-base)] text-[var(--fg-muted)]")}>
+                  <article
+                    key={sla.id}
+                    onClick={() => navigate(`/tickets/${sla.ticket_id}`)}
+                    className={cn(
+                      "group cursor-pointer rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] p-5",
+                      "transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--border-hover)] hover:shadow-[var(--shadow-card-hover)]",
+                      "animate-fade-up"
+                    )}
+                    style={{ animationDelay: `${idx * 40}ms` }}
+                  >
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                          <span className="text-[11px] font-mono font-medium px-1.5 py-0.5 rounded-md bg-[var(--bg-surface)] text-[var(--accent)]">
                             {sla.ticket_number}
                           </span>
-                          <Badge tone="violet">Level {sla.approval_level}</Badge>
-                          <Badge tone={statusColor}>{statusLabel}</Badge>
-                          {sla.escalated ? <Badge tone="rose">Escalated</Badge> : null}
+                          <Badge tone="violet" size="sm">Level {sla.approval_level}</Badge>
+                          <Badge tone={statusColor} size="sm" dot={statusColor !== "slate"}>{statusLabel}</Badge>
+                          {sla.escalated ? <Badge tone="rose" size="sm">Escalated</Badge> : null}
                         </div>
-                        <h3 className="text-sm font-semibold text-[var(--fg-primary)] mb-1">{sla.subject}</h3>
-                        <p className="text-xs text-[var(--fg-muted)] flex items-center gap-1.5">
+                        <h3 className="text-sm font-semibold text-[var(--fg-primary)] truncate group-hover:text-[var(--accent)] transition-colors">{sla.subject}</h3>
+                        <p className="text-xs text-[var(--fg-muted)] flex items-center gap-1.5 mt-1">
                           <Icon name="user" size={12} />
                           Approver: {sla.approver_name}
                         </p>
                       </div>
-                      <div className="text-right">
-                        <p className="text-[11px] text-[var(--fg-muted)] mb-1">Target</p>
-                        <p className="text-lg font-bold text-[var(--fg-primary)]">{formatMinutes(sla.target_minutes)}</p>
+                      <div className="text-right shrink-0">
+                        <p className="text-label">Target</p>
+                        <p className="text-lg font-semibold text-[var(--fg-primary)] tabular-nums mt-0.5">{formatMinutes(sla.target_minutes)}</p>
                       </div>
                     </div>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3 text-xs text-[var(--fg-muted)]">
-                        {sla.policy_name && <span>{sla.policy_name}</span>}
+                    <div className="flex items-center justify-between gap-3 pt-3 border-t border-[var(--border-default)]">
+                      <div className="flex items-center gap-2 flex-wrap text-xs text-[var(--fg-muted)] min-w-0">
+                        {sla.policy_name && <span className="truncate">{sla.policy_name}</span>}
                         {sla.applies_to_approver_type && (
-                          <Badge tone="slate">{sla.applies_to_approver_type.replace(/_/g, " ")}</Badge>
+                          <Badge tone="slate" size="sm" className="capitalize">{sla.applies_to_approver_type.replace(/_/g, " ")}</Badge>
                         )}
-                        <span>{sla.approval_status}</span>
+                        <span className="capitalize">{sla.approval_status}</span>
                       </div>
-                      <div>
+                      <div className="shrink-0">
                         {sla.met ? (
-                          <div className="flex items-center gap-1.5">
-                            <Icon name="check" size={14} className="text-emerald-400" />
-                            <span className="text-xs text-emerald-400 font-semibold">Completed on time</span>
-                          </div>
+                          <span className="inline-flex items-center gap-1.5 text-xs text-emerald-500 font-semibold">
+                            <Icon name="checkCircle" size={14} /> On time
+                          </span>
                         ) : sla.breached ? (
-                          <Badge tone="rose">SLA Breached</Badge>
+                          <Badge tone="rose" size="sm">SLA Breached</Badge>
                         ) : timeLeft ? (
-                          <Badge tone={timeLeft.tone}>{timeLeft.text} remaining</Badge>
+                          <Badge tone={timeLeft.tone} size="sm">{timeLeft.text} left</Badge>
                         ) : null}
                       </div>
                     </div>
-                  </Card>
+                  </article>
                 );
               })}
             </div>
@@ -961,157 +942,109 @@ export default function SlaManagement() {
         </div>
       ) : (
         /* ═══ ANALYTICS VIEW ═══ */
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="space-y-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             {/* Response SLA */}
-            <Card tint="blue" spotlight hover={false}>
-              <div className="flex items-center gap-2.5 mb-5">
-                <div className="w-10 h-10 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
-                  <Icon name="clock" size={20} className="text-blue-400" />
+            <Panel>
+              <PanelHeader icon="clock" tint="blue" title="Response SLA" subtitle="First response compliance" />
+              <div className="p-5 space-y-4">
+                <div className="grid grid-cols-3 gap-3">
+                  <MetricTile value={stats?.response_met || 0} label="Met" tone="emerald" />
+                  <MetricTile value={stats?.response_breached || 0} label="Breached" tone="rose" />
+                  <MetricTile value={stats?.response_pending || 0} label="Pending" tone="amber" />
                 </div>
-                <div>
-                  <h3 className="text-sm font-semibold text-[var(--fg-primary)]">Response SLA</h3>
-                  <p className="text-xs text-[var(--fg-muted)]">First response compliance</p>
-                </div>
+                {stats?.avg_response_time_minutes && (
+                  <div className="pt-4 border-t border-[var(--border-default)] flex items-center justify-between">
+                    <p className="text-sm text-[var(--fg-secondary)]">Average response time</p>
+                    <p className="text-base font-semibold text-[var(--fg-primary)] tabular-nums">{formatMinutes(Math.round(stats.avg_response_time_minutes))}</p>
+                  </div>
+                )}
               </div>
-              <div className="grid grid-cols-3 gap-4">
-                <div className="text-center p-4 rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)]">
-                  <p className="text-3xl font-bold text-emerald-400">{stats?.response_met || 0}</p>
-                  <p className="text-xs text-[var(--fg-muted)] mt-1">Met</p>
-                </div>
-                <div className="text-center p-4 rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)]">
-                  <p className="text-3xl font-bold text-rose-400">{stats?.response_breached || 0}</p>
-                  <p className="text-xs text-[var(--fg-muted)] mt-1">Breached</p>
-                </div>
-                <div className="text-center p-4 rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)]">
-                  <p className="text-3xl font-bold text-amber-400">{stats?.response_pending || 0}</p>
-                  <p className="text-xs text-[var(--fg-muted)] mt-1">Pending</p>
-                </div>
-              </div>
-              {stats?.avg_response_time_minutes && (
-                <div className="mt-4 pt-4 border-t border-[var(--border-default)]">
-                  <p className="text-xs text-[var(--fg-muted)]">Average Response Time</p>
-                  <p className="text-lg font-semibold text-[var(--fg-primary)]">
-                    {formatMinutes(Math.round(stats.avg_response_time_minutes))}
-                  </p>
-                </div>
-              )}
-            </Card>
+            </Panel>
 
             {/* Resolution SLA */}
-            <Card tint="emerald" spotlight hover={false}>
-              <div className="flex items-center gap-2.5 mb-5">
-                <div className="w-10 h-10 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
-                  <Icon name="check" size={20} className="text-emerald-400" />
+            <Panel>
+              <PanelHeader icon="checkCircle" tint="emerald" title="Resolution SLA" subtitle="Ticket resolution compliance" />
+              <div className="p-5 space-y-4">
+                <div className="grid grid-cols-3 gap-3">
+                  <MetricTile value={stats?.resolve_met || 0} label="Met" tone="emerald" />
+                  <MetricTile value={stats?.resolve_breached || 0} label="Breached" tone="rose" />
+                  <MetricTile value={stats?.resolve_pending || 0} label="Pending" tone="amber" />
                 </div>
-                <div>
-                  <h3 className="text-sm font-semibold text-[var(--fg-primary)]">Resolution SLA</h3>
-                  <p className="text-xs text-[var(--fg-muted)]">Ticket resolution compliance</p>
-                </div>
+                {stats?.avg_resolve_time_minutes && (
+                  <div className="pt-4 border-t border-[var(--border-default)] flex items-center justify-between">
+                    <p className="text-sm text-[var(--fg-secondary)]">Average resolution time</p>
+                    <p className="text-base font-semibold text-[var(--fg-primary)] tabular-nums">{formatMinutes(Math.round(stats.avg_resolve_time_minutes))}</p>
+                  </div>
+                )}
               </div>
-              <div className="grid grid-cols-3 gap-4">
-                <div className="text-center p-4 rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)]">
-                  <p className="text-3xl font-bold text-emerald-400">{stats?.resolve_met || 0}</p>
-                  <p className="text-xs text-[var(--fg-muted)] mt-1">Met</p>
-                </div>
-                <div className="text-center p-4 rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)]">
-                  <p className="text-3xl font-bold text-rose-400">{stats?.resolve_breached || 0}</p>
-                  <p className="text-xs text-[var(--fg-muted)] mt-1">Breached</p>
-                </div>
-                <div className="text-center p-4 rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)]">
-                  <p className="text-3xl font-bold text-amber-400">{stats?.resolve_pending || 0}</p>
-                  <p className="text-xs text-[var(--fg-muted)] mt-1">Pending</p>
-                </div>
-              </div>
-              {stats?.avg_resolve_time_minutes && (
-                <div className="mt-4 pt-4 border-t border-[var(--border-default)]">
-                  <p className="text-xs text-[var(--fg-muted)]">Average Resolution Time</p>
-                  <p className="text-lg font-semibold text-[var(--fg-primary)]">
-                    {formatMinutes(Math.round(stats.avg_resolve_time_minutes))}
-                  </p>
-                </div>
-              )}
-            </Card>
+            </Panel>
           </div>
 
           {/* Approval SLA Compliance */}
           {approvalSlaStats && approvalSlaStats.total > 0 && (
-            <Card tint="violet" spotlight hover={false}>
-              <div className="flex items-center gap-2.5 mb-5">
-                <div className="w-10 h-10 rounded-lg bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
-                  <Icon name="shield" size={20} className="text-violet-400" />
+            <Panel>
+              <PanelHeader icon="shield" tint="violet" title="Approval SLA Compliance" subtitle="How quickly approvers respond" />
+              <div className="p-5 space-y-4">
+                <div className="grid grid-cols-3 gap-3">
+                  <MetricTile value={approvalSlaStats.met} label="Met" tone="emerald" />
+                  <MetricTile value={approvalSlaStats.breached} label="Breached" tone="rose" />
+                  <MetricTile value={approvalSlaStats.escalated} label="Escalated" tone="violet" />
                 </div>
-                <div>
-                  <h3 className="text-sm font-semibold text-[var(--fg-primary)]">Approval SLA Compliance</h3>
-                  <p className="text-xs text-[var(--fg-muted)]">How quickly approvers respond</p>
-                </div>
+                {approvalSlaStats.avg_completion_minutes && (
+                  <div className="pt-4 border-t border-[var(--border-default)] flex items-center justify-between">
+                    <p className="text-sm text-[var(--fg-secondary)]">Average approval time</p>
+                    <p className="text-base font-semibold text-[var(--fg-primary)] tabular-nums">{formatMinutes(approvalSlaStats.avg_completion_minutes)}</p>
+                  </div>
+                )}
               </div>
-              <div className="grid grid-cols-3 gap-4 mb-4">
-                <div className="text-center p-4 rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)]">
-                  <p className="text-3xl font-bold text-emerald-400">{approvalSlaStats.met}</p>
-                  <p className="text-xs text-[var(--fg-muted)] mt-1">Met</p>
-                </div>
-                <div className="text-center p-4 rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)]">
-                  <p className="text-3xl font-bold text-rose-400">{approvalSlaStats.breached}</p>
-                  <p className="text-xs text-[var(--fg-muted)] mt-1">Breached</p>
-                </div>
-                <div className="text-center p-4 rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)]">
-                  <p className="text-3xl font-bold text-violet-400">{approvalSlaStats.escalated}</p>
-                  <p className="text-xs text-[var(--fg-muted)] mt-1">Escalated</p>
-                </div>
-              </div>
-              {approvalSlaStats.avg_completion_minutes && (
-                <div className="pt-4 border-t border-[var(--border-default)]">
-                  <p className="text-xs text-[var(--fg-muted)]">Average Approval Time</p>
-                  <p className="text-lg font-semibold text-[var(--fg-primary)]">
-                    {formatMinutes(approvalSlaStats.avg_completion_minutes)}
-                  </p>
-                </div>
-              )}
-            </Card>
+            </Panel>
           )}
 
           {/* Overall Compliance */}
-          <Card tint="indigo" spotlight hover={false}>
-            <div className="flex items-center gap-2.5 mb-5">
-              <div className="w-10 h-10 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center">
-                <Icon name="chart" size={20} className="text-indigo-400" />
+          <Panel>
+            <PanelHeader icon="chart" tint="indigo" title="Overall Compliance" subtitle="SLA attainment across all surfaces" />
+            <div className="p-5 grid grid-cols-1 lg:grid-cols-3 gap-6 items-center">
+              {/* Donut */}
+              <div className="relative h-40 lg:h-44">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={complianceDonut(stats, approvalSlaStats)}
+                      dataKey="value"
+                      nameKey="name"
+                      innerRadius="64%"
+                      outerRadius="92%"
+                      paddingAngle={3}
+                      cornerRadius={6}
+                      stroke="none"
+                      startAngle={90}
+                      endAngle={-270}
+                      isAnimationActive={false}
+                    >
+                      {complianceDonut(stats, approvalSlaStats).map((entry) => (
+                        <Cell key={entry.key} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <RTooltip content={<ChartTooltip hideLabel valueFormatter={(v) => `${v}%`} />} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                  <span className="text-3xl font-semibold tracking-tight text-[var(--fg-primary)] tabular-nums">
+                    {overallComplianceAvg(stats, approvalSlaStats)}%
+                  </span>
+                  <span className="text-[11px] text-[var(--fg-muted)] uppercase tracking-wide">Overall</span>
+                </div>
               </div>
-              <h3 className="text-sm font-semibold text-[var(--fg-primary)]">Overall Compliance</h3>
+
+              {/* Bars */}
+              <div className="lg:col-span-2 space-y-5">
+                <ComplianceBar label="Response" pct={stats?.response_compliance_pct || 0} from="from-blue-500" to="to-blue-400" />
+                <ComplianceBar label="Resolution" pct={stats?.resolve_compliance_pct || 0} from="from-emerald-500" to="to-emerald-400" />
+                <ComplianceBar label="Approval" pct={approvalSlaStats?.compliance_pct || 0} from="from-violet-500" to="to-violet-400" />
+              </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm text-[var(--fg-secondary)]">Response</span>
-                  <span className="text-sm font-semibold text-[var(--fg-primary)]">{stats?.response_compliance_pct || 0}%</span>
-                </div>
-                <div className="h-3 rounded-full bg-[var(--bg-base)] border border-[var(--border-default)] overflow-hidden">
-                  <div className="h-full rounded-full bg-gradient-to-r from-blue-500 to-blue-400 transition-all duration-500"
-                    style={{ width: `${stats?.response_compliance_pct || 0}%` }} />
-                </div>
-              </div>
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm text-[var(--fg-secondary)]">Resolution</span>
-                  <span className="text-sm font-semibold text-[var(--fg-primary)]">{stats?.resolve_compliance_pct || 0}%</span>
-                </div>
-                <div className="h-3 rounded-full bg-[var(--bg-base)] border border-[var(--border-default)] overflow-hidden">
-                  <div className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-all duration-500"
-                    style={{ width: `${stats?.resolve_compliance_pct || 0}%` }} />
-                </div>
-              </div>
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm text-[var(--fg-secondary)]">Approval</span>
-                  <span className="text-sm font-semibold text-[var(--fg-primary)]">{approvalSlaStats?.compliance_pct || 0}%</span>
-                </div>
-                <div className="h-3 rounded-full bg-[var(--bg-base)] border border-[var(--border-default)] overflow-hidden">
-                  <div className="h-full rounded-full bg-gradient-to-r from-violet-500 to-violet-400 transition-all duration-500"
-                    style={{ width: `${approvalSlaStats?.compliance_pct || 0}%` }} />
-                </div>
-              </div>
-            </div>
-          </Card>
+          </Panel>
         </div>
       )}
 
@@ -1138,8 +1071,7 @@ export default function SlaManagement() {
           createPolicyType || editingPolicy ? (
             <>
               {!editingPolicy && (
-                <Button variant="ghost" onClick={() => setCreatePolicyType(null)} className="mr-auto">
-                  <Icon name="arrow-left" size={14} className="mr-1" />
+                <Button variant="ghost" onClick={() => setCreatePolicyType(null)} className="mr-auto" icon={<Icon name="arrowLeft" size={14} />}>
                   Back
                 </Button>
               )}
@@ -1155,7 +1087,7 @@ export default function SlaManagement() {
       >
         {/* ── Card-based policy type selector (create only) ── */}
         {!createPolicyType && !editingPolicy ? (
-          <div className="space-y-6">
+          <div className="space-y-5">
             <p className="text-sm text-[var(--fg-secondary)] text-center">
               What type of SLA policy do you want to create?
             </p>
@@ -1165,22 +1097,18 @@ export default function SlaManagement() {
                 type="button"
                 onClick={() => selectCreatePolicyType("team")}
                 className={cn(
-                  "group relative flex flex-col items-center gap-4 p-6 rounded-xl",
+                  "group relative flex flex-col items-center gap-4 p-6 rounded-2xl",
                   "bg-[var(--bg-surface)] border border-[var(--border-default)]",
-                  "hover:border-blue-500/50 hover:bg-[var(--bg-surface-hover)]",
-                  "transition-all duration-200 text-left"
+                  "hover:border-blue-500/50 hover:bg-[var(--bg-surface-hover)] hover:-translate-y-0.5",
+                  "transition-all duration-200 text-center"
                 )}
               >
-                <div className={cn(
-                  "w-14 h-14 rounded-xl flex items-center justify-center",
-                  "bg-blue-500/10 text-blue-400",
-                  "group-hover:bg-blue-500/20 transition-colors"
-                )}>
+                <div className="w-14 h-14 rounded-2xl flex items-center justify-center bg-blue-500/10 text-blue-500 border border-blue-500/15 group-hover:scale-110 transition-transform">
                   <Icon name="users" size={24} />
                 </div>
-                <div className="text-center">
+                <div>
                   <h3 className="text-sm font-semibold text-[var(--fg-primary)]">Team / Resolution SLA</h3>
-                  <p className="mt-1 text-xs text-[var(--fg-muted)]">
+                  <p className="mt-1 text-xs text-[var(--fg-muted)] leading-relaxed">
                     Define how quickly a team must respond to and resolve tickets
                   </p>
                 </div>
@@ -1191,22 +1119,18 @@ export default function SlaManagement() {
                 type="button"
                 onClick={() => selectCreatePolicyType("approval")}
                 className={cn(
-                  "group relative flex flex-col items-center gap-4 p-6 rounded-xl",
+                  "group relative flex flex-col items-center gap-4 p-6 rounded-2xl",
                   "bg-[var(--bg-surface)] border border-[var(--border-default)]",
-                  "hover:border-violet-500/50 hover:bg-[var(--bg-surface-hover)]",
-                  "transition-all duration-200 text-left"
+                  "hover:border-violet-500/50 hover:bg-[var(--bg-surface-hover)] hover:-translate-y-0.5",
+                  "transition-all duration-200 text-center"
                 )}
               >
-                <div className={cn(
-                  "w-14 h-14 rounded-xl flex items-center justify-center",
-                  "bg-violet-500/10 text-violet-400",
-                  "group-hover:bg-violet-500/20 transition-colors"
-                )}>
+                <div className="w-14 h-14 rounded-2xl flex items-center justify-center bg-violet-500/10 text-violet-500 border border-violet-500/15 group-hover:scale-110 transition-transform">
                   <Icon name="shield" size={24} />
                 </div>
-                <div className="text-center">
+                <div>
                   <h3 className="text-sm font-semibold text-[var(--fg-primary)]">Approval SLA</h3>
-                  <p className="mt-1 text-xs text-[var(--fg-muted)]">
+                  <p className="mt-1 text-xs text-[var(--fg-muted)] leading-relaxed">
                     Define how quickly each approver must act on approval requests
                   </p>
                 </div>
@@ -1217,61 +1141,63 @@ export default function SlaManagement() {
           /* ── Policy form (team or approval) ── */
           <form onSubmit={handlePolicySubmit} className="space-y-6">
             {/* Basic Info */}
-            <div className="grid grid-cols-1 gap-4">
-              <Input
-                label="Policy Name"
-                placeholder={policyForm.policy_type === "approval" ? "e.g., IT Approval Turnaround" : "e.g., High Priority SLA"}
-                value={policyForm.name}
-                onChange={(e) => setPolicyForm({ ...policyForm, name: e.target.value })}
-                required
-              />
-              <Textarea
-                label="Description"
-                placeholder="Describe when this policy applies..."
-                value={policyForm.description}
-                onChange={(e) => setPolicyForm({ ...policyForm, description: e.target.value })}
-                rows={2}
-              />
-            </div>
+            <FormSection title="Basics">
+              <div className="grid grid-cols-1 gap-4">
+                <Input
+                  label="Policy Name"
+                  placeholder={policyForm.policy_type === "approval" ? "e.g., IT Approval Turnaround" : "e.g., High Priority SLA"}
+                  value={policyForm.name}
+                  onChange={(e) => setPolicyForm({ ...policyForm, name: e.target.value })}
+                  required
+                />
+                <Textarea
+                  label="Description"
+                  placeholder="Describe when this policy applies..."
+                  value={policyForm.description}
+                  onChange={(e) => setPolicyForm({ ...policyForm, description: e.target.value })}
+                  rows={2}
+                />
+              </div>
+            </FormSection>
 
             {/* Team SLA: Time Targets */}
             {policyForm.policy_type === "team" && (
-              <div>
-                <h4 className="text-sm font-medium text-[var(--fg-primary)] mb-3">Time Targets</h4>
-                <div className="grid grid-cols-2 gap-4">
+              <FormSection title="Time Targets">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-[var(--fg-primary)] mb-2">Response Time (minutes)</label>
-                    <Input type="number" min="1" placeholder="60"
+                    <Input
+                      type="number" min="1" placeholder="60" label="Response Time (minutes)"
                       value={policyForm.response_minutes}
                       onChange={(e) => setPolicyForm({ ...policyForm, response_minutes: parseInt(e.target.value) || 0 })}
-                      required />
-                    <p className="text-xs text-[var(--fg-muted)] mt-1">= {formatMinutes(policyForm.response_minutes)}</p>
+                      required
+                    />
+                    <p className="text-xs text-[var(--fg-muted)] mt-1.5">= {formatMinutes(policyForm.response_minutes)}</p>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-[var(--fg-primary)] mb-2">Resolution Time (minutes)</label>
-                    <Input type="number" min="1" placeholder="480"
+                    <Input
+                      type="number" min="1" placeholder="480" label="Resolution Time (minutes)"
                       value={policyForm.resolve_minutes}
                       onChange={(e) => setPolicyForm({ ...policyForm, resolve_minutes: parseInt(e.target.value) || 0 })}
-                      required />
-                    <p className="text-xs text-[var(--fg-muted)] mt-1">= {formatMinutes(policyForm.resolve_minutes)}</p>
+                      required
+                    />
+                    <p className="text-xs text-[var(--fg-muted)] mt-1.5">= {formatMinutes(policyForm.resolve_minutes)}</p>
                   </div>
                 </div>
-              </div>
+              </FormSection>
             )}
 
             {/* Approval SLA: Mode Toggle + Stage Builder */}
             {policyForm.policy_type === "approval" && (
-              <div className="space-y-5">
+              <div className="space-y-6">
                 {/* Mode toggle: Stage-Based vs Hierarchy-Based */}
-                <div>
-                  <h4 className="text-sm font-medium text-[var(--fg-primary)] mb-3">Approval SLA Mode</h4>
-                  <div className={cn("flex gap-1 p-1 rounded-lg", "bg-[var(--bg-base)] border border-[var(--border-default)]")}>
+                <FormSection title="Approval SLA Mode">
+                  <div className={cn("flex gap-1 p-1 rounded-xl", "bg-[var(--bg-base)] border border-[var(--border-default)]")}>
                     <button type="button"
                       onClick={() => setPolicyForm({ ...policyForm, approval_sla_mode: "stage" })}
                       className={cn(
-                        "flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-sm font-medium transition-all",
+                        "flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all",
                         policyForm.approval_sla_mode === "stage"
-                          ? "bg-cyan-500/15 text-cyan-400 border border-cyan-500/30"
+                          ? "bg-cyan-500/15 text-cyan-500 border border-cyan-500/25"
                           : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
                       )}
                     >
@@ -1281,9 +1207,9 @@ export default function SlaManagement() {
                     <button type="button"
                       onClick={() => setPolicyForm({ ...policyForm, approval_sla_mode: "hierarchy" })}
                       className={cn(
-                        "flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-sm font-medium transition-all",
+                        "flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all",
                         policyForm.approval_sla_mode === "hierarchy"
-                          ? "bg-amber-500/15 text-amber-400 border border-amber-500/30"
+                          ? "bg-amber-500/15 text-amber-500 border border-amber-500/25"
                           : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
                       )}
                     >
@@ -1297,24 +1223,23 @@ export default function SlaManagement() {
                       : "Match approvers by their position in the organization hierarchy (CEO, ExCo, Manager, etc.)."
                     }
                   </p>
-                </div>
+                </FormSection>
 
                 {/* Stage/Rule builder */}
                 <div>
-                  <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center justify-between gap-3 mb-3">
                     <div>
-                      <h4 className="text-sm font-medium text-[var(--fg-primary)]">
+                      <p className="text-label">
                         {policyForm.approval_sla_mode === "hierarchy" ? "Hierarchy Level Rules" : "Approval Stage Targets"}
-                      </h4>
-                      <p className="text-xs text-[var(--fg-muted)] mt-0.5">
+                      </p>
+                      <p className="text-xs text-[var(--fg-muted)] mt-1">
                         {policyForm.approval_sla_mode === "hierarchy"
                           ? "Define SLA targets by organizational hierarchy level. More specific rules take priority."
                           : "Define how quickly each approval stage must be completed. More specific rules take priority."
                         }
                       </p>
                     </div>
-                    <Button type="button" variant="secondary" size="sm" onClick={addStage}
-                      icon={<Icon name="plus" size={14} />}>
+                    <Button type="button" variant="secondary" size="sm" onClick={addStage} icon={<Icon name="plus" size={14} />}>
                       Add Rule
                     </Button>
                   </div>
@@ -1324,19 +1249,19 @@ export default function SlaManagement() {
                       <div key={stage._uid} className={cn(
                         "rounded-xl p-4 space-y-4",
                         "bg-[var(--bg-base)] border border-[var(--border-default)]",
-                        !stage.is_active && "opacity-50"
+                        !stage.is_active && "opacity-60"
                       )}>
                         {/* Stage header */}
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
-                            <div className={cn(
+                            <span className={cn(
                               "w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold",
                               policyForm.approval_sla_mode === "hierarchy"
-                                ? "bg-amber-500/15 text-amber-400 border border-amber-500/30"
-                                : "bg-violet-500/15 text-violet-400 border border-violet-500/30"
+                                ? "bg-amber-500/15 text-amber-500 border border-amber-500/25"
+                                : "bg-violet-500/15 text-violet-500 border border-violet-500/25"
                             )}>
                               {idx + 1}
-                            </div>
+                            </span>
                             <span className="text-sm font-medium text-[var(--fg-primary)]">
                               {policyForm.approval_sla_mode === "hierarchy" ? "Hierarchy Rule" : "Stage Rule"} {idx + 1}
                             </span>
@@ -1350,7 +1275,7 @@ export default function SlaManagement() {
                             </label>
                             {(policyForm.approval_stages || []).length > 1 && (
                               <button type="button" onClick={() => removeStage(stage._uid)}
-                                className="p-1.5 rounded-lg text-[var(--fg-muted)] hover:text-rose-400 hover:bg-rose-500/10 transition-all">
+                                className="p-1.5 rounded-lg text-[var(--fg-muted)] hover:text-rose-500 hover:bg-rose-500/10 transition-all">
                                 <Icon name="trash" size={14} />
                               </button>
                             )}
@@ -1360,11 +1285,9 @@ export default function SlaManagement() {
                         {/* Matching criteria — different per mode */}
                         {policyForm.approval_sla_mode === "hierarchy" ? (
                           /* ── Hierarchy mode: Org Level matching ── */
-                          <div className="grid grid-cols-2 gap-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div>
-                              <label className="block text-[11px] font-medium text-[var(--fg-muted)] uppercase tracking-wider mb-1.5">
-                                Organization Level
-                              </label>
+                              <label className="block text-label mb-1.5">Organization Level</label>
                               <select value={stage.applies_to_org_level} className={selectCls}
                                 onChange={(e) => updateStage(stage._uid, "applies_to_org_level", e.target.value ? parseInt(e.target.value) : "")}>
                                 <option value="">Any Org Level</option>
@@ -1374,9 +1297,7 @@ export default function SlaManagement() {
                               </select>
                             </div>
                             <div>
-                              <label className="block text-[11px] font-medium text-[var(--fg-muted)] uppercase tracking-wider mb-1.5">
-                                Scope
-                              </label>
+                              <label className="block text-label mb-1.5">Scope</label>
                               <div className="flex items-center gap-3 h-[42px]">
                                 <label className="flex items-center gap-2 cursor-pointer">
                                   <input type="checkbox"
@@ -1390,7 +1311,7 @@ export default function SlaManagement() {
                                 </label>
                               </div>
                               {stage.applies_to_org_level && stage.applies_to_org_level_and_below && (
-                                <p className="text-[10px] text-amber-400 mt-1">
+                                <p className="text-[10px] text-amber-500 mt-1">
                                   Applies to {orgLevelShort(stage.applies_to_org_level)} and all levels below
                                 </p>
                               )}
@@ -1398,11 +1319,9 @@ export default function SlaManagement() {
                           </div>
                         ) : (
                           /* ── Stage mode: Approval level + type + rule matching ── */
-                          <div className="grid grid-cols-3 gap-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                             <div>
-                              <label className="block text-[11px] font-medium text-[var(--fg-muted)] uppercase tracking-wider mb-1.5">
-                                Approval Level
-                              </label>
+                              <label className="block text-label mb-1.5">Approval Level</label>
                               <select value={stage.applies_to_approval_level} className={selectCls}
                                 onChange={(e) => updateStage(stage._uid, "applies_to_approval_level", e.target.value ? parseInt(e.target.value) : "")}>
                                 <option value="">Any Level</option>
@@ -1412,9 +1331,7 @@ export default function SlaManagement() {
                               </select>
                             </div>
                             <div>
-                              <label className="block text-[11px] font-medium text-[var(--fg-muted)] uppercase tracking-wider mb-1.5">
-                                Approver Type
-                              </label>
+                              <label className="block text-label mb-1.5">Approver Type</label>
                               <select value={stage.applies_to_approver_type} className={selectCls}
                                 onChange={(e) => updateStage(stage._uid, "applies_to_approver_type", e.target.value)}>
                                 {APPROVER_TYPES.map((t) => (
@@ -1423,9 +1340,7 @@ export default function SlaManagement() {
                               </select>
                             </div>
                             <div>
-                              <label className="block text-[11px] font-medium text-[var(--fg-muted)] uppercase tracking-wider mb-1.5">
-                                Approval Rule
-                              </label>
+                              <label className="block text-label mb-1.5">Approval Rule</label>
                               <select value={stage.applies_to_approval_rule_id} className={selectCls}
                                 onChange={(e) => updateStage(stage._uid, "applies_to_approval_rule_id", e.target.value)}>
                                 <option value="">Any Rule</option>
@@ -1438,11 +1353,9 @@ export default function SlaManagement() {
                         )}
 
                         {/* Time targets row (same for both modes) */}
-                        <div className="grid grid-cols-3 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                           <div>
-                            <label className="block text-[11px] font-medium text-[var(--fg-muted)] uppercase tracking-wider mb-1.5">
-                              Target Time (min)
-                            </label>
+                            <label className="block text-label mb-1.5">Target Time (min)</label>
                             <div className="flex items-center gap-2">
                               <Input type="number" min="1" value={stage.target_minutes}
                                 onChange={(e) => updateStage(stage._uid, "target_minutes", parseInt(e.target.value) || 60)} />
@@ -1450,16 +1363,12 @@ export default function SlaManagement() {
                             </div>
                           </div>
                           <div>
-                            <label className="block text-[11px] font-medium text-[var(--fg-muted)] uppercase tracking-wider mb-1.5">
-                              Warning (min before)
-                            </label>
+                            <label className="block text-label mb-1.5">Warning (min before)</label>
                             <Input type="number" min="0" value={stage.warning_minutes}
                               onChange={(e) => updateStage(stage._uid, "warning_minutes", parseInt(e.target.value) || 0)} />
                           </div>
                           <div>
-                            <label className="block text-[11px] font-medium text-[var(--fg-muted)] uppercase tracking-wider mb-1.5">
-                              On Breach
-                            </label>
+                            <label className="block text-label mb-1.5">On Breach</label>
                             <select value={stage.escalation_action} className={selectCls}
                               onChange={(e) => updateStage(stage._uid, "escalation_action", e.target.value)}>
                               {ESCALATION_ACTIONS.map((a) => (
@@ -1472,9 +1381,7 @@ export default function SlaManagement() {
                         {/* Reassign user selector (only when escalation_action = 'reassign') */}
                         {stage.escalation_action === "reassign" && (
                           <div>
-                            <label className="block text-[11px] font-medium text-[var(--fg-muted)] uppercase tracking-wider mb-1.5">
-                              Reassign To User
-                            </label>
+                            <label className="block text-label mb-1.5">Reassign To User</label>
                             <select value={stage.escalation_to_user_id} className={selectCls}
                               onChange={(e) => updateStage(stage._uid, "escalation_to_user_id", e.target.value)}>
                               <option value="">Select user...</option>
@@ -1497,9 +1404,8 @@ export default function SlaManagement() {
             )}
 
             {/* Applies To */}
-            <div>
-              <h4 className="text-sm font-medium text-[var(--fg-primary)] mb-3">Applies To</h4>
-              <div className="grid grid-cols-2 gap-4">
+            <FormSection title="Applies To">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-[var(--fg-primary)] mb-2">Priority</label>
                   <select value={policyForm.applies_to_priority_id} className={selectCls}
@@ -1521,12 +1427,11 @@ export default function SlaManagement() {
                   </select>
                 </div>
               </div>
-            </div>
+            </FormSection>
 
             {/* Business Hours (team policies only) */}
             {policyForm.policy_type === "team" && (
-              <div>
-                <h4 className="text-sm font-medium text-[var(--fg-primary)] mb-3">Business Hours</h4>
+              <FormSection title="Business Hours">
                 <div className="space-y-4">
                   <label className="flex items-center gap-3 cursor-pointer">
                     <input type="checkbox" checked={policyForm.use_business_hours}
@@ -1544,32 +1449,29 @@ export default function SlaManagement() {
                     </select>
                   )}
                 </div>
-              </div>
+              </FormSection>
             )}
 
             {/* Notifications (team policies only) */}
             {policyForm.policy_type === "team" && (
-              <div>
-                <h4 className="text-sm font-medium text-[var(--fg-primary)] mb-3">Notifications</h4>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-[var(--fg-primary)] mb-2">At-Risk Alert (minutes before breach)</label>
-                    <Input type="number" min="0" placeholder="60"
-                      value={policyForm.notify_at_risk_minutes}
-                      onChange={(e) => setPolicyForm({ ...policyForm, notify_at_risk_minutes: parseInt(e.target.value) || 0 })} />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-[var(--fg-primary)] mb-2">Auto-Escalate After (minutes)</label>
-                    <Input type="number" min="0" placeholder="Optional"
-                      value={policyForm.escalation_minutes}
-                      onChange={(e) => setPolicyForm({ ...policyForm, escalation_minutes: e.target.value })} />
-                  </div>
+              <FormSection title="Notifications">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <Input
+                    type="number" min="0" placeholder="60" label="At-Risk Alert (minutes before breach)"
+                    value={policyForm.notify_at_risk_minutes}
+                    onChange={(e) => setPolicyForm({ ...policyForm, notify_at_risk_minutes: parseInt(e.target.value) || 0 })}
+                  />
+                  <Input
+                    type="number" min="0" placeholder="Optional" label="Auto-Escalate After (minutes)"
+                    value={policyForm.escalation_minutes}
+                    onChange={(e) => setPolicyForm({ ...policyForm, escalation_minutes: e.target.value })}
+                  />
                 </div>
-              </div>
+              </FormSection>
             )}
 
             {/* Default Policy */}
-            <label className="flex items-center gap-3 cursor-pointer p-4 rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)]">
+            <label className="flex items-center gap-3 cursor-pointer p-4 rounded-xl bg-[var(--bg-base)] border border-[var(--border-default)] hover:border-[var(--border-hover)] transition-colors">
               <input type="checkbox" checked={policyForm.is_default}
                 onChange={(e) => setPolicyForm({ ...policyForm, is_default: e.target.checked })}
                 className="w-4 h-4 rounded border-[var(--border-default)] bg-[var(--bg-base)] text-[var(--accent)] focus:ring-[var(--accent)]" />
@@ -1599,21 +1501,18 @@ export default function SlaManagement() {
             {/* Team SLA Results */}
             {breachResults.team && (
               <div>
-                <p className="text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider mb-3">Team SLA</p>
+                <p className="text-label mb-3">Team SLA</p>
                 <div className="grid grid-cols-2 gap-3">
                   {[
-                    { label: "Response Breaches", value: breachResults.team.responseBreaches ?? 0, icon: "clock", color: "text-amber-400", bg: "bg-amber-400/10" },
-                    { label: "Resolve Breaches", value: breachResults.team.resolveBreaches ?? 0, icon: "alert-triangle", color: "text-rose-400", bg: "bg-rose-400/10" },
+                    { label: "Response Breaches", value: breachResults.team.responseBreaches ?? 0, icon: "clock", color: "text-amber-500", bg: "bg-amber-500/10" },
+                    { label: "Resolve Breaches", value: breachResults.team.resolveBreaches ?? 0, icon: "alertTriangle", color: "text-rose-500", bg: "bg-rose-500/10" },
                   ].map((item) => (
-                    <div key={item.label} className={cn(
-                      "flex items-center gap-3 p-4 rounded-lg",
-                      "bg-[var(--bg-base)] border border-[var(--border-default)]"
-                    )}>
+                    <div key={item.label} className="flex items-center gap-3 p-4 rounded-xl bg-[var(--bg-base)] border border-[var(--border-default)]">
                       <div className={cn("w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0", item.bg)}>
                         <Icon name={item.icon} size={20} className={item.color} />
                       </div>
                       <div>
-                        <p className={cn("text-2xl font-bold", item.color)}>{item.value}</p>
+                        <p className={cn("text-2xl font-semibold tabular-nums", item.color)}>{item.value}</p>
                         <p className="text-xs text-[var(--fg-muted)]">{item.label}</p>
                       </div>
                     </div>
@@ -1625,21 +1524,18 @@ export default function SlaManagement() {
             {/* Approval SLA Results */}
             {breachResults.approval && (
               <div>
-                <p className="text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider mb-3">Approval SLA</p>
+                <p className="text-label mb-3">Approval SLA</p>
                 <div className="grid grid-cols-3 gap-3">
                   {[
-                    { label: "Breaches", value: breachResults.approval.breaches_marked ?? 0, icon: "x-circle", color: "text-rose-400", bg: "bg-rose-400/10" },
-                    { label: "Warnings", value: breachResults.approval.warnings_sent ?? 0, icon: "alert-triangle", color: "text-amber-400", bg: "bg-amber-400/10" },
-                    { label: "Escalations", value: breachResults.approval.escalations ?? 0, icon: "arrow-up-right", color: "text-orange-400", bg: "bg-orange-400/10" },
+                    { label: "Breaches", value: breachResults.approval.breaches_marked ?? 0, icon: "xCircle", color: "text-rose-500", bg: "bg-rose-500/10" },
+                    { label: "Warnings", value: breachResults.approval.warnings_sent ?? 0, icon: "alertTriangle", color: "text-amber-500", bg: "bg-amber-500/10" },
+                    { label: "Escalations", value: breachResults.approval.escalations ?? 0, icon: "arrowUpRight", color: "text-orange-500", bg: "bg-orange-500/10" },
                   ].map((item) => (
-                    <div key={item.label} className={cn(
-                      "text-center p-4 rounded-lg",
-                      "bg-[var(--bg-base)] border border-[var(--border-default)]"
-                    )}>
+                    <div key={item.label} className="text-center p-4 rounded-xl bg-[var(--bg-base)] border border-[var(--border-default)]">
                       <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center mx-auto mb-2", item.bg)}>
                         <Icon name={item.icon} size={18} className={item.color} />
                       </div>
-                      <p className={cn("text-2xl font-bold", item.color)}>{item.value}</p>
+                      <p className={cn("text-2xl font-semibold tabular-nums", item.color)}>{item.value}</p>
                       <p className="text-xs text-[var(--fg-muted)]">{item.label}</p>
                     </div>
                   ))}
@@ -1649,16 +1545,209 @@ export default function SlaManagement() {
 
             {/* No results message */}
             {!breachResults.team && !breachResults.approval && (
-              <div className="text-center py-6">
-                <Icon name="check-circle" size={40} className="text-emerald-400 mx-auto mb-3" />
-                <p className="text-sm text-[var(--fg-secondary)]">No SLA data to report.</p>
-              </div>
+              <EmptyState
+                icon="checkCircle"
+                tone="emerald"
+                title="All clear"
+                description="No SLA data to report."
+                compact
+              />
             )}
           </div>
         )}
       </Modal>
 
       {confirmDialog}
+    </div>
+  );
+}
+
+/* ─── Analytics helpers (derive donut from already-fetched stats) ─── */
+function complianceDonut(stats, approvalSlaStats) {
+  return [
+    { name: "Response", key: "response", value: stats?.response_compliance_pct || 0, color: "#3B82F6" },
+    { name: "Resolution", key: "resolution", value: stats?.resolve_compliance_pct || 0, color: "#10B981" },
+    { name: "Approval", key: "approval", value: approvalSlaStats?.compliance_pct || 0, color: "#8B5CF6" },
+  ];
+}
+
+function overallComplianceAvg(stats, approvalSlaStats) {
+  const vals = [];
+  if (stats?.response_compliance_pct != null) vals.push(stats.response_compliance_pct);
+  if (stats?.resolve_compliance_pct != null) vals.push(stats.resolve_compliance_pct);
+  if (approvalSlaStats?.compliance_pct != null) vals.push(approvalSlaStats.compliance_pct);
+  if (vals.length === 0) return 0;
+  return Math.round(vals.reduce((a, b) => a + Number(b), 0) / vals.length);
+}
+
+/* ─── Local presentational helpers (mirror reference-page primitives) ─── */
+
+// Small bordered icon-button for header controls (matches tickets.jsx ControlButton)
+function ControlButton({ title, onClick, active, children }) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className={cn(
+        "h-10 w-10 inline-flex items-center justify-center rounded-lg transition-all duration-150",
+        "bg-[var(--bg-elevated)] border",
+        active
+          ? "border-[var(--accent)] text-[var(--accent)]"
+          : "border-[var(--border-default)] text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)] hover:border-[var(--border-hover)]"
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+// Tinted-icon section heading with a count badge
+const SECTION_TINTS = {
+  blue: "bg-blue-500/10 text-blue-500 border-blue-500/15",
+  violet: "bg-violet-500/10 text-violet-500 border-violet-500/15",
+};
+function SectionTitle({ icon, tint = "blue", title, subtitle, count, countTone = "slate" }) {
+  return (
+    <div className="flex items-center gap-3">
+      <span className={cn("h-9 w-9 rounded-lg border flex items-center justify-center shrink-0", SECTION_TINTS[tint] || SECTION_TINTS.blue)}>
+        <Icon name={icon} size={18} />
+      </span>
+      <div className="min-w-0">
+        <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">{title}</h2>
+        {subtitle && <p className="text-xs text-[var(--fg-muted)] mt-0.5">{subtitle}</p>}
+      </div>
+      <Badge tone={countTone} size="sm" className="ml-auto tabular-nums">{count}</Badge>
+    </div>
+  );
+}
+
+// Elevated rounded panel wrapper
+function Panel({ children, className }) {
+  return (
+    <div className={cn(
+      "rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] overflow-hidden",
+      className
+    )}>
+      {children}
+    </div>
+  );
+}
+
+const PANEL_HEADER_TINTS = {
+  blue: "bg-blue-500/10 text-blue-500",
+  emerald: "bg-emerald-500/10 text-emerald-500",
+  violet: "bg-violet-500/10 text-violet-500",
+  indigo: "bg-indigo-500/10 text-indigo-500",
+};
+function PanelHeader({ icon, tint = "blue", title, subtitle }) {
+  return (
+    <div className="flex items-center gap-2.5 px-5 py-4 border-b border-[var(--border-default)]">
+      <span className={cn("h-8 w-8 rounded-lg flex items-center justify-center shrink-0", PANEL_HEADER_TINTS[tint] || PANEL_HEADER_TINTS.blue)}>
+        <Icon name={icon} size={16} />
+      </span>
+      <div className="min-w-0">
+        <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">{title}</h2>
+        {subtitle && <p className="text-xs text-[var(--fg-muted)] mt-0.5">{subtitle}</p>}
+      </div>
+    </div>
+  );
+}
+
+// Grouped form section with a small label heading
+function FormSection({ title, children }) {
+  return (
+    <div className="space-y-3">
+      <p className="text-label">{title}</p>
+      {children}
+    </div>
+  );
+}
+
+// Inline edit / delete row actions
+function RowActions({ onEdit, onDelete }) {
+  return (
+    <div className="flex items-center gap-1 shrink-0">
+      <button onClick={onEdit} title="Edit"
+        className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-surface)] transition-all">
+        <Icon name="pencil" size={14} />
+      </button>
+      <button onClick={onDelete} title="Delete"
+        className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-rose-500 hover:bg-rose-500/10 transition-all">
+        <Icon name="trash" size={14} />
+      </button>
+    </div>
+  );
+}
+
+// Response/Resolution target tile inside a team policy card
+const TARGET_TINTS = {
+  blue: "bg-blue-500/10 text-blue-500",
+  emerald: "bg-emerald-500/10 text-emerald-500",
+};
+function TargetTile({ icon, tint, label, value }) {
+  return (
+    <div className="rounded-xl p-4 bg-[var(--bg-base)] border border-[var(--border-default)]">
+      <div className="flex items-center gap-2 mb-2">
+        <span className={cn("w-7 h-7 rounded-lg flex items-center justify-center", TARGET_TINTS[tint] || TARGET_TINTS.blue)}>
+          <Icon name={icon} size={14} />
+        </span>
+        <p className="text-label">{label}</p>
+      </div>
+      <p className="text-xl font-semibold text-[var(--fg-primary)] tabular-nums">{value}</p>
+    </div>
+  );
+}
+
+// Tracking tile that shows Met / Breached / time-remaining for a ticket SLA
+function SlaStatusTile({ label, met, breached, time }) {
+  return (
+    <div className="rounded-xl p-4 bg-[var(--bg-base)] border border-[var(--border-default)]">
+      <div className="flex items-center gap-2 mb-2">
+        <Icon name="clock" size={14} className="text-[var(--fg-muted)]" />
+        <p className="text-label">{label}</p>
+      </div>
+      {met ? (
+        <span className="inline-flex items-center gap-1.5 text-xs text-emerald-500 font-semibold">
+          <Icon name="checkCircle" size={14} /> Met
+        </span>
+      ) : breached ? (
+        <Badge tone="rose" size="sm">Breached</Badge>
+      ) : time ? (
+        <Badge tone={time.tone} size="sm">{time.text}</Badge>
+      ) : (
+        <span className="text-xs text-[var(--fg-muted)]">N/A</span>
+      )}
+    </div>
+  );
+}
+
+// Analytics metric tile (Met / Breached / Pending etc.)
+const METRIC_TONE = {
+  emerald: "text-emerald-500",
+  rose: "text-rose-500",
+  amber: "text-amber-500",
+  violet: "text-violet-500",
+};
+function MetricTile({ value, label, tone }) {
+  return (
+    <div className="text-center p-4 rounded-xl bg-[var(--bg-base)] border border-[var(--border-default)]">
+      <p className={cn("text-3xl font-semibold tracking-tight tabular-nums", METRIC_TONE[tone] || "text-[var(--fg-primary)]")}>{value}</p>
+      <p className="text-xs text-[var(--fg-muted)] mt-1">{label}</p>
+    </div>
+  );
+}
+
+// Overall-compliance progress bar
+function ComplianceBar({ label, pct, from, to }) {
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-sm text-[var(--fg-secondary)]">{label}</span>
+        <span className="text-sm font-semibold text-[var(--fg-primary)] tabular-nums">{pct}%</span>
+      </div>
+      <div className="h-2.5 rounded-full bg-[var(--bg-base)] border border-[var(--border-default)] overflow-hidden">
+        <div className={cn("h-full rounded-full bg-gradient-to-r transition-all duration-700 ease-out", from, to)} style={{ width: `${pct}%` }} />
+      </div>
     </div>
   );
 }
