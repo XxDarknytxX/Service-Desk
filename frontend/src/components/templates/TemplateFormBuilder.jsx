@@ -18,6 +18,14 @@ function cn(...parts) {
   return parts.filter(Boolean).join(" ");
 }
 
+/** Glowing line that marks where a dragged field will be dropped. */
+function DropLine({ active }) {
+  if (!active) return null;
+  return (
+    <div className="my-1.5 h-1 rounded-full bg-[var(--accent)] shadow-[0_0_10px_2px_rgba(230,0,0,0.45)]" />
+  );
+}
+
 /**
  * Default properties for each field type when newly added.
  */
@@ -127,6 +135,8 @@ export default function TemplateFormBuilder({ schema = [], onChange }) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [previewValues, setPreviewValues] = useState({});
+  const [dragId, setDragId] = useState(null);    // id of the field currently being dragged
+  const [dropIndex, setDropIndex] = useState(null); // index the dragged item will land at
 
   // Find the currently selected field
   const selectedField = schema.find((f) => f.id === selectedFieldId) || null;
@@ -182,6 +192,40 @@ export default function TemplateFormBuilder({ schema = [], onChange }) {
   );
 
   /**
+   * Insert a new field of the given type at a specific index (drag-and-drop add).
+   */
+  const addFieldAt = useCallback(
+    (type, index) => {
+      const defaults = FIELD_DEFAULTS[type] || {};
+      const newField = { id: `field_${generateFieldId()}`, type, ...defaults };
+      const updated = [...schema];
+      const at = index == null ? updated.length : Math.max(0, Math.min(index, updated.length));
+      updated.splice(at, 0, newField);
+      onChange(updated);
+      setSelectedFieldId(newField.id);
+    },
+    [schema, onChange]
+  );
+
+  /**
+   * Move an existing field to a specific index (drag-and-drop reorder).
+   */
+  const reorderField = useCallback(
+    (id, toIndex) => {
+      const from = schema.findIndex((f) => f.id === id);
+      if (from === -1) return;
+      const updated = [...schema];
+      const [moved] = updated.splice(from, 1);
+      let to = toIndex;
+      if (from < to) to -= 1; // account for the gap left by removal
+      to = Math.max(0, Math.min(to, updated.length));
+      updated.splice(to, 0, moved);
+      onChange(updated);
+    },
+    [schema, onChange]
+  );
+
+  /**
    * Update a field's properties.
    */
   const updateField = useCallback(
@@ -197,27 +241,37 @@ export default function TemplateFormBuilder({ schema = [], onChange }) {
   /**
    * Handle drop events on the canvas.
    */
+  // A drop lands at dropIndex (set by the field row / trailing zone under the cursor),
+  // falling back to the end of the list. New fields come from the toolbox ("fieldType"),
+  // existing fields carry their id ("reorderId").
   function handleCanvasDrop(e) {
     e.preventDefault();
     e.stopPropagation();
-    setIsDragOver(false);
+    const insertAt = dropIndex == null ? schema.length : dropIndex;
     const fieldType = e.dataTransfer.getData("fieldType");
+    const reorderId = e.dataTransfer.getData("reorderId");
     if (fieldType) {
-      addField(fieldType);
+      addFieldAt(fieldType, insertAt);
+    } else if (reorderId) {
+      reorderField(reorderId, insertAt);
     }
+    setIsDragOver(false);
+    setDropIndex(null);
+    setDragId(null);
   }
 
   function handleCanvasDragOver(e) {
     e.preventDefault();
     e.stopPropagation();
-    e.dataTransfer.dropEffect = "copy";
+    e.dataTransfer.dropEffect = dragId ? "move" : "copy";
     setIsDragOver(true);
   }
 
   function handleCanvasDragLeave(e) {
-    // Only set false when actually leaving the container (not entering a child)
+    // Only reset when actually leaving the container (not entering a child)
     if (!e.currentTarget.contains(e.relatedTarget)) {
       setIsDragOver(false);
+      setDropIndex(null);
     }
   }
 
@@ -362,21 +416,60 @@ export default function TemplateFormBuilder({ schema = [], onChange }) {
                 </p>
               </div>
             ) : (
-              /* Field list */
-              <div className="space-y-3">
-                {schema.map((field, index) => (
-                  <FieldPreview
-                    key={field.id}
-                    field={field}
-                    isSelected={selectedFieldId === field.id}
-                    onSelect={setSelectedFieldId}
-                    onRemove={removeField}
-                    onMoveUp={(id) => moveField(id, -1)}
-                    onMoveDown={(id) => moveField(id, 1)}
-                    isFirst={index === 0}
-                    isLast={index === schema.length - 1}
-                  />
-                ))}
+              /* Field list — drag any card to reorder; the line shows where it lands */
+              <div className="flex flex-col min-h-full">
+                <div className="space-y-3">
+                  {schema.map((field, index) => (
+                    <div key={field.id}>
+                      <DropLine active={dropIndex === index} />
+                      <div
+                        draggable
+                        onDragStart={(e) => {
+                          setDragId(field.id);
+                          e.dataTransfer.effectAllowed = "move";
+                          e.dataTransfer.setData("reorderId", field.id);
+                        }}
+                        onDragEnd={() => {
+                          setDragId(null);
+                          setDropIndex(null);
+                        }}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          const after = e.clientY > rect.top + rect.height / 2;
+                          setDropIndex(after ? index + 1 : index);
+                        }}
+                        className={cn(
+                          "transition-opacity duration-150",
+                          dragId === field.id && "opacity-40"
+                        )}
+                      >
+                        <FieldPreview
+                          field={field}
+                          isSelected={selectedFieldId === field.id}
+                          onSelect={setSelectedFieldId}
+                          onRemove={removeField}
+                          onMoveUp={(id) => moveField(id, -1)}
+                          onMoveDown={(id) => moveField(id, 1)}
+                          isFirst={index === 0}
+                          isLast={index === schema.length - 1}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {/* Trailing zone — dropping below the list appends to the end */}
+                <div
+                  className="flex-1 min-h-[48px] pt-1"
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setDropIndex(schema.length);
+                  }}
+                >
+                  <DropLine active={dropIndex === schema.length} />
+                </div>
               </div>
             )}
           </div>

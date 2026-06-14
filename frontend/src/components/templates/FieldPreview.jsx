@@ -444,7 +444,7 @@ export default function FieldPreview({
     <div
       onClick={() => onSelect(field.id)}
       className={cn(
-        "relative group rounded-xl p-4 cursor-pointer",
+        "relative group rounded-xl p-4 cursor-grab active:cursor-grabbing",
         "border transition-all duration-200",
         "bg-[var(--bg-elevated)]",
         // Selected state
