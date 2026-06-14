@@ -289,16 +289,23 @@ export function makeSlaController(pool) {
       try {
         const { status, policyId, assigneeId } = req.query;
         let query = `
-          SELECT ts.*, t.ticket_number, t.subject, t.status_id,
+          SELECT ts.*, t.ticket_number, t.subject, t.status_id, t.first_responded_at,
                  sp.name as policy_name,
                  tstatus.label as status_label,
                  tstatus.\`key\` as status_key,
-                 u.full_name as assignee_name
+                 u.full_name as assignee_name,
+                 tm.name as team_name,
+                 pr.\`key\` as priority_key,
+                 pr.label as priority_label,
+                 ru.full_name as requester_name
           FROM ticket_slas ts
           JOIN tickets t ON ts.ticket_id = t.id
           JOIN sla_policies sp ON ts.policy_id = sp.id
           LEFT JOIN ticket_statuses tstatus ON t.status_id = tstatus.id
           LEFT JOIN users u ON t.assignee_id = u.id
+          LEFT JOIN teams tm ON t.team_id = tm.id
+          LEFT JOIN ticket_priorities pr ON t.priority_id = pr.id
+          LEFT JOIN users ru ON t.requester_id = ru.id
           WHERE 1=1
         `;
         const params = [];
