@@ -59,7 +59,7 @@ export default function Hierarchy() {
   const [submitting, setSubmitting] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [teamFilter, setTeamFilter] = useState("");
-  const [viewMode, setViewMode] = useState("list"); // 'tree' or 'list'
+  const [viewMode, setViewMode] = useState("tree"); // 'tree' or 'list'
 
   const isAdmin = user?.roles?.includes("admin");
 
@@ -275,7 +275,7 @@ export default function Hierarchy() {
 
   const VIEWS = [
     { key: "tree", label: "Org Chart", icon: "sitemap" },
-    { key: "list", label: "List View", icon: "list" },
+    { key: "list", label: "Directory", icon: "table" },
   ];
 
   return (
@@ -365,16 +365,16 @@ export default function Hierarchy() {
           })}
         </div>
 
+        <div className="flex-1 min-w-[200px] max-w-sm">
+          <Input
+            icon="search"
+            placeholder={viewMode === "tree" ? "Search to highlight people..." : "Search users..."}
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
         {viewMode === "list" && (
           <>
-            <div className="flex-1 min-w-[200px] max-w-sm">
-              <Input
-                icon="search"
-                placeholder="Search users..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
             <div className="w-44">
               <Select
                 value={teamFilter}
@@ -417,18 +417,8 @@ export default function Hierarchy() {
           </div>
         )
       ) : viewMode === "tree" ? (
-        <div
-          className={cn(
-            "relative overflow-hidden rounded-2xl animate-fade-up",
-            "bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]"
-          )}
-        >
-          {/* Subtle grid backdrop + brand glow for the canvas */}
-          <div className="pointer-events-none absolute inset-0 bg-grid opacity-60" />
-          <div className="pointer-events-none absolute -top-24 -right-16 h-64 w-64 rounded-full bg-[var(--accent)] opacity-[0.05] blur-3xl" />
-          <div className="relative p-5 sm:p-6">
-            <OrgChart users={users} hierarchy={hierarchy} onEditUser={openEditModal} />
-          </div>
+        <div className="animate-fade-up">
+          <OrgChart users={users} hierarchy={hierarchy} onEditUser={openEditModal} query={searchQuery} />
         </div>
       ) : filtered.length === 0 ? (
         <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]">
@@ -443,131 +433,107 @@ export default function Hierarchy() {
           />
         </div>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((u, i) => {
-            const manager = getManager(u.id);
-            const reports = getDirectReports(u.id);
-            const userHierarchyChain = hierarchyMap[u.id] || [];
-
-            return (
-              <div
-                key={u.id}
-                className={cn(
-                  "group relative flex flex-col rounded-2xl p-5 animate-fade-up",
-                  "bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)]",
-                  "transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--border-hover)] hover:shadow-[var(--shadow-card-hover)]"
-                )}
-                style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}
-              >
-                {/* Person header */}
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="h-11 w-11 shrink-0 rounded-xl flex items-center justify-center bg-[var(--accent)]/10 text-[var(--accent)] ring-1 ring-[var(--accent)]/15 font-semibold text-sm">
-                      {initials(u.full_name || u.email)}
-                    </div>
-                    <div className="min-w-0">
-                      <h3 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight line-clamp-1">
-                        {u.full_name || u.email}
-                      </h3>
-                      <p className="text-sm text-[var(--fg-muted)] line-clamp-1">
-                        {u.title || "No title"}
-                      </p>
-                    </div>
-                  </div>
-                  {isAdmin && (
-                    <button
-                      onClick={() => openEditModal(u)}
-                      title="Edit user"
-                      className={cn(
-                        "shrink-0 p-2 rounded-lg transition-all duration-150",
-                        "text-[var(--fg-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-surface)]",
-                        "opacity-0 group-hover:opacity-100 focus:opacity-100"
-                      )}
-                    >
-                      <Icon name="pencil" size={14} />
-                    </button>
-                  )}
-                </div>
-
-                {/* Team Badge */}
-                {u.team_name && (
-                  <div className="mt-3.5">
-                    <Badge tone="emerald" size="sm">
-                      <Icon name="teams" size={11} className="shrink-0" />
-                      {u.team_name}
-                    </Badge>
-                  </div>
-                )}
-
-                {/* Manager Info */}
-                <div className="mt-3.5">
-                  {manager ? (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2 text-sm">
-                        <span className="h-6 w-6 shrink-0 rounded-md bg-[var(--bg-surface)] text-[var(--fg-muted)] flex items-center justify-center">
-                          <Icon name="arrow-up" size={13} />
-                        </span>
-                        <span className="text-[var(--fg-secondary)]">Reports to</span>
-                        <span className="text-[var(--fg-primary)] font-medium truncate">
-                          {manager.full_name || manager.email}
-                        </span>
-                      </div>
-                      {userHierarchyChain.length > 1 && (
-                        <div className="flex items-center gap-2 text-xs text-[var(--fg-muted)] pl-8">
-                          <Icon name="sitemap" size={12} />
-                          <span>{userHierarchyChain.length} levels in hierarchy</span>
+        <div className="overflow-hidden rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] animate-fade-up">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm border-collapse">
+              <thead>
+                <tr className="border-b border-[var(--border-default)] bg-[var(--bg-surface)]/40">
+                  <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--fg-muted)]">Person</th>
+                  <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--fg-muted)]">Team</th>
+                  <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--fg-muted)]">Reports to</th>
+                  <th className="px-4 py-3 text-center text-[11px] font-semibold uppercase tracking-wider text-[var(--fg-muted)]">Reports</th>
+                  <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--fg-muted)]">Role</th>
+                  {isAdmin && <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-[var(--fg-muted)]">Actions</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((u) => {
+                  const manager = getManager(u.id);
+                  const reports = getDirectReports(u.id);
+                  const primaryRole = (u.roles && u.roles[0]) || "requester";
+                  const roleTone = primaryRole === "admin" ? "violet" : primaryRole === "agent" ? "blue" : "slate";
+                  return (
+                    <tr key={u.id} className="border-b border-[var(--border-default)] last:border-0 hover:bg-[var(--bg-surface)] transition-colors">
+                      {/* Person */}
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="h-9 w-9 shrink-0 rounded-lg flex items-center justify-center bg-[var(--accent)]/10 text-[var(--accent)] ring-1 ring-[var(--accent)]/15 font-semibold text-[11px]">
+                            {initials(u.full_name || u.email)}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="font-medium text-[var(--fg-primary)] truncate">{u.full_name || u.email}</p>
+                            <p className="text-xs text-[var(--fg-muted)] truncate">{u.title || "No title"}</p>
+                          </div>
                         </div>
+                      </td>
+                      {/* Team */}
+                      <td className="px-4 py-3">
+                        {u.team_name ? (
+                          <Badge tone="emerald" size="sm">
+                            <Icon name="teams" size={11} className="shrink-0" />
+                            <span className="truncate max-w-[140px]">{u.team_name}</span>
+                          </Badge>
+                        ) : (
+                          <span className="text-[var(--fg-muted)]">—</span>
+                        )}
+                      </td>
+                      {/* Reports to */}
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        {manager ? (
+                          <span className="inline-flex items-center gap-1.5 text-[var(--fg-secondary)]">
+                            <Icon name="arrow-up" size={12} className="text-[var(--fg-muted)]" />
+                            {manager.full_name || manager.email}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 text-amber-500">
+                            <Icon name="alert" size={12} />
+                            No manager
+                          </span>
+                        )}
+                      </td>
+                      {/* Reports count */}
+                      <td className="px-4 py-3 text-center">
+                        {reports.length > 0 ? (
+                          <span className="inline-flex items-center justify-center min-w-[1.5rem] px-1.5 h-6 rounded-md bg-[var(--bg-surface)] text-[var(--fg-secondary)] text-xs font-medium tabular-nums">
+                            {reports.length}
+                          </span>
+                        ) : (
+                          <span className="text-[var(--fg-muted)]">—</span>
+                        )}
+                      </td>
+                      {/* Role */}
+                      <td className="px-4 py-3">
+                        <Badge tone={roleTone} size="sm" className="capitalize">{primaryRole}</Badge>
+                      </td>
+                      {/* Actions */}
+                      {isAdmin && (
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              onClick={() => openEditModal(u)}
+                              title="Edit user"
+                              className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-surface)] transition-all"
+                            >
+                              <Icon name="pencil" size={14} />
+                            </button>
+                            {manager && (
+                              <button
+                                onClick={() => handleRemoveManager(u)}
+                                title="Remove from hierarchy"
+                                className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-rose-500 hover:bg-rose-500/10 transition-all"
+                              >
+                                <Icon name="trash" size={14} />
+                              </button>
+                            )}
+                          </div>
+                        </td>
                       )}
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2 text-sm text-[var(--fg-muted)]">
-                      <span className="h-6 w-6 shrink-0 rounded-md bg-amber-500/10 text-amber-500 flex items-center justify-center">
-                        <Icon name="alert" size={13} />
-                      </span>
-                      <span>No manager assigned</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Direct Reports */}
-                {reports.length > 0 && (
-                  <div className="mt-4 pt-4 border-t border-[var(--border-default)]">
-                    <div className="flex items-center gap-2 text-sm text-[var(--fg-secondary)] mb-2.5">
-                      <Icon name="arrow-down" size={14} className="text-[var(--fg-muted)]" />
-                      <span className="font-medium text-[var(--fg-primary)]">{reports.length}</span>
-                      <span>Direct Report{reports.length > 1 ? "s" : ""}</span>
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {reports.slice(0, 3).map(r => (
-                        <Badge key={r.id} tone="slate" size="sm">
-                          {r.full_name || r.email}
-                        </Badge>
-                      ))}
-                      {reports.length > 3 && (
-                        <Badge tone="slate" size="sm">+{reports.length - 3}</Badge>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* Spacer pushes the destructive action to the card bottom */}
-                <div className="flex-1" />
-
-                {/* Actions */}
-                {isAdmin && manager && (
-                  <div className="mt-4 pt-4 border-t border-[var(--border-default)]">
-                    <button
-                      onClick={() => handleRemoveManager(u)}
-                      className="inline-flex items-center gap-2 text-sm font-medium text-rose-500 hover:text-rose-400 transition-colors"
-                    >
-                      <Icon name="trash" size={14} />
-                      <span>Remove from hierarchy</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-            );
-          })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
