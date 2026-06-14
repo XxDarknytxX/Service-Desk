@@ -22,9 +22,9 @@ export function useBoot() {
 }
 
 const BLOOM = 720;  // orb blooms in (matches opacity/transform transitions)
-const HOLD = 520;   // beat while fully covered
+const HOLD = 750;   // beat while fully covered (sphere rotates)
 const SWAP = 90;    // let the freshly-mounted route paint before revealing it
-const EXIT = 820;   // orb zooms out + fades, app rises in
+const EXIT = 2900;  // slow particle blast expands, then fades to reveal the app
 
 export function BootProvider({ children }) {
   const [active, setActive] = useState(false);

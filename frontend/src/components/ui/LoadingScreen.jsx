@@ -10,6 +10,7 @@
  */
 
 import ParticleSphere from "./ParticleSphere";
+import { useTheme } from "../../contexts/theme";
 
 const STATES = {
   enter: { opacity: 0, scale: 0.92 },
@@ -17,17 +18,21 @@ const STATES = {
   exit: { opacity: 0, scale: 1.08 },
 };
 
-const DARK_FIELD = "radial-gradient(circle at 50% 44%, #0d1224 0%, #080a14 56%, #04050b 100%)";
+const DARK_FIELD = "radial-gradient(circle at 50% 45%, #170609 0%, #0b0305 55%, #040102 100%)";
+const LIGHT_FIELD = "radial-gradient(circle at 50% 45%, #ffffff 0%, #fdf0f1 55%, #f7e5e8 100%)";
 
 export default function LoadingScreen({ message = "Loading your workspace...", state = "in" }) {
+  const { theme } = useTheme();
+  const dark = theme === "dark";
   const s = STATES[state] || STATES.in;
   return (
     <div
       className="fixed inset-0 z-[80] flex items-center justify-center overflow-hidden"
       style={{
-        background: DARK_FIELD,
+        background: dark ? DARK_FIELD : LIGHT_FIELD,
         opacity: s.opacity,
-        transition: "opacity 700ms cubic-bezier(0.16, 1, 0.3, 1)",
+        // on exit, hold opaque while the blast expands, then fade to reveal the app
+        transition: `opacity 1600ms cubic-bezier(0.16, 1, 0.3, 1) ${state === "exit" ? "1000ms" : "0ms"}`,
         pointerEvents: state === "in" ? "auto" : "none",
       }}
       role="status"
@@ -35,9 +40,15 @@ export default function LoadingScreen({ message = "Loading your workspace...", s
     >
       <div
         className="absolute inset-0"
-        style={{ transform: `scale(${s.scale})`, transition: "transform 800ms cubic-bezier(0.16, 1, 0.3, 1)" }}
+        style={{ transform: `scale(${s.scale})`, transition: `transform ${state === "exit" ? "1700ms" : "800ms"} cubic-bezier(0.16, 1, 0.3, 1)` }}
       >
-        <ParticleSphere />
+        <ParticleSphere
+          blast={state === "exit"}
+          additive={dark}
+          colorA={dark ? "#52000e" : "#ff97a6"}
+          colorB={dark ? "#e10018" : "#ff4f66"}
+          colorC={dark ? "#ff6f88" : "#f01d36"}
+        />
       </div>
       <span className="sr-only">{message}</span>
     </div>
