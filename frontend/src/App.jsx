@@ -29,7 +29,7 @@ import PublicForm from "./pages/publicForm";
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
-  if (loading) return <LoadingScreen />;
+  if (loading) return <LoadingScreen minimal />;
   return user ? children : <Navigate to="/login" replace />;
 }
 

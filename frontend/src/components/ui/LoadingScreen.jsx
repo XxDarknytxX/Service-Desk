@@ -21,9 +21,27 @@ const STATES = {
 const DARK_FIELD = "radial-gradient(circle at 50% 45%, #170609 0%, #0b0305 55%, #040102 100%)";
 const LIGHT_FIELD = "radial-gradient(circle at 50% 45%, #ffffff 0%, #fdf0f1 55%, #f7e5e8 100%)";
 
-export default function LoadingScreen({ message = "Loading your workspace...", state = "in" }) {
+export default function LoadingScreen({ message = "Loading your workspace...", state = "in", minimal = false }) {
   const { theme } = useTheme();
   const dark = theme === "dark";
+
+  // Minimal bootstrap loader — used while the session is restored on a normal
+  // page reload. No WebGL/particles (which would flash a static frame and then
+  // hard-cut); just a calm spinner on the app's own background so it loads in
+  // seamlessly. The full particle animation is reserved for the login boot.
+  if (minimal) {
+    return (
+      <div
+        className="fixed inset-0 z-[80] flex items-center justify-center bg-[var(--bg-base)]"
+        role="status"
+        aria-live="polite"
+      >
+        <div className="h-8 w-8 rounded-full border-2 border-[var(--accent)]/25 border-t-[var(--accent)] animate-spin" />
+        <span className="sr-only">{message}</span>
+      </div>
+    );
+  }
+
   const s = STATES[state] || STATES.in;
   return (
     <div
