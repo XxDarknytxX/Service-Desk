@@ -34,6 +34,21 @@ async function migrate() {
       console.log("  Added policy_type column to sla_policies");
     }
 
+    // 1b. Add approval_sla_mode column (stage vs hierarchy matching for approval policies).
+    // The SLA controller writes this on create/update; without it, policy create/update 500s.
+    const [modeCols] = await conn.query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'sla_policies' AND COLUMN_NAME = 'approval_sla_mode'`,
+      [process.env.DATABASE_NAME]
+    );
+    if (modeCols.length === 0) {
+      await conn.query(`
+        ALTER TABLE sla_policies
+        ADD COLUMN approval_sla_mode ENUM('stage', 'hierarchy') NULL AFTER policy_type
+      `);
+      console.log("  Added approval_sla_mode column to sla_policies");
+    }
+
     // 2. Create approval_sla_policies table — granular approval-stage SLA config
     await conn.query(`
       CREATE TABLE IF NOT EXISTS approval_sla_policies (
@@ -72,6 +87,25 @@ async function migrate() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
     console.log("  Created approval_sla_policies table");
+
+    // 2b. Ensure approval_sla_policies has the per-stage mode + hierarchy-matching columns.
+    // slaController writes these on create/update; without them, creating an approval policy 500s.
+    const aspAdds = [
+      ["mode", "ENUM('stage','hierarchy') NOT NULL DEFAULT 'stage' AFTER sla_policy_id"],
+      ["applies_to_org_level", "INT NULL AFTER applies_to_approval_rule_id"],
+      ["applies_to_org_level_and_below", "TINYINT(1) NOT NULL DEFAULT 0 AFTER applies_to_org_level"],
+    ];
+    for (const [col, ddl] of aspAdds) {
+      const [c] = await conn.query(
+        `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'approval_sla_policies' AND COLUMN_NAME = ?`,
+        [process.env.DATABASE_NAME, col]
+      );
+      if (c.length === 0) {
+        await conn.query(`ALTER TABLE approval_sla_policies ADD COLUMN ${col} ${ddl}`);
+        console.log(`  Added ${col} to approval_sla_policies`);
+      }
+    }
 
     // 3. Create ticket_approval_slas — per-approval-record SLA tracking
     await conn.query(`

@@ -413,13 +413,13 @@ export function makeApprovalSlaService(pool) {
       // Create notification for the approver
       try {
         await pool.query(
-          `INSERT INTO notifications (user_id, type, title, message, link)
-           VALUES (?, 'approval_sla_warning', ?, ?, ?)`,
+          `INSERT INTO notifications (user_id, ticket_id, title, message, type)
+           VALUES (?, ?, ?, ?, 'approval_sla_warning')`,
           [
             sla.approver_id,
+            sla.ticket_id,
             `Approval SLA At Risk - ${sla.ticket_number}`,
             `Your approval for "${sla.subject}" (Level ${sla.approval_level}) is due soon. Please review.`,
-            `/tickets/${sla.ticket_id}`,
           ]
         );
       } catch (notifErr) {
@@ -546,17 +546,20 @@ export function makeApprovalSlaService(pool) {
     // Notify admins
     try {
       const [admins] = await pool.query(
-        `SELECT id FROM users WHERE role = 'admin' AND is_active = 1`
+        `SELECT DISTINCT u.id FROM users u
+         JOIN user_roles ur ON ur.user_id = u.id
+         JOIN roles r ON r.id = ur.role_id
+         WHERE r.name = 'admin' AND u.is_active = 1`
       );
       for (const admin of admins) {
         await pool.query(
-          `INSERT INTO notifications (user_id, type, title, message, link)
-           VALUES (?, 'approval_sla_breached', ?, ?, ?)`,
+          `INSERT INTO notifications (user_id, ticket_id, title, message, type)
+           VALUES (?, ?, ?, ?, 'approval_sla_breached')`,
           [
             admin.id,
+            sla.ticket_id,
             `Approval SLA Breached - ${sla.ticket_number}`,
             `Approval for "${sla.subject}" (Level ${sla.approval_level}) has breached SLA. Action: ${action}`,
-            `/tickets/${sla.ticket_id}`,
           ]
         );
       }
