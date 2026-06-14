@@ -196,6 +196,7 @@ export default function Teams() {
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [editingTeam, setEditingTeam] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [view, setView] = useState("grid"); // 'grid' or 'table'
   const [formData, setFormData] = useState({ name: "", description: "" });
   const [submitting, setSubmitting] = useState(false);
 
@@ -442,6 +443,14 @@ export default function Teams() {
 
   // ── Derived summary metrics for the header subtitle ──
   const totalMembers = teams.reduce((sum, t) => sum + (Number(t.member_count) || 0), 0);
+  const avgMembers = teams.length ? Math.round(totalMembers / teams.length) : 0;
+  const largestTeam = teams.reduce((max, t) => Math.max(max, Number(t.member_count) || 0), 0);
+  const kpis = [
+    { label: "Total Teams", value: teams.length, icon: "teams", iconCls: "bg-blue-500/10 text-blue-500 border-blue-500/15" },
+    { label: "Total Members", value: totalMembers, icon: "users", iconCls: "bg-emerald-500/10 text-emerald-500 border-emerald-500/15" },
+    { label: "Avg · Team", value: avgMembers, icon: "userCheck", iconCls: "bg-violet-500/10 text-violet-500 border-violet-500/15" },
+    { label: "Largest Team", value: largestTeam, icon: "trendingUp", iconCls: "bg-amber-500/10 text-amber-500 border-amber-500/15" },
+  ];
 
   // Reusable header control button (mirrors tickets.jsx)
   const ControlButton = ({ active, title, onClick, children }) => (
@@ -485,7 +494,28 @@ export default function Teams() {
         }
       />
 
-      {/* Toolbar: search + count */}
+      {/* KPI summary */}
+      {!loading && teams.length > 0 && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {kpis.map((kpi, i) => (
+            <div
+              key={kpi.label}
+              className="group relative overflow-hidden rounded-2xl p-5 bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--border-hover)] hover:shadow-[var(--shadow-card-hover)] animate-kpi-rise"
+              style={{ animationDelay: `${i * 70}ms` }}
+            >
+              <div className="flex items-start justify-between mb-4">
+                <span className="text-label">{kpi.label}</span>
+                <span className={cn("h-9 w-9 rounded-xl flex items-center justify-center border transition-transform duration-200 group-hover:scale-110", kpi.iconCls)}>
+                  <Icon name={kpi.icon} size={16} />
+                </span>
+              </div>
+              <p className="text-[32px] leading-none font-semibold tracking-tight text-[var(--fg-primary)] tabular-nums">{kpi.value}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Toolbar: search + view toggle */}
       <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] p-4">
         <div className="flex flex-col sm:flex-row sm:items-center gap-3">
           <div className="relative flex-1 sm:max-w-md">
@@ -506,6 +536,24 @@ export default function Teams() {
             />
           </div>
           <div className="flex items-center gap-2 sm:ml-auto">
+            {/* Grid / Table view toggle */}
+            <div className="inline-flex items-center p-1 rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)]">
+              {[{ k: "grid", i: "grid", t: "Grid view" }, { k: "table", i: "table", t: "Table view" }].map((v) => (
+                <button
+                  key={v.k}
+                  onClick={() => setView(v.k)}
+                  title={v.t}
+                  className={cn(
+                    "h-8 w-8 inline-flex items-center justify-center rounded-md transition-all duration-150",
+                    view === v.k
+                      ? "bg-[var(--bg-elevated)] text-[var(--accent)] shadow-[var(--shadow-sm)]"
+                      : "text-[var(--fg-muted)] hover:text-[var(--fg-primary)]"
+                  )}
+                >
+                  <Icon name={v.i} size={15} />
+                </button>
+              ))}
+            </div>
             <Badge tone="slate" size="md">
               {filtered.length} {filtered.length === 1 ? "team" : "teams"}
             </Badge>
@@ -568,6 +616,76 @@ export default function Teams() {
               )
             }
           />
+        </div>
+      ) : view === "table" ? (
+        <div className="overflow-hidden rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] animate-fade-up">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm border-collapse">
+              <thead>
+                <tr className="border-b border-[var(--border-default)] bg-[var(--bg-surface)]/40">
+                  <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--fg-muted)]">Team</th>
+                  <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--fg-muted)]">Description</th>
+                  <th className="px-4 py-3 text-center text-[11px] font-semibold uppercase tracking-wider text-[var(--fg-muted)]">Members</th>
+                  <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--fg-muted)]">Created</th>
+                  <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-wider text-[var(--fg-muted)]">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((team, idx) => {
+                  const tint = TEAM_TINTS[idx % TEAM_TINTS.length];
+                  const memberCount = team.member_count || 0;
+                  return (
+                    <tr
+                      key={team.id}
+                      onClick={() => openMembersModal(team)}
+                      className="border-b border-[var(--border-default)] last:border-0 hover:bg-[var(--bg-surface)] transition-colors cursor-pointer"
+                    >
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className={cn("h-9 w-9 shrink-0 rounded-lg flex items-center justify-center border", tint.tile)}>
+                            <Icon name="teams" size={16} />
+                          </div>
+                          <span className="font-medium text-[var(--fg-primary)] truncate">{team.name}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 max-w-[360px]">
+                        <span className="text-[var(--fg-secondary)] line-clamp-1">{team.description || "—"}</span>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <span className="inline-flex items-center justify-center gap-1.5 text-[var(--fg-secondary)]">
+                          <Icon name="users" size={13} className="text-[var(--fg-muted)]" />
+                          <span className="tabular-nums">{memberCount}</span>
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-[var(--fg-muted)]">
+                        {team.created_at ? new Date(team.created_at).toLocaleDateString() : "—"}
+                      </td>
+                      <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-end gap-1">
+                          <button onClick={() => openMembersModal(team)} title="Manage members" className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-surface)] transition-all">
+                            <Icon name="users" size={14} />
+                          </button>
+                          {isAdmin && (
+                            <>
+                              <button onClick={() => openPrivilegesModal(team)} title="Team privileges" className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-amber-500 hover:bg-amber-500/10 transition-all">
+                                <Icon name="shield" size={14} />
+                              </button>
+                              <button onClick={() => openEditModal(team)} title="Edit team" className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-surface)] transition-all">
+                                <Icon name="pencil" size={14} />
+                              </button>
+                              <button onClick={() => handleDelete(team)} title="Delete team" className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-rose-500 hover:bg-rose-500/10 transition-all">
+                                <Icon name="trash" size={14} />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       ) : (
         <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
