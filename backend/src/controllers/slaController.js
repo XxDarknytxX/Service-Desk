@@ -345,6 +345,54 @@ export function makeSlaController(pool) {
       }
     },
 
+    // Get SLA violations scoped to the viewer's role (admin: org-wide; otherwise
+    // own + their teams + teams in departments they head + their direct reports).
+    // Powers the hierarchical drill-down on the Reports → SLA tab.
+    async getScopedViolations(req, res) {
+      try {
+        const me = req.user?.id;
+        const isAdmin = (req.user?.roles || []).includes("admin");
+        let scope = "";
+        const params = [];
+        if (!isAdmin) {
+          scope = `AND (
+            t.assignee_id = ?
+            OR t.team_id IN (SELECT team_id FROM team_members WHERE user_id = ?)
+            OR t.team_id IN (SELECT tt.id FROM teams tt JOIN departments d ON d.id = tt.department_id WHERE d.head_user_id = ?)
+            OR t.assignee_id IN (SELECT user_id FROM user_hierarchy WHERE manager_id = ? AND is_active = 1)
+          )`;
+          params.push(me, me, me, me);
+        }
+        const [rows] = await pool.query(
+          `SELECT ts.*, t.ticket_number, t.subject, t.status_id, t.first_responded_at,
+                  t.assignee_id, t.team_id,
+                  sp.name as policy_name,
+                  tstatus.label as status_label, tstatus.\`key\` as status_key,
+                  u.full_name as assignee_name,
+                  tm.name as team_name,
+                  pr.\`key\` as priority_key, pr.label as priority_label,
+                  ru.full_name as requester_name
+           FROM ticket_slas ts
+           JOIN tickets t ON ts.ticket_id = t.id
+           JOIN sla_policies sp ON ts.policy_id = sp.id
+           LEFT JOIN ticket_statuses tstatus ON t.status_id = tstatus.id
+           LEFT JOIN users u ON t.assignee_id = u.id
+           LEFT JOIN teams tm ON t.team_id = tm.id
+           LEFT JOIN ticket_priorities pr ON t.priority_id = pr.id
+           LEFT JOIN users ru ON t.requester_id = ru.id
+           WHERE (ts.response_breached = 1 OR ts.resolve_breached = 1)
+             AND tstatus.is_closed = 0
+           ${scope}
+           ORDER BY LEAST(COALESCE(ts.response_due_at, '9999-12-31'), COALESCE(ts.resolve_due_at, '9999-12-31'))`,
+          params
+        );
+        res.json({ items: rows, scope: isAdmin ? "all" : "scoped" });
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Failed to fetch SLA violations" });
+      }
+    },
+
     // Get SLA details for a specific ticket
     async getTicketSla(req, res) {
       try {

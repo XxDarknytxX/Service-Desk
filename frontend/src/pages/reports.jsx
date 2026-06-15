@@ -16,6 +16,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { reportsApi, API_URL, api } from "../services/api";
 import { useNavigate } from "react-router-dom";
+import SlaInsights from "../components/reports/SlaInsights";
 import { useToast } from "../contexts/toast";
 import Badge from "../components/ui/Badge";
 import Button from "../components/ui/Button";
@@ -34,18 +35,6 @@ import {
 } from "recharts";
 
 function cn(...parts) { return parts.filter(Boolean).join(" "); }
-
-/** Humanize a millisecond duration for "overdue by" labels. */
-function fmtDur(ms) {
-  const v = Math.abs(Number(ms) || 0);
-  const mins = Math.round(v / 60000);
-  if (mins < 60) return `${mins}m`;
-  const h = Math.floor(mins / 60), m = mins % 60;
-  if (h < 24) return m ? `${h}h ${m}m` : `${h}h`;
-  const d = Math.floor(h / 24);
-  return `${d}d ${h % 24}h`;
-}
-const STATUS_TONE = { new: "blue", open: "indigo", pending: "amber", on_hold: "slate", solved: "emerald", closed: "slate" };
 
 const TABS = [
   { key: "overview", label: "Overview", icon: "bar-chart" },
@@ -175,16 +164,7 @@ export default function Reports() {
   const [atRiskTickets, setAtRiskTickets] = useState({ tickets: [], count: 0 });
   const [slaPriorityBreakdown, setSlaPriorityBreakdown] = useState([]);
   const [slaViolations, setSlaViolations] = useState([]);
-  const [violationFilter, setViolationFilter] = useState("all");
-  const filteredViolations = useMemo(
-    () =>
-      violationFilter === "response"
-        ? slaViolations.filter((v) => v.response_breached)
-        : violationFilter === "resolve"
-        ? slaViolations.filter((v) => v.resolve_breached)
-        : slaViolations,
-    [slaViolations, violationFilter]
-  );
+  const [slaViolationScope, setSlaViolationScope] = useState("all");
 
   const dateParams = useMemo(() => {
     const toLocal = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -211,7 +191,7 @@ export default function Reports() {
         reportsApi.getAgentWorkload(dateParams),
         reportsApi.getAtRiskTickets(),
         reportsApi.getSlaPriorityBreakdown(dateParams),
-        api("/sla/ticket-slas?status=breached").catch(() => []),
+        api("/sla/my-violations").catch(() => ({ items: [], scope: "all" })),
       ]);
       setMetrics(m);
       setAgentPerformance(a);
@@ -225,7 +205,8 @@ export default function Reports() {
       setAgentWorkload(aw || { agents: [], unassigned: { total: 0, byTeam: [] } });
       setAtRiskTickets(ar || { tickets: [], count: 0 });
       setSlaPriorityBreakdown(spb || []);
-      setSlaViolations(Array.isArray(viol) ? viol : []);
+      setSlaViolations(viol?.items || []);
+      setSlaViolationScope(viol?.scope || "all");
     } catch (err) {
       console.error("Failed to load reports", err);
       toast.error(err.message || "Failed to load reports");
@@ -631,93 +612,18 @@ export default function Reports() {
             ))}
           </div>
 
-          {/* SLA Violations — detailed drill-down */}
+          {/* SLA Violations — hierarchical drill-down (team → people → tickets) */}
           <Panel
             icon="alert-triangle"
             tone="rose"
             title="SLA Violations"
-            subtitle="Tickets currently in breach — click a row to open and investigate"
-            right={
-              <div className="flex items-center gap-1.5">
-                {[
-                  ["all", "All"],
-                  ["response", "Response"],
-                  ["resolve", "Resolve"],
-                ].map(([k, l]) => {
-                  const n =
-                    k === "all"
-                      ? slaViolations.length
-                      : slaViolations.filter((v) => (k === "response" ? v.response_breached : v.resolve_breached)).length;
-                  return (
-                    <button
-                      key={k}
-                      onClick={() => setViolationFilter(k)}
-                      className={cn(
-                        "px-2.5 py-1 rounded-md text-xs font-medium transition-colors",
-                        violationFilter === k
-                          ? "bg-[var(--accent)] text-white"
-                          : "bg-[var(--bg-surface)] text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
-                      )}
-                    >
-                      {l} <span className="tabular-nums opacity-80">{n}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            }
-            bodyClass=""
+            subtitle="Drill from teams down to the people and tickets responsible"
           >
-            {filteredViolations.length > 0 ? (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="bg-[var(--bg-surface)]/60 border-b border-[var(--border-default)]">
-                      {["Ticket", "Subject", "Team", "Priority", "Assignee", "Breached", "Policy", "Overdue", "Status"].map((h) => (
-                        <th key={h} className="px-5 py-3 text-left text-label whitespace-nowrap">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[var(--border-default)]">
-                    {filteredViolations.map((v) => {
-                      const now = Date.now();
-                      const respOver = v.response_breached && v.response_due_at ? now - new Date(v.response_due_at).getTime() : 0;
-                      const resOver = v.resolve_breached && v.resolve_due_at ? now - new Date(v.resolve_due_at).getTime() : 0;
-                      const worst = Math.max(respOver, resOver);
-                      return (
-                        <tr
-                          key={v.ticket_id}
-                          onClick={() => navigate(`/tickets/${v.ticket_id}`)}
-                          className="hover:bg-[var(--bg-surface)] transition-colors cursor-pointer"
-                        >
-                          <td className="px-5 py-3.5 text-sm font-mono font-semibold text-[var(--accent)] whitespace-nowrap">{v.ticket_number}</td>
-                          <td className="px-5 py-3.5 text-sm text-[var(--fg-primary)] max-w-[220px] truncate">{v.subject}</td>
-                          <td className="px-5 py-3.5 text-sm text-[var(--fg-secondary)] whitespace-nowrap">{v.team_name || "—"}</td>
-                          <td className="px-5 py-3.5"><Badge tone={v.priority_key === "urgent" || v.priority_key === "high" ? "rose" : "slate"} size="sm">{v.priority_label || "—"}</Badge></td>
-                          <td className="px-5 py-3.5 text-sm text-[var(--fg-secondary)] whitespace-nowrap">{v.assignee_name || "Unassigned"}</td>
-                          <td className="px-5 py-3.5 whitespace-nowrap">
-                            <div className="flex items-center gap-1">
-                              {!!v.response_breached && <Badge tone="rose" size="sm">Response</Badge>}
-                              {!!v.resolve_breached && <Badge tone="amber" size="sm">Resolve</Badge>}
-                            </div>
-                          </td>
-                          <td className="px-5 py-3.5 text-sm text-[var(--fg-secondary)] whitespace-nowrap">{v.policy_name}</td>
-                          <td className="px-5 py-3.5 whitespace-nowrap"><Badge tone="rose" size="sm">{fmtDur(worst)} over</Badge></td>
-                          <td className="px-5 py-3.5"><Badge tone={STATUS_TONE[v.status_key] || "slate"} size="sm">{v.status_label}</Badge></td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <EmptyState
-                icon="check-circle"
-                tone="emerald"
-                title="No SLA violations"
-                description={slaViolations.length === 0 ? "Nothing is in breach right now." : "No violations match this filter."}
-                compact
-              />
-            )}
+            <SlaInsights
+              violations={slaViolations}
+              scope={slaViolationScope}
+              onOpenTicket={(id) => navigate(`/tickets/${id}`)}
+            />
           </Panel>
 
           {/* SLA Trend Chart */}

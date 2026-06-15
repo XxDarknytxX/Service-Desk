@@ -14,6 +14,7 @@ export function makeSlaRouter(controller) {
 
   // Ticket SLAs - List and details
   router.get("/sla/ticket-slas", verifyToken, controller.getTicketSlas);
+  router.get("/sla/my-violations", verifyToken, controller.getScopedViolations);
   router.get("/sla/tickets/:ticketId", verifyToken, controller.getTicketSla);
   router.get("/sla/tickets/:ticketId/history", verifyToken, controller.getTicketSlaHistory);
 
