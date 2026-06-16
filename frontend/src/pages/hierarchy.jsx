@@ -73,7 +73,12 @@ export default function Hierarchy() {
         api("/hierarchy/org-chart"),
         api("/teams").catch(() => ({ teams: [] }))
       ]);
-      setUsers(orgChartData.users || []);
+      // Corporate customers are external — exclude them from the org hierarchy
+      // (chart, directory and KPIs); they have no reporting line.
+      const orgUsers = (orgChartData.users || []).filter(
+        (u) => !(u.roles || []).includes("corporate_customer")
+      );
+      setUsers(orgUsers);
       setHierarchy(orgChartData.hierarchy || []);
       const teamsList = teamsData?.teams || teamsData?.items || [];
       setTeams(Array.isArray(teamsList) ? teamsList : []);
