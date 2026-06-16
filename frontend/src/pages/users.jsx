@@ -10,7 +10,7 @@
  * this is a visual / layout redesign only.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { api } from "../services/api";
 import Button from "../components/ui/Button";
 import Icon from "../components/ui/Icon";
@@ -387,7 +387,7 @@ export default function Users() {
   // Agents may only ever see the corporate-customer list, never the org directory.
   const effectiveTab = isAdmin ? userTab : "customers";
 
-  const filteredUsers = users.filter((u) => {
+  const filteredUsers = useMemo(() => users.filter((u) => {
     const matchesSearch =
       (u.full_name || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
       (u.email || "").toLowerCase().includes(searchQuery.toLowerCase());
@@ -396,7 +396,7 @@ export default function Users() {
       statusFilter === "all" ? true : statusFilter === "active" ? !!u.is_active : !u.is_active;
     const matchesRole = effectiveTab === "team" ? (!roleFilter || (u.roles || []).includes(roleFilter)) : true;
     return matchesSearch && matchesTab && matchesStatus && matchesRole;
-  });
+  }), [users, searchQuery, effectiveTab, statusFilter, roleFilter]);
 
   const customerCount = users.filter(isCustomer).length;
   const teamCount = users.length - customerCount;
@@ -408,6 +408,76 @@ export default function Users() {
     { value: "agent", label: "Agents", icon: "userCheck" },
     { value: "requester", label: "Requesters", icon: "user" },
   ];
+
+  // Memoize the rows so opening the create/edit modal (which only flips modal
+  // state) no longer re-renders the whole table — that was the open lag.
+  // Handlers only call setters/api so omitting them from deps is safe.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const tableRows = useMemo(() => filteredUsers.map((u) => {
+    const primaryRole = (u.roles || [])[0] || "requester";
+    return (
+      <tr
+        key={u.id}
+        onClick={isAdmin ? () => openEditModal(u) : undefined}
+        className={cn(
+          "transition-colors duration-150 group",
+          isAdmin && "hover:bg-[var(--bg-surface)] cursor-pointer"
+        )}
+      >
+        <td className="px-4 py-3.5">
+          <div className="flex items-center gap-3 min-w-0">
+            <span className={cn("h-9 w-9 rounded-full text-xs font-semibold flex items-center justify-center shrink-0", roleAvatarStyles[primaryRole] || roleAvatarStyles.requester)}>
+              {(u.full_name || u.email || "?")[0].toUpperCase()}
+            </span>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-[var(--fg-primary)] truncate group-hover:text-[var(--accent)] transition-colors">{u.full_name || "Unnamed"}</p>
+              <p className="text-xs text-[var(--fg-muted)] truncate">{u.email}</p>
+            </div>
+          </div>
+        </td>
+        <td className="px-4 py-3.5 hidden md:table-cell whitespace-nowrap">
+          <span className="text-sm text-[var(--fg-secondary)]">{u.title || "—"}</span>
+        </td>
+        <td className="px-4 py-3.5 hidden lg:table-cell whitespace-nowrap">
+          <span className="text-sm text-[var(--fg-secondary)]">{u.phone || "—"}</span>
+        </td>
+        <td className="px-4 py-3.5">
+          {effectiveTab === "customers" ? (
+            <span className="inline-flex items-center gap-1.5 text-sm text-[var(--fg-secondary)]">
+              {u.company ? <><Icon name="building" size={13} className="text-[var(--fg-muted)]" />{u.company}</> : <span className="text-[var(--fg-muted)]">—</span>}
+            </span>
+          ) : (
+            <div className="flex gap-1.5 flex-wrap">
+              {(u.roles || []).map((role) => (
+                <Badge key={role} tone={roleBadgeColors[role] || "slate"} size="sm">{role}</Badge>
+              ))}
+            </div>
+          )}
+        </td>
+        <td className="px-4 py-3.5 whitespace-nowrap">
+          <Badge tone={u.is_active ? "emerald" : "slate"} size="sm" dot={!!u.is_active}>
+            {u.is_active ? "Active" : "Inactive"}
+          </Badge>
+        </td>
+        {isAdmin && (
+          <td className="px-4 py-3.5 text-right" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+              <button onClick={() => openEditModal(u)} className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-surface-hover)] transition-colors" title="Edit user">
+                <Icon name="pencil" size={15} />
+              </button>
+              <button
+                onClick={() => handleToggleActive(u)}
+                className={cn("p-2 rounded-lg transition-colors text-[var(--fg-muted)]", u.is_active ? "hover:text-amber-500 hover:bg-amber-500/10" : "hover:text-emerald-500 hover:bg-emerald-500/10")}
+                title={u.is_active ? "Deactivate user" : "Activate user"}
+              >
+                <Icon name={u.is_active ? "lock" : "lockOpen"} size={15} />
+              </button>
+            </div>
+          </td>
+        )}
+      </tr>
+    );
+  }), [filteredUsers, isAdmin, effectiveTab]);
 
   return (
     <>
@@ -583,98 +653,7 @@ export default function Users() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--border-default)]">
-                  {filteredUsers.map((u) => {
-                    const primaryRole = (u.roles || [])[0] || "requester";
-                    return (
-                      <tr
-                        key={u.id}
-                        onClick={isAdmin ? () => openEditModal(u) : undefined}
-                        className={cn(
-                          "transition-colors duration-150 group",
-                          isAdmin && "hover:bg-[var(--bg-surface)] cursor-pointer"
-                        )}
-                      >
-                        {/* User */}
-                        <td className="px-4 py-3.5">
-                          <div className="flex items-center gap-3 min-w-0">
-                            <span
-                              className={cn(
-                                "h-9 w-9 rounded-full text-xs font-semibold flex items-center justify-center shrink-0",
-                                roleAvatarStyles[primaryRole] || roleAvatarStyles.requester
-                              )}
-                            >
-                              {(u.full_name || u.email || "?")[0].toUpperCase()}
-                            </span>
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium text-[var(--fg-primary)] truncate group-hover:text-[var(--accent)] transition-colors">
-                                {u.full_name || "Unnamed"}
-                              </p>
-                              <p className="text-xs text-[var(--fg-muted)] truncate">{u.email}</p>
-                            </div>
-                          </div>
-                        </td>
-
-                        {/* Title */}
-                        <td className="px-4 py-3.5 hidden md:table-cell whitespace-nowrap">
-                          <span className="text-sm text-[var(--fg-secondary)]">{u.title || "—"}</span>
-                        </td>
-
-                        {/* Phone */}
-                        <td className="px-4 py-3.5 hidden lg:table-cell whitespace-nowrap">
-                          <span className="text-sm text-[var(--fg-secondary)]">{u.phone || "—"}</span>
-                        </td>
-
-                        {/* Roles / Company */}
-                        <td className="px-4 py-3.5">
-                          {effectiveTab === "customers" ? (
-                            <span className="inline-flex items-center gap-1.5 text-sm text-[var(--fg-secondary)]">
-                              {u.company ? <><Icon name="building" size={13} className="text-[var(--fg-muted)]" />{u.company}</> : <span className="text-[var(--fg-muted)]">—</span>}
-                            </span>
-                          ) : (
-                            <div className="flex gap-1.5 flex-wrap">
-                              {(u.roles || []).map((role) => (
-                                <Badge key={role} tone={roleBadgeColors[role] || "slate"} size="sm">
-                                  {role}
-                                </Badge>
-                              ))}
-                            </div>
-                          )}
-                        </td>
-
-                        {/* Status */}
-                        <td className="px-4 py-3.5 whitespace-nowrap">
-                          <Badge tone={u.is_active ? "emerald" : "slate"} size="sm" dot={!!u.is_active}>
-                            {u.is_active ? "Active" : "Inactive"}
-                          </Badge>
-                        </td>
-
-                        {/* Actions */}
-                        {isAdmin && (
-                          <td className="px-4 py-3.5 text-right" onClick={(e) => e.stopPropagation()}>
-                            <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-                              <button
-                                onClick={() => openEditModal(u)}
-                                className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-surface-hover)] transition-colors"
-                                title="Edit user"
-                              >
-                                <Icon name="pencil" size={15} />
-                              </button>
-                              <button
-                                onClick={() => handleToggleActive(u)}
-                                className={cn(
-                                  "p-2 rounded-lg transition-colors text-[var(--fg-muted)]",
-                                  u.is_active ? "hover:text-amber-500 hover:bg-amber-500/10" : "hover:text-emerald-500 hover:bg-emerald-500/10"
-                                )}
-                                title={u.is_active ? "Deactivate user" : "Activate user"}
-                              >
-                                <Icon name={u.is_active ? "lock" : "lockOpen"} size={15} />
-                              </button>
-                            </div>
-                          </td>
-                        )}
-                      </tr>
-                    );
-                  })}
+                  {tableRows}
                 </tbody>
               </table>
             </div>
