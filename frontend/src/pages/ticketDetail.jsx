@@ -1595,11 +1595,18 @@ export default function TicketDetail() {
 
               {/* Requester */}
               <DetailRow label="Requester" icon="user">
-                <div className="flex items-center gap-2 justify-end">
-                  <div className="h-5 w-5 rounded-full bg-[var(--accent)]/10 flex items-center justify-center text-[10px] font-bold text-[var(--accent)]">
+                <div className="flex items-start gap-2 justify-end">
+                  <div className="min-w-0 text-right">
+                    <span className="block text-sm text-[var(--fg-primary)]">{ticket.requester_name}</span>
+                    {(ticket.requester_title || ticket.requester_company) && (
+                      <span className="block text-[11px] text-[var(--fg-muted)] leading-tight mt-0.5">
+                        {[ticket.requester_title, ticket.requester_company].filter(Boolean).join(" · ")}
+                      </span>
+                    )}
+                  </div>
+                  <div className="h-5 w-5 mt-0.5 rounded-full bg-[var(--accent)]/10 flex items-center justify-center text-[10px] font-bold text-[var(--accent)] shrink-0">
                     {getInitial(ticket.requester_name)}
                   </div>
-                  <span className="text-sm text-[var(--fg-primary)]">{ticket.requester_name}</span>
                 </div>
               </DetailRow>
 

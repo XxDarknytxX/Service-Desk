@@ -28,6 +28,7 @@ export function makeTicketRouter(controller) {
   router.post("/tickets/:id/assign", requireAuth, controller.assignToMe);
   router.post("/tickets/:id/escalate", requireAuth, controller.escalate);
   router.post("/tickets/:id/reassign", requireAuth, controller.reassign);
+  router.post("/tickets/:id/flag-to-noc", requireAuth, controller.flagToNoc);
 
   // Multi-team support
   router.get("/tickets/:id/teams", requireAuth, controller.getTicketTeams);

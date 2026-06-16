@@ -43,7 +43,7 @@ export function makeMetaController(pool) {
         );
         const [serviceCategories] = await pool.query(
           `SELECT sc.id, sc.\`key\`, sc.name, sc.description, sc.icon, sc.routing_team_id,
-                  t.name AS routing_team_name
+                  sc.is_triage, sc.sla_grace_pct, t.name AS routing_team_name
            FROM service_categories sc
            LEFT JOIN teams t ON t.id = sc.routing_team_id
            WHERE sc.is_active = 1

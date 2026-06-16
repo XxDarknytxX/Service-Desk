@@ -63,6 +63,7 @@ export default function Users() {
     email: "",
     password: "",
     title: "",
+    company: "",
     phone: "",
     roles: ["requester"],
     manager_id: "",
@@ -141,6 +142,7 @@ export default function Users() {
       email: u.email || "",
       password: "",
       title: u.title || "",
+      company: u.company || "",
       phone: u.phone || "",
       roles: u.roles || ["requester"],
       manager_id: currentManagerId,
@@ -800,12 +802,18 @@ export default function Users() {
                 )}
               </div>
               <Input
-                label="Title"
+                label="Title / Position"
                 placeholder="Support Engineer"
                 value={formData.title}
                 onChange={(e) => setFormData({ ...formData, title: e.target.value })}
               />
             </div>
+            <Input
+              label="Company"
+              placeholder="e.g. Pacific Trade Fiji (for corporate customers)"
+              value={formData.company}
+              onChange={(e) => setFormData({ ...formData, company: e.target.value })}
+            />
             <Input
               label="Phone"
               placeholder="+1 555-0123"

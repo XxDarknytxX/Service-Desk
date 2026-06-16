@@ -18,7 +18,7 @@ export function makeUserController(pool) {
     list: async (_req, res) => {
       try {
         const [rows] = await pool.query(
-          `SELECT u.id, u.email, u.full_name, u.title, u.phone, u.is_active,
+          `SELECT u.id, u.email, u.full_name, u.title, u.company, u.phone, u.is_active,
                   u.created_at, u.last_login_at,
                   GROUP_CONCAT(r.name ORDER BY r.name SEPARATOR ',') AS roles
            FROM users u
@@ -43,7 +43,7 @@ export function makeUserController(pool) {
       const errors = validationResult(req);
       if (!errors.isEmpty()) return send.bad(res, errors.array()[0].msg);
 
-      const { email, password, fullName, full_name, title, phone, roles } = req.body;
+      const { email, password, fullName, full_name, title, company, phone, roles } = req.body;
       try {
         // Generate random password if not provided
         const finalPassword = password || Math.random().toString(36).slice(-10) + 'Aa1!';
@@ -53,9 +53,9 @@ export function makeUserController(pool) {
         const name = full_name || fullName || null;
 
         const [result] = await pool.query(
-          `INSERT INTO users (email, password_hash, full_name, title, phone)
-           VALUES (?, ?, ?, ?, ?)`,
-          [email, passwordHash, name, title || null, phone || null]
+          `INSERT INTO users (email, password_hash, full_name, title, company, phone)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [email, passwordHash, name, title || null, company || null, phone || null]
         );
         const userId = result.insertId;
         await setUserRoles(pool, userId, roles && roles.length ? roles : ["requester"]);
@@ -83,7 +83,7 @@ export function makeUserController(pool) {
     update: async (req, res) => {
       const userId = Number(req.params.id);
       try {
-        const fields = ["full_name", "title", "phone", "is_active"];
+        const fields = ["full_name", "title", "company", "phone", "is_active"];
         const updates = [];
         const values = [];
 
@@ -138,7 +138,7 @@ export function makeUserController(pool) {
       const userId = Number(req.params.id);
       try {
         const [rows] = await pool.query(
-          `SELECT id, email, full_name, title, phone, is_active, created_at, last_login_at
+          `SELECT id, email, full_name, title, company, phone, is_active, created_at, last_login_at
            FROM users WHERE id = ?`,
           [userId]
         );

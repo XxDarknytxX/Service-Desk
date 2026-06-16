@@ -82,11 +82,23 @@ function Banner({ tone = "info", icon, children }) {
   );
 }
 
+// Two-step progress indicator for the corporate raise-request flow.
+function StepDots({ step }) {
+  return (
+    <div className="flex items-center gap-2 text-[11px] font-medium text-[var(--fg-muted)]">
+      <span className={cn("h-1.5 w-8 rounded-full transition-colors", step >= 1 ? "bg-[var(--accent)]" : "bg-[var(--border-default)]")} />
+      <span className={cn("h-1.5 w-8 rounded-full transition-colors", step >= 2 ? "bg-[var(--accent)]" : "bg-[var(--border-default)]")} />
+      <span className="ml-1">Step {step} of 2</span>
+    </div>
+  );
+}
+
 export default function TicketCreateModal({ open, onClose, meta, user, onCreated }) {
   const toast = useToast();
   // Mode: null (choosing), 'manual', 'template_gallery', 'template_form',
   //       'form_pick', 'form_send', 'form_done'  (customer-form ticket flow)
   const [mode, setMode] = useState(null);
+  const [corpStep, setCorpStep] = useState(1); // corporate flow: 1=choose, 2=details
   const [form, setForm] = useState(defaultForm);
   const [loading, setLoading] = useState(false);
   const [teamMembers, setTeamMembers] = useState([]);
@@ -147,6 +159,7 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
   useEffect(() => {
     if (open) {
       setMode(isCorporate ? "corporate" : null);
+      setCorpStep(1);
       setForm({ ...defaultForm, organizationId: defaultOrgId });
       setLoading(false);
       setTeamMembers([]);
@@ -220,6 +233,12 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
       }
       return updated;
     });
+  }
+
+  // Corporate flow: advance from "choose category" to "details".
+  function goToCorpStep2() {
+    if (!form.serviceCategoryKey) { toast.error("Please choose a category for your request"); return; }
+    setCorpStep(2);
   }
 
   // When a template is selected from gallery
@@ -808,72 +827,128 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
   // ─── Corporate request (category-routed, raise-only) ──────────────
   function renderCorporateForm() {
     const cats = serviceCategories;
-    return (
-      <form id="ticket-create-form" onSubmit={onSubmit} noValidate className="space-y-6">
-        <section className="space-y-3.5">
+    const mainCats = cats.filter((c) => !c.is_triage);
+    const triageCats = cats.filter((c) => c.is_triage);
+    const selected = cats.find((c) => c.key === form.serviceCategoryKey);
+
+    const tile = (c, i) => {
+      const active = form.serviceCategoryKey === c.key;
+      return (
+        <button
+          key={c.key}
+          type="button"
+          onClick={() => updateField("serviceCategoryKey", c.key)}
+          style={{ animationDelay: `${i * 50}ms` }}
+          className={cn(
+            "group relative flex flex-col gap-2.5 p-4 rounded-2xl text-left animate-fade-up border min-h-[8.5rem]",
+            "transition-[box-shadow,border-color,background-color] duration-200",
+            active
+              ? "border-[var(--accent)] bg-[var(--accent)]/5 ring-2 ring-[var(--accent)]/20"
+              : "border-[var(--border-default)] bg-[var(--bg-elevated)] hover:border-[var(--border-hover)] hover:shadow-[var(--shadow-card-hover)]"
+          )}
+        >
+          <span className={cn(
+            "h-10 w-10 rounded-xl flex items-center justify-center shrink-0 transition-colors",
+            active ? "bg-[var(--accent)]/15 text-[var(--accent)]" : "bg-[var(--bg-surface)] text-[var(--fg-muted)] group-hover:text-[var(--accent)]"
+          )}>
+            <Icon name={c.icon || "tag"} size={20} />
+          </span>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-[var(--fg-primary)]">{c.name}</p>
+            <p className="text-xs text-[var(--fg-muted)] leading-snug mt-0.5 line-clamp-2">{c.description}</p>
+          </div>
+          {c.routing_team_name && (
+            <p className="mt-auto inline-flex items-center gap-1 text-[10px] font-medium text-[var(--fg-subtle)]">
+              <Icon name="arrowRight" size={10} /> Goes to {c.routing_team_name}
+            </p>
+          )}
+          {active && <Icon name="checkCircle" size={16} className="text-[var(--accent)] absolute top-3 right-3" />}
+        </button>
+      );
+    };
+
+    // ── STEP 1 — choose a category ──────────────────────────────────
+    if (corpStep === 1) {
+      return (
+        <div className="space-y-4">
+          <StepDots step={1} />
           <SectionHeading icon="layers" tone="accent" title="What do you need help with?" hint="Pick a category — we route your request to the right team." />
           {cats.length === 0 ? (
             <Banner tone="muted">No request categories are configured yet. Please contact your account manager.</Banner>
           ) : (
-            <div className="grid gap-3 grid-cols-2">
-              {cats.map((c, i) => {
+            <>
+              <div className="grid gap-3 grid-cols-2">{mainCats.map(tile)}</div>
+              {triageCats.map((c) => {
                 const active = form.serviceCategoryKey === c.key;
                 return (
                   <button
                     key={c.key}
                     type="button"
                     onClick={() => updateField("serviceCategoryKey", c.key)}
-                    style={{ animationDelay: `${i * 50}ms` }}
                     className={cn(
-                      "group relative flex flex-col gap-2.5 p-4 rounded-2xl text-left animate-fade-up border min-h-[8.5rem]",
-                      "transition-[box-shadow,border-color,background-color] duration-200",
+                      "group relative w-full flex items-center gap-3.5 p-4 rounded-2xl text-left border transition-[box-shadow,border-color,background-color] duration-200",
                       active
                         ? "border-[var(--accent)] bg-[var(--accent)]/5 ring-2 ring-[var(--accent)]/20"
-                        : "border-[var(--border-default)] bg-[var(--bg-elevated)] hover:border-[var(--border-hover)] hover:shadow-[var(--shadow-card-hover)]"
+                        : "border-dashed border-[var(--border-hover)] bg-[var(--bg-base)] hover:border-[var(--accent)]/50 hover:bg-[var(--bg-surface)]"
                     )}
                   >
                     <span className={cn(
-                      "h-10 w-10 rounded-xl flex items-center justify-center shrink-0 transition-colors",
-                      active ? "bg-[var(--accent)]/15 text-[var(--accent)]" : "bg-[var(--bg-surface)] text-[var(--fg-muted)] group-hover:text-[var(--accent)]"
+                      "h-10 w-10 rounded-xl flex items-center justify-center shrink-0",
+                      active ? "bg-[var(--accent)]/15 text-[var(--accent)]" : "bg-amber-500/10 text-amber-500"
                     )}>
-                      <Icon name={c.icon || "tag"} size={20} />
+                      <Icon name={c.icon || "alertCircle"} size={20} />
                     </span>
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <p className="text-sm font-semibold text-[var(--fg-primary)]">{c.name}</p>
-                      <p className="text-xs text-[var(--fg-muted)] leading-snug mt-0.5 line-clamp-2">{c.description}</p>
+                      <p className="text-xs text-[var(--fg-muted)] leading-snug mt-0.5">{c.description}</p>
                     </div>
-                    {c.routing_team_name && (
-                      <p className="mt-auto inline-flex items-center gap-1 text-[10px] font-medium text-[var(--fg-subtle)]">
-                        <Icon name="arrowRight" size={10} /> Goes to {c.routing_team_name}
-                      </p>
-                    )}
+                    <span className="shrink-0 text-right text-[10px] font-medium text-[var(--fg-subtle)] leading-tight">
+                      Triaged by {c.routing_team_name || "NOC"}<br />longer response time
+                    </span>
                     {active && <Icon name="checkCircle" size={16} className="text-[var(--accent)] absolute top-3 right-3" />}
                   </button>
                 );
               })}
-            </div>
+            </>
           )}
-        </section>
+        </div>
+      );
+    }
 
-        <section className="space-y-3.5">
-          <SectionHeading icon="pencil" tone="violet" title="Tell us more" hint="A short summary and any useful detail." />
-          <Input
-            label="Subject"
-            value={form.subject}
-            onChange={(e) => updateField("subject", e.target.value)}
-            placeholder="Short summary of your request"
-            required
-          />
-          <Textarea
-            label="Description"
-            rows={4}
-            required
-            value={form.description}
-            onChange={(e) => updateField("description", e.target.value)}
-            placeholder="Describe the issue or request, the impact, and any reference numbers"
-          />
-        </section>
-
+    // ── STEP 2 — details ────────────────────────────────────────────
+    return (
+      <form id="ticket-create-form" onSubmit={onSubmit} noValidate className="space-y-5">
+        <StepDots step={2} />
+        {selected && (
+          <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-[var(--bg-base)] border border-[var(--border-default)]">
+            <span className="h-9 w-9 rounded-lg flex items-center justify-center shrink-0 bg-[var(--accent)]/10 text-[var(--accent)]">
+              <Icon name={selected.icon || "tag"} size={18} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-[var(--fg-primary)]">{selected.name}</p>
+              <p className="text-[11px] text-[var(--fg-muted)]">
+                {selected.is_triage ? "NOC will triage & route this — longer response time" : `Goes to ${selected.routing_team_name}`}
+              </p>
+            </div>
+            <button type="button" onClick={() => setCorpStep(1)} className="text-[11px] font-medium text-[var(--accent)] hover:underline shrink-0">Change</button>
+          </div>
+        )}
+        <SectionHeading icon="pencil" tone="violet" title="Tell us more" hint="A short summary and any useful detail." />
+        <Input
+          label="Subject"
+          value={form.subject}
+          onChange={(e) => updateField("subject", e.target.value)}
+          placeholder="Short summary of your request"
+          required
+        />
+        <Textarea
+          label="Description"
+          rows={4}
+          required
+          value={form.description}
+          onChange={(e) => updateField("description", e.target.value)}
+          placeholder="Describe the issue or request, the impact, and any reference numbers"
+        />
         <Banner tone="muted" icon="info">
           Your request goes straight to the responsible team's queue and is tracked end-to-end — you'll be notified as it progresses.
         </Banner>
@@ -1128,7 +1203,7 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
 
   const modalSubtitle =
     mode === "corporate"
-      ? "Pick a category and tell us what you need — we'll route it to the right team."
+      ? (corpStep === 1 ? "First, choose what your request is about." : "Now tell us about the issue.")
       : mode === null
       ? "Choose how you'd like to create your ticket."
       : mode === "manual"
@@ -1174,6 +1249,25 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
             >
               Open ticket
             </Button>
+          </>
+        ) : mode === "corporate" ? (
+          <>
+            {corpStep === 2 && (
+              <Button type="button" variant="ghost" onClick={() => setCorpStep(1)} icon={<Icon name="arrowLeft" size={16} />}>
+                Back
+              </Button>
+            )}
+            <div className="flex-1" />
+            <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+            {corpStep === 1 ? (
+              <Button type="button" onClick={goToCorpStep2} icon={<Icon name="arrowRight" size={16} />}>
+                Next
+              </Button>
+            ) : (
+              <Button type="submit" form="ticket-create-form" loading={loading} icon={<Icon name="send" size={16} />}>
+                {loading ? "Submitting..." : "Submit request"}
+              </Button>
+            )}
           </>
         ) : (
           <>

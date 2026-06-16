@@ -16,6 +16,17 @@ function isAgent(user) {
   return (user.roles || []).includes("admin") || (user.roles || []).includes("agent");
 }
 
+// The NOC team is the triage queue — only its members (and admins) may move a
+// ticket from one team to another. Everyone else flags it back to NOC instead.
+async function isNocMember(pool, userId) {
+  const [rows] = await pool.query(
+    `SELECT 1 FROM team_members tm JOIN teams t ON t.id = tm.team_id
+     WHERE t.name = 'NOC' AND tm.user_id = ? LIMIT 1`,
+    [userId]
+  );
+  return rows.length > 0;
+}
+
 const ALLOWED_LOOKUP_TABLES = ["ticket_statuses", "ticket_priorities", "ticket_types", "ticket_channels"];
 
 async function getLookupId(pool, table, key) {
@@ -468,9 +479,11 @@ export function makeTicketController(pool) {
             ty.label AS type_label, ty.\`key\` AS type_key,
             ch.label AS channel_label, ch.\`key\` AS channel_key,
             req.full_name AS requester_name, req.email AS requester_email,
+            req.company AS requester_company, req.title AS requester_title,
             ass.full_name AS assignee_name, ass.email AS assignee_email,
             org.name AS organization_name,
             team.name AS team_name,
+            sc.name AS service_category_name,
             tmpl.name AS template_name, tmpl.icon AS template_icon
           FROM tickets t
           INNER JOIN ticket_statuses s ON s.id = t.status_id
@@ -481,6 +494,7 @@ export function makeTicketController(pool) {
           LEFT JOIN users ass ON ass.id = t.assignee_id
           LEFT JOIN organizations org ON org.id = t.organization_id
           LEFT JOIN teams team ON team.id = t.team_id
+          LEFT JOIN service_categories sc ON sc.id = t.service_category_id
           LEFT JOIN ticket_templates tmpl ON tmpl.id = t.template_id
           WHERE t.id = ?`,
           [ticketId]
@@ -604,13 +618,15 @@ export function makeTicketController(pool) {
         // explicit teamId to override it.
         let serviceCategoryId = null;
         let routedTeamId = teamId || null;
+        let slaGracePct = 0;
         if (serviceCategoryKey) {
           const [[cat]] = await pool.query(
-            "SELECT id, routing_team_id FROM service_categories WHERE `key` = ? AND is_active = 1 LIMIT 1",
+            "SELECT id, routing_team_id, sla_grace_pct FROM service_categories WHERE `key` = ? AND is_active = 1 LIMIT 1",
             [serviceCategoryKey]
           );
           if (cat) {
             serviceCategoryId = cat.id;
+            slaGracePct = cat.sla_grace_pct || 0;
             if (!teamId || !isAgent(req.user)) routedTeamId = cat.routing_team_id || routedTeamId;
           }
         }
@@ -657,6 +673,19 @@ export function makeTicketController(pool) {
 
         // Auto-assign SLA (always use the ticket's routed team for policy matching)
         await assignSla(pool, ticketId, priorityId, routedTeamId);
+
+        // Triage categories ("Not sure") get a longer SLA — stretch the due dates.
+        if (slaGracePct > 0) {
+          await pool.query(
+            `UPDATE ticket_slas
+             SET response_due_at = CASE WHEN response_due_at IS NOT NULL
+                   THEN DATE_ADD(response_due_at, INTERVAL ROUND(GREATEST(0, TIMESTAMPDIFF(SECOND, NOW(), response_due_at)) * ? / 100) SECOND) END,
+                 resolve_due_at = CASE WHEN resolve_due_at IS NOT NULL
+                   THEN DATE_ADD(resolve_due_at, INTERVAL ROUND(GREATEST(0, TIMESTAMPDIFF(SECOND, NOW(), resolve_due_at)) * ? / 100) SECOND) END
+             WHERE ticket_id = ?`,
+            [slaGracePct, slaGracePct, ticketId]
+          );
+        }
 
         // Save template responses if a template was used
         if (templateId && templateResponses) {
@@ -1193,6 +1222,16 @@ export function makeTicketController(pool) {
         if (currentRows.length === 0) return send.notFound(res);
         const current = currentRows[0];
 
+        // Moving a ticket to a DIFFERENT team is a triage action — restricted to
+        // NOC members + admins. Anyone else must flag it back to NOC instead.
+        const changingTeam = team_id !== undefined && (team_id || null) !== current.team_id;
+        if (changingTeam) {
+          const isAdmin = (req.user.roles || []).includes("admin");
+          if (!isAdmin && !(await isNocMember(pool, req.user.id))) {
+            return send.forbidden(res, "Only NOC can reassign a ticket to another team — use \"Flag back to NOC\" instead.");
+          }
+        }
+
         // Build update query
         const updates = [];
         const params = [];
@@ -1267,6 +1306,44 @@ export function makeTicketController(pool) {
         }
 
         return send.ok(res, { ok: true, message: "Ticket reassigned successfully" });
+      } catch (e) {
+        console.error(e);
+        return send.serverErr(res);
+      }
+    },
+
+    // POST /api/tickets/:id/flag-to-noc
+    // A non-NOC engineer sends a misrouted ticket back to the NOC queue for re-routing.
+    flagToNoc: async (req, res) => {
+      if (!isAgent(req.user)) return send.forbidden(res);
+      const ticketId = Number(req.params.id);
+      const { reason } = req.body;
+      try {
+        const [[noc]] = await pool.query(`SELECT id FROM teams WHERE name = 'NOC' LIMIT 1`);
+        if (!noc) return send.bad(res, "NOC team is not configured");
+        const [[current]] = await pool.query(`SELECT team_id, assignee_id, ticket_number, subject FROM tickets t WHERE id = ?`, [ticketId]);
+        if (!current) return send.notFound(res);
+        if (current.team_id === noc.id) return send.bad(res, "Ticket is already in the NOC queue");
+
+        await pool.query(`UPDATE tickets SET team_id = ?, assignee_id = NULL WHERE id = ?`, [noc.id, ticketId]);
+        await pool.query(
+          `INSERT INTO ticket_reassignments (ticket_id, from_team_id, to_team_id, from_assignee_id, to_assignee_id, reason, reassigned_by)
+           VALUES (?, ?, ?, ?, NULL, ?, ?)`,
+          [ticketId, current.team_id, noc.id, current.assignee_id, reason || "Flagged back to NOC for re-routing", req.user.id]
+        );
+        await insertEvent(pool, { ticketId, actorId: req.user.id, type: "ticket.flagged_to_noc", payload: { from_team: current.team_id, reason: reason || null } });
+
+        const [members] = await pool.query(`SELECT user_id FROM team_members WHERE team_id = ? AND user_id <> ?`, [noc.id, req.user.id]);
+        if (members.length) {
+          const rows = members.map((m) => [
+            m.user_id, ticketId,
+            "Ticket flagged back to NOC",
+            `${current.ticket_number} — ${current.subject}. ${reason ? "Reason: " + reason : "Needs re-routing."}`,
+            "queue",
+          ]);
+          await pool.query(`INSERT INTO notifications (user_id, ticket_id, title, message, type) VALUES ?`, [rows]);
+        }
+        return send.ok(res, { ok: true, message: "Flagged back to the NOC queue for re-routing" });
       } catch (e) {
         console.error(e);
         return send.serverErr(res);
@@ -1695,6 +1772,30 @@ export function makeTicketController(pool) {
           type: "ticket.commented",
           payload: { commentId: result.insertId, isPublic },
         });
+
+        // @mentions — notify the tagged users (any team; internal coordination).
+        const mentionIds = Array.isArray(req.body.mentions)
+          ? [...new Set(req.body.mentions.map(Number).filter((n) => n && n !== req.user.id))]
+          : [];
+        if (mentionIds.length) {
+          try {
+            const [valid] = await pool.query(`SELECT id FROM users WHERE id IN (?) AND is_active = 1`, [mentionIds]);
+            if (valid.length) {
+              const [[author]] = await pool.query(`SELECT full_name, email FROM users WHERE id = ?`, [req.user.id]);
+              const [[tk]] = await pool.query(`SELECT ticket_number, subject FROM tickets WHERE id = ?`, [ticketId]);
+              const actor = author?.full_name || author?.email || "Someone";
+              const rows = valid.map((u) => [
+                u.id, ticketId,
+                `${actor} mentioned you`,
+                `${tk.ticket_number} — ${tk.subject}`,
+                "mention",
+              ]);
+              await pool.query(`INSERT INTO notifications (user_id, ticket_id, title, message, type) VALUES ?`, [rows]);
+            }
+          } catch (mErr) {
+            console.error("Mention notification error:", mErr);
+          }
+        }
 
         return send.created(res, { id: result.insertId });
       } catch (e) {
