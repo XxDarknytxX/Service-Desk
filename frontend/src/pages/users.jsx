@@ -926,13 +926,15 @@ export default function Users() {
                 onChange={(e) => setFormData({ ...formData, title: e.target.value })}
               />
             </div>
-            <Input
-              label={customerMode ? "Company" : "Company (for corporate customers)"}
-              placeholder="e.g. Pacific Trade Fiji"
-              value={formData.company}
-              onChange={(e) => setFormData({ ...formData, company: e.target.value })}
-              required={customerMode}
-            />
+            {customerMode && (
+              <Input
+                label="Company"
+                placeholder="e.g. Pacific Trade Fiji"
+                value={formData.company}
+                onChange={(e) => setFormData({ ...formData, company: e.target.value })}
+                required
+              />
+            )}
             <Input
               label="Phone"
               placeholder="+1 555-0123"
