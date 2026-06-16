@@ -1260,11 +1260,11 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
             <div className="flex-1" />
             <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
             {corpStep === 1 ? (
-              <Button type="button" onClick={goToCorpStep2} icon={<Icon name="arrowRight" size={16} />}>
+              <Button key="corp-next" type="button" onClick={goToCorpStep2} icon={<Icon name="arrowRight" size={16} />}>
                 Next
               </Button>
             ) : (
-              <Button type="submit" form="ticket-create-form" loading={loading} icon={<Icon name="send" size={16} />}>
+              <Button key="corp-submit" type="button" onClick={onSubmit} loading={loading} icon={<Icon name="send" size={16} />}>
                 {loading ? "Submitting..." : "Submit request"}
               </Button>
             )}
