@@ -89,7 +89,6 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
   const [mode, setMode] = useState(null);
   const [form, setForm] = useState(defaultForm);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
   const [teamMembers, setTeamMembers] = useState([]);
   const [loadingMembers, setLoadingMembers] = useState(false);
 
@@ -149,7 +148,6 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
     if (open) {
       setMode(isCorporate ? "corporate" : null);
       setForm({ ...defaultForm, organizationId: defaultOrgId });
-      setError("");
       setLoading(false);
       setTeamMembers([]);
       setSelectedTemplate(null);
@@ -287,7 +285,6 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
 
   async function onSubmit(e) {
     e.preventDefault();
-    setError("");
 
     // Validate template fields if in template mode
     if (mode === "template_form" && selectedTemplate) {
@@ -300,11 +297,11 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
       }
     }
 
-    // Corporate requests must pick a category — it drives the routing.
-    if (mode === "corporate" && !form.serviceCategoryKey) {
-      setError("Please choose a category so we can route your request.");
-      toast.error("Please choose a category");
-      return;
+    // Corporate requests: category, subject and description are all required.
+    if (mode === "corporate") {
+      if (!form.serviceCategoryKey) { toast.error("Please choose a category for your request"); return; }
+      if (!form.subject.trim()) { toast.error("Please add a subject for your request"); return; }
+      if (!form.description.trim()) { toast.error("Please describe your request so the team can help"); return; }
     }
 
     setLoading(true);
@@ -337,7 +334,7 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
       onCreated?.(data.id);
       onClose?.();
     } catch (err) {
-      setError(err.message);
+      toast.error(err.message || "Failed to create ticket");
     } finally {
       setLoading(false);
     }
@@ -812,13 +809,13 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
   function renderCorporateForm() {
     const cats = serviceCategories;
     return (
-      <form id="ticket-create-form" onSubmit={onSubmit} className="space-y-6">
+      <form id="ticket-create-form" onSubmit={onSubmit} noValidate className="space-y-6">
         <section className="space-y-3.5">
           <SectionHeading icon="layers" tone="accent" title="What do you need help with?" hint="Pick a category — we route your request to the right team." />
           {cats.length === 0 ? (
             <Banner tone="muted">No request categories are configured yet. Please contact your account manager.</Banner>
           ) : (
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 grid-cols-2">
               {cats.map((c, i) => {
                 const active = form.serviceCategoryKey === c.key;
                 return (
@@ -828,10 +825,11 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
                     onClick={() => updateField("serviceCategoryKey", c.key)}
                     style={{ animationDelay: `${i * 50}ms` }}
                     className={cn(
-                      "group relative flex items-start gap-3 p-4 rounded-2xl text-left animate-fade-up border transition-all duration-200",
+                      "group relative flex flex-col gap-2.5 p-4 rounded-2xl text-left animate-fade-up border min-h-[8.5rem]",
+                      "transition-[box-shadow,border-color,background-color] duration-200",
                       active
                         ? "border-[var(--accent)] bg-[var(--accent)]/5 ring-2 ring-[var(--accent)]/20"
-                        : "border-[var(--border-default)] bg-[var(--bg-elevated)] hover:border-[var(--border-hover)] hover:-translate-y-0.5 hover:shadow-[var(--shadow-card-hover)]"
+                        : "border-[var(--border-default)] bg-[var(--bg-elevated)] hover:border-[var(--border-hover)] hover:shadow-[var(--shadow-card-hover)]"
                     )}
                   >
                     <span className={cn(
@@ -840,15 +838,15 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
                     )}>
                       <Icon name={c.icon || "tag"} size={20} />
                     </span>
-                    <div className="min-w-0 flex-1">
+                    <div className="min-w-0">
                       <p className="text-sm font-semibold text-[var(--fg-primary)]">{c.name}</p>
-                      <p className="text-xs text-[var(--fg-muted)] leading-snug mt-0.5">{c.description}</p>
-                      {c.routing_team_name && (
-                        <p className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-medium text-[var(--fg-subtle)]">
-                          <Icon name="arrowRight" size={10} /> Goes to {c.routing_team_name}
-                        </p>
-                      )}
+                      <p className="text-xs text-[var(--fg-muted)] leading-snug mt-0.5 line-clamp-2">{c.description}</p>
                     </div>
+                    {c.routing_team_name && (
+                      <p className="mt-auto inline-flex items-center gap-1 text-[10px] font-medium text-[var(--fg-subtle)]">
+                        <Icon name="arrowRight" size={10} /> Goes to {c.routing_team_name}
+                      </p>
+                    )}
                     {active && <Icon name="checkCircle" size={16} className="text-[var(--accent)] absolute top-3 right-3" />}
                   </button>
                 );
@@ -869,6 +867,7 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
           <Textarea
             label="Description"
             rows={4}
+            required
             value={form.description}
             onChange={(e) => updateField("description", e.target.value)}
             placeholder="Describe the issue or request, the impact, and any reference numbers"
@@ -878,8 +877,6 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
         <Banner tone="muted" icon="info">
           Your request goes straight to the responsible team's queue and is tracked end-to-end — you'll be notified as it progresses.
         </Banner>
-
-        {error && <Banner tone="error">{error}</Banner>}
       </form>
     );
   }
@@ -969,8 +966,6 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
             <Banner tone="info">Ticket will be added to the team queue. Any team member can pick it up.</Banner>
           )}
         </section>
-
-        {error && <Banner tone="error">{error}</Banner>}
       </form>
     );
   }
@@ -1110,8 +1105,6 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
             />
           </section>
         )}
-
-        {error && <Banner tone="error">{error}</Banner>}
       </form>
     );
   }

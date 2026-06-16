@@ -59,6 +59,8 @@ export default function Tickets() {
   const { meta } = useMeta()
   const { user } = useAuth()
   const toast = useToast()
+  const isAgent = user?.roles?.includes("admin") || user?.roles?.includes("agent")
+  const isCorporate = !isAgent && user?.roles?.includes("corporate_customer")
 
   const [tickets, setTickets] = useState([])
   const [loading, setLoading] = useState(true)
@@ -74,7 +76,7 @@ export default function Tickets() {
   const [statusFilter, setStatusFilter] = useState(searchParams.get("status") || "")
   const [priorityFilter, setPriorityFilter] = useState(searchParams.get("priority") || "")
   const [assigneeFilter, setAssigneeFilter] = useState(searchParams.get("assignee") || "")
-  const [queueView, setQueueView] = useState(searchParams.get("queue") || "my-tickets")
+  const [queueView, setQueueView] = useState(searchParams.get("queue") || (isCorporate ? "open-requests" : "my-tickets"))
 
   const [selectedTickets, setSelectedTickets] = useState([])
   const [bulkActionLoading, setBulkActionLoading] = useState(false)
@@ -132,6 +134,12 @@ export default function Tickets() {
         }
       } else if (queueView === "my-requests") {
         params.set("requesterId", user.id)
+      } else if (queueView === "open-requests") {
+        params.set("requesterId", user.id)
+        params.set("excludeResolved", "true")
+      } else if (queueView === "closed-requests") {
+        params.set("requesterId", user.id)
+        params.set("status", "solved,closed")
       } else if (queueView === "resolved") {
         params.set("status", "solved,closed")
         if (user.team_id) {
@@ -400,13 +408,18 @@ export default function Tickets() {
 
   const hasFilters = search || statusFilter || priorityFilter || assigneeFilter
 
-  const QUEUES = [
-    { key: "my-tickets", label: "My Tickets", icon: "user", desc: "Tickets assigned to me to work on" },
-    { key: "team-queue", label: "Team Queue", icon: "inbox", desc: "Unclaimed tickets in my team's queue" },
-    { key: "my-requests", label: "My Requests", icon: "fileText", desc: "Tickets I raised as requester" },
-    { key: "resolved", label: "Resolved", icon: "checkCircle", desc: "Completed tickets" },
-    { key: "all", label: "All Tickets", icon: "list", desc: "All tickets in system", adminOnly: true },
-  ].filter(tab => !tab.adminOnly || user?.roles?.includes('admin'))
+  const QUEUES = isCorporate
+    ? [
+        { key: "open-requests", label: "Open Requests", icon: "inbox", desc: "Your active requests" },
+        { key: "closed-requests", label: "Closed Requests", icon: "checkCircle", desc: "Your completed requests" },
+      ]
+    : [
+        { key: "my-tickets", label: "My Tickets", icon: "user", desc: "Tickets assigned to me to work on" },
+        { key: "team-queue", label: "Team Queue", icon: "inbox", desc: "Unclaimed tickets in my team's queue" },
+        { key: "my-requests", label: "My Requests", icon: "fileText", desc: "Tickets I raised as requester" },
+        { key: "resolved", label: "Resolved", icon: "checkCircle", desc: "Completed tickets" },
+        { key: "all", label: "All Tickets", icon: "list", desc: "All tickets in system", adminOnly: true },
+      ].filter(tab => !tab.adminOnly || user?.roles?.includes('admin'))
 
   // Reusable header control button
   const ControlButton = ({ active, title, onClick, children }) => (

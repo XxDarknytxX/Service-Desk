@@ -56,10 +56,9 @@ export function ToastProvider({ children }) {
   return (
     <ToastContext.Provider value={toast}>
       {children}
-      {/* Toast container */}
+      {/* Toast container — top-centered, below the header */}
       <div
-        className="fixed bottom-6 right-6 z-[9999] flex flex-col gap-2.5 pointer-events-none"
-        style={{ maxWidth: 400 }}
+        className="fixed top-20 inset-x-0 z-[9999] flex flex-col items-center gap-2.5 px-4 pointer-events-none"
         aria-live="polite"
       >
         {toasts.map(t => {
@@ -70,11 +69,12 @@ export function ToastProvider({ children }) {
               role="status"
               className={[
                 "pointer-events-auto relative flex items-start gap-3 pl-4 pr-3 py-3 overflow-hidden",
+                "w-full max-w-md",
                 "rounded-xl border border-[var(--border-default)]",
                 "bg-[var(--bg-elevated)] text-[var(--fg-primary)]",
                 "shadow-[var(--shadow-elevated)]",
                 "text-sm",
-                t.leaving ? "opacity-0 translate-x-3 transition-all duration-150" : "animate-slide-in-right",
+                t.leaving ? "opacity-0 -translate-y-2 transition-all duration-150" : "animate-slide-down",
               ].filter(Boolean).join(" ")}
             >
               {/* Accent bar */}
