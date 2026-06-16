@@ -83,13 +83,18 @@ function EmployeeNode({ employee, onEdit, hasReports, isExpanded, onToggle, dimm
 
   return (
     <div className="relative inline-block text-left">
-      {/* Employee Card — compact, premium, type-tinted */}
+      {/* Employee Card — compact, premium, type-tinted. The whole card toggles
+          expand/collapse when it has reports (large, reliable hit target). */}
       <div
+        onClick={hasReports ? () => onToggle(employee.id) : undefined}
+        role={hasReports ? "button" : undefined}
+        title={hasReports ? (isExpanded ? "Collapse" : "Expand") : undefined}
         className={cn(
           "group/node relative w-56 rounded-2xl p-3.5 pb-4",
           "bg-[var(--bg-elevated)] border shadow-[var(--shadow-card)]",
           "transition-all duration-200",
           "hover:-translate-y-0.5 hover:shadow-[var(--shadow-card-hover)]",
+          hasReports && "cursor-pointer",
           highlighted
             ? "border-[var(--accent)] ring-2 ring-[var(--accent)]/30"
             : "border-[var(--border-default)] hover:border-[var(--border-hover)]",
@@ -125,7 +130,7 @@ function EmployeeNode({ employee, onEdit, hasReports, isExpanded, onToggle, dimm
 
           {onEdit && (
             <button
-              onClick={() => onEdit(employee)}
+              onClick={(e) => { e.stopPropagation(); onEdit(employee); }}
               title="Edit user"
               className={cn(
                 "shrink-0 p-1.5 rounded-lg transition-all duration-150",
@@ -162,7 +167,7 @@ function EmployeeNode({ employee, onEdit, hasReports, isExpanded, onToggle, dimm
         {/* Expand / Collapse — only when the node has reports */}
         {hasReports && (
           <button
-            onClick={() => onToggle(employee.id)}
+            onClick={(e) => { e.stopPropagation(); onToggle(employee.id); }}
             title={isExpanded ? "Collapse" : "Expand"}
             className={cn(
               "absolute -bottom-3 left-1/2 -translate-x-1/2 z-10",
@@ -234,6 +239,7 @@ export default function OrgChart({ users, hierarchy, onEditUser, query = "" }) {
   const viewportRef = useRef(null);
   const contentRef = useRef(null);
   const drag = useRef(null);
+  const suppressClick = useRef(false);
 
   // Root detection (unchanged logic)
   const userIdsInHierarchy = new Set(hierarchy.map((h) => h.user_id));
@@ -265,6 +271,11 @@ export default function OrgChart({ users, hierarchy, onEditUser, query = "" }) {
       return n;
     });
   }
+  // Ignore the synthetic click the browser fires at the end of a pan drag.
+  const handleToggle = (nodeId) => {
+    if (suppressClick.current) return;
+    toggleNode(nodeId);
+  };
   const expandAll = () => setExpandedNodes(new Set(users.map((u) => u.id)));
   const collapseAll = () => setExpandedNodes(new Set());
 
@@ -306,19 +317,35 @@ export default function OrgChart({ users, hierarchy, onEditUser, query = "" }) {
     }
   }, [fullscreen, fit]);
 
+  // Record the start on every pointer-down, but only begin panning (and capture
+  // the pointer) once movement passes a small threshold. This keeps every click
+  // — on a node card or its buttons — from being swallowed by an accidental pan,
+  // which was the cause of nodes "not closing" and the chart jittering.
   const onPointerDown = (e) => {
-    if (e.target.closest("button")) return; // keep node buttons clickable
-    drag.current = { x: e.clientX, y: e.clientY, px: pan.x, py: pan.y };
-    viewportRef.current?.setPointerCapture?.(e.pointerId);
+    drag.current = { x: e.clientX, y: e.clientY, px: pan.x, py: pan.y, moved: false, captured: false };
   };
   const onPointerMove = (e) => {
-    if (!drag.current) return;
-    setPan({ x: drag.current.px + (e.clientX - drag.current.x), y: drag.current.py + (e.clientY - drag.current.y) });
+    const d = drag.current;
+    if (!d) return;
+    const dx = e.clientX - d.x;
+    const dy = e.clientY - d.y;
+    if (!d.moved && Math.hypot(dx, dy) < 5) return; // still within click tolerance
+    if (!d.moved) {
+      d.moved = true;
+      try { viewportRef.current?.setPointerCapture?.(e.pointerId); d.captured = true; } catch { /* capture optional */ }
+    }
+    setPan({ x: d.px + dx, y: d.py + dy });
   };
   const endDrag = (e) => {
-    if (!drag.current) return;
+    const d = drag.current;
+    if (!d) return;
+    if (d.captured) { try { viewportRef.current?.releasePointerCapture?.(e.pointerId); } catch { /* ignore */ } }
+    if (d.moved) {
+      // A real drag just happened — suppress the trailing click so it doesn't toggle a node.
+      suppressClick.current = true;
+      setTimeout(() => { suppressClick.current = false; }, 0);
+    }
     drag.current = null;
-    viewportRef.current?.releasePointerCapture?.(e.pointerId);
   };
 
   if (roots.length === 0) {
@@ -365,7 +392,7 @@ export default function OrgChart({ users, hierarchy, onEditUser, query = "" }) {
                 onEdit={onEditUser}
                 hasReports={rootHasReports}
                 isExpanded={rootIsExpanded}
-                onToggle={toggleNode}
+                onToggle={handleToggle}
                 highlighted={hasQuery && matchIds.has(root.id)}
                 dimmed={hasQuery && !matchIds.has(root.id)}
               />
@@ -379,7 +406,7 @@ export default function OrgChart({ users, hierarchy, onEditUser, query = "" }) {
                 users={users}
                 onEdit={onEditUser}
                 expandedNodes={expandedNodes}
-                onToggle={toggleNode}
+                onToggle={handleToggle}
                 matchIds={matchIds}
                 hasQuery={hasQuery}
               />

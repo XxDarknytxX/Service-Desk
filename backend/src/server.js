@@ -42,6 +42,8 @@ import { makeAiChatRouter } from "./routes/aiChat.js";
 import { makeTemplateRouter } from "./routes/templates.js";
 import { makeTemplateApprovalRouter } from "./routes/templateApprovals.js";
 import { makeFormsRouter } from "./routes/forms.js";
+import { makeNotificationController } from "./controllers/notificationController.js";
+import { makeNotificationRouter } from "./routes/notifications.js";
 import { makeSlaService } from "./services/slaService.js";
 import { processAutoApprovals } from "./services/approvalWorkflow.js";
 
@@ -159,6 +161,7 @@ const aiChat = makeAiChatController(pool);
 const templateCtrl = makeTemplateController(pool);
 const templateApprovalCtrl = makeTemplateApprovalController(pool);
 const formsCtrl = makeFormController(pool);
+const notifications = makeNotificationController(pool);
 
 // Routes
 app.use("/api", makeAuthRouter(auth));
@@ -179,6 +182,7 @@ app.use("/api", makeAiChatRouter(aiChat));
 app.use("/api", makeTemplateApprovalRouter(templateApprovalCtrl));
 app.use("/api", makeTemplateRouter(templateCtrl));
 app.use("/api", makeFormsRouter(formsCtrl));
+app.use("/api", makeNotificationRouter(notifications));
 
 // Health check
 app.get("/health", async (_req, res) => {

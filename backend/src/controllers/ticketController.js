@@ -580,6 +580,7 @@ export function makeTicketController(pool) {
           channelKey,
           assigneeId,
           teamId,
+          serviceCategoryKey,
           dueAt,
           estimatedCost,
           templateId,
@@ -598,12 +599,28 @@ export function makeTicketController(pool) {
         const channelId =
           (await getLookupId(pool, "ticket_channels", channelKey || "portal")) || 1;
 
+        // Corporate self-service: the chosen service category routes the request to
+        // a team queue. Customers always route by category; agents may still pass an
+        // explicit teamId to override it.
+        let serviceCategoryId = null;
+        let routedTeamId = teamId || null;
+        if (serviceCategoryKey) {
+          const [[cat]] = await pool.query(
+            "SELECT id, routing_team_id FROM service_categories WHERE `key` = ? AND is_active = 1 LIMIT 1",
+            [serviceCategoryKey]
+          );
+          if (cat) {
+            serviceCategoryId = cat.id;
+            if (!teamId || !isAgent(req.user)) routedTeamId = cat.routing_team_id || routedTeamId;
+          }
+        }
+
         const tempNumber = `TMP-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
         const [result] = await pool.query(
           `INSERT INTO tickets
-            (ticket_number, subject, description, status_id, priority_id, type_id, channel_id,
+            (ticket_number, subject, description, status_id, priority_id, type_id, service_category_id, channel_id,
              requester_id, assignee_id, team_id, organization_id, template_id, due_at, estimated_cost, created_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             tempNumber,
             subject,
@@ -611,10 +628,11 @@ export function makeTicketController(pool) {
             statusId,
             priorityId,
             typeId,
+            serviceCategoryId,
             channelId,
             requester,
             isAgent(req.user) || templateId ? assigneeId || null : null,
-            teamId || null,
+            routedTeamId,
             organizationId || null,
             templateId || null,
             dueAt || null,
@@ -637,8 +655,8 @@ export function makeTicketController(pool) {
           payload: { ticketNumber },
         });
 
-        // Auto-assign SLA (always use the ticket's team for policy matching)
-        await assignSla(pool, ticketId, priorityId, teamId || null);
+        // Auto-assign SLA (always use the ticket's routed team for policy matching)
+        await assignSla(pool, ticketId, priorityId, routedTeamId);
 
         // Save template responses if a template was used
         if (templateId && templateResponses) {
@@ -678,7 +696,7 @@ export function makeTicketController(pool) {
           approvalResult = await processTemplateApprovalFlow(pool, ticketId, templateId, {
             priority_key: priorityKey || "normal",
             type_key: typeKey || "incident",
-            team_id: teamId || null,
+            team_id: routedTeamId,
             department_id: requesterDepartmentId,
             estimated_cost: estimatedCost || null,
           }, requester);
@@ -688,7 +706,7 @@ export function makeTicketController(pool) {
           approvalResult = await processTicketApproval(pool, ticketId, {
             priority_key: priorityKey || "normal",
             type_key: typeKey || "incident",
-            team_id: teamId || null,
+            team_id: routedTeamId,
             department_id: requesterDepartmentId,
             estimated_cost: estimatedCost || null,
           }, requester);
@@ -742,6 +760,47 @@ export function makeTicketController(pool) {
             await approvalSlaService.assignApprovalSlas(ticketId);
           } catch (aslErr) {
             console.error("Approval SLA assignment error:", aslErr);
+          }
+        }
+
+        // Corporate-flow notifications: alert the routed queue + the Service
+        // Delivery Manager so an engineer can pick it up and the SDM can re-route.
+        if (serviceCategoryId && routedTeamId) {
+          try {
+            const [[cat]] = await pool.query("SELECT name FROM service_categories WHERE id = ?", [serviceCategoryId]);
+            const [[team]] = await pool.query("SELECT name FROM teams WHERE id = ?", [routedTeamId]);
+            const catName = cat?.name || "Service";
+            const teamName = team?.name || "the team";
+            const [members] = await pool.query(
+              "SELECT user_id FROM team_members WHERE team_id = ? AND user_id <> ?",
+              [routedTeamId, requester]
+            );
+            const [sdms] = await pool.query(
+              "SELECT id FROM users WHERE title = 'Service Delivery Manager' AND is_active = 1 AND id <> ?",
+              [requester]
+            );
+            const recips = new Map();
+            for (const m of members) recips.set(m.user_id, [
+              m.user_id, ticketId,
+              `New ${catName} request in ${teamName}`,
+              `${ticketNumber} — ${subject}`,
+              "queue",
+            ]);
+            for (const s of sdms) recips.set(s.id, [
+              s.id, ticketId,
+              `Corporate request routed — ${catName}`,
+              `${ticketNumber} routed to ${teamName}. Reassign if it belongs in another queue.`,
+              "sdm",
+            ]);
+            const rows = [...recips.values()];
+            if (rows.length) {
+              await pool.query(
+                "INSERT INTO notifications (user_id, ticket_id, title, message, type) VALUES ?",
+                [rows]
+              );
+            }
+          } catch (notifyErr) {
+            console.error("Corporate routing notification error:", notifyErr);
           }
         }
 
@@ -1182,6 +1241,30 @@ export function makeTicketController(pool) {
             reason,
           },
         });
+
+        // Notify the new queue when the team changes (e.g. an SDM re-routing a
+        // corporate request to the correct team).
+        if (team_id !== undefined && team_id && (team_id || null) !== current.team_id) {
+          try {
+            const [[tk]] = await pool.query("SELECT ticket_number, subject FROM tickets WHERE id = ?", [ticketId]);
+            const [[team]] = await pool.query("SELECT name FROM teams WHERE id = ?", [team_id]);
+            const [members] = await pool.query(
+              "SELECT user_id FROM team_members WHERE team_id = ? AND user_id <> ?",
+              [team_id, req.user.id]
+            );
+            if (members.length && tk) {
+              const rows = members.map((m) => [
+                m.user_id, ticketId,
+                `Ticket reassigned to ${team?.name || "your team"}`,
+                `${tk.ticket_number} — ${tk.subject}`,
+                "queue",
+              ]);
+              await pool.query("INSERT INTO notifications (user_id, ticket_id, title, message, type) VALUES ?", [rows]);
+            }
+          } catch (notifyErr) {
+            console.error("Reassign notification error:", notifyErr);
+          }
+        }
 
         return send.ok(res, { ok: true, message: "Ticket reassigned successfully" });
       } catch (e) {

@@ -616,8 +616,8 @@ export default function Hierarchy() {
               Roles
             </label>
             <p className="text-xs text-[var(--fg-secondary)] mb-3">Select one or more roles for this user</p>
-            <div className="flex gap-3">
-              {["admin", "agent", "requester"].map((role) => (
+            <div className="flex gap-2 flex-wrap">
+              {["admin", "agent", "requester", "corporate_customer"].map((role) => (
                 <button
                   key={role}
                   type="button"
@@ -633,7 +633,7 @@ export default function Hierarchy() {
                         )
                   )}
                 >
-                  {role.charAt(0).toUpperCase() + role.slice(1)}
+                  {role.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
                 </button>
               ))}
             </div>

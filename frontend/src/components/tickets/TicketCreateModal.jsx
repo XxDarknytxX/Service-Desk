@@ -35,6 +35,7 @@ const defaultForm = {
   assigneeId: "",
   teamId: "",
   requesterId: "",
+  serviceCategoryKey: "",
 };
 
 // ─── Presentational helpers (visual only) ──────────────────────────
@@ -128,7 +129,10 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
   const channels = useMemo(() => meta?.channels || [], [meta]);
   const teams = useMemo(() => meta?.teams || [], [meta]);
   const organizations = useMemo(() => meta?.organizations || [], [meta]);
+  const serviceCategories = useMemo(() => meta?.serviceCategories || [], [meta]);
   const isAgent = user?.roles?.includes("admin") || user?.roles?.includes("agent");
+  // Corporate customers raise requests only, via the category picker.
+  const isCorporate = !isAgent && user?.roles?.includes("corporate_customer");
 
   // Find default organization (try configured name first, then fall back to first available)
   const defaultOrgId = useMemo(() => {
@@ -143,7 +147,7 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
   // customer-form "done" screen) after the parent refetches.
   useEffect(() => {
     if (open) {
-      setMode(null);
+      setMode(isCorporate ? "corporate" : null);
       setForm({ ...defaultForm, organizationId: defaultOrgId });
       setError("");
       setLoading(false);
@@ -296,6 +300,13 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
       }
     }
 
+    // Corporate requests must pick a category — it drives the routing.
+    if (mode === "corporate" && !form.serviceCategoryKey) {
+      setError("Please choose a category so we can route your request.");
+      toast.error("Please choose a category");
+      return;
+    }
+
     setLoading(true);
     try {
       const payload = {
@@ -308,6 +319,7 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
         assigneeId: form.assigneeId ? Number(form.assigneeId) : undefined,
         teamId: form.teamId ? Number(form.teamId) : undefined,
         requesterId: form.requesterId ? Number(form.requesterId) : undefined,
+        serviceCategoryKey: form.serviceCategoryKey || undefined,
       };
 
       // Add template data if using a template
@@ -796,6 +808,82 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
     );
   }
 
+  // ─── Corporate request (category-routed, raise-only) ──────────────
+  function renderCorporateForm() {
+    const cats = serviceCategories;
+    return (
+      <form id="ticket-create-form" onSubmit={onSubmit} className="space-y-6">
+        <section className="space-y-3.5">
+          <SectionHeading icon="layers" tone="accent" title="What do you need help with?" hint="Pick a category — we route your request to the right team." />
+          {cats.length === 0 ? (
+            <Banner tone="muted">No request categories are configured yet. Please contact your account manager.</Banner>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {cats.map((c, i) => {
+                const active = form.serviceCategoryKey === c.key;
+                return (
+                  <button
+                    key={c.key}
+                    type="button"
+                    onClick={() => updateField("serviceCategoryKey", c.key)}
+                    style={{ animationDelay: `${i * 50}ms` }}
+                    className={cn(
+                      "group relative flex items-start gap-3 p-4 rounded-2xl text-left animate-fade-up border transition-all duration-200",
+                      active
+                        ? "border-[var(--accent)] bg-[var(--accent)]/5 ring-2 ring-[var(--accent)]/20"
+                        : "border-[var(--border-default)] bg-[var(--bg-elevated)] hover:border-[var(--border-hover)] hover:-translate-y-0.5 hover:shadow-[var(--shadow-card-hover)]"
+                    )}
+                  >
+                    <span className={cn(
+                      "h-10 w-10 rounded-xl flex items-center justify-center shrink-0 transition-colors",
+                      active ? "bg-[var(--accent)]/15 text-[var(--accent)]" : "bg-[var(--bg-surface)] text-[var(--fg-muted)] group-hover:text-[var(--accent)]"
+                    )}>
+                      <Icon name={c.icon || "tag"} size={20} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-[var(--fg-primary)]">{c.name}</p>
+                      <p className="text-xs text-[var(--fg-muted)] leading-snug mt-0.5">{c.description}</p>
+                      {c.routing_team_name && (
+                        <p className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-medium text-[var(--fg-subtle)]">
+                          <Icon name="arrowRight" size={10} /> Goes to {c.routing_team_name}
+                        </p>
+                      )}
+                    </div>
+                    {active && <Icon name="checkCircle" size={16} className="text-[var(--accent)] absolute top-3 right-3" />}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        <section className="space-y-3.5">
+          <SectionHeading icon="pencil" tone="violet" title="Tell us more" hint="A short summary and any useful detail." />
+          <Input
+            label="Subject"
+            value={form.subject}
+            onChange={(e) => updateField("subject", e.target.value)}
+            placeholder="Short summary of your request"
+            required
+          />
+          <Textarea
+            label="Description"
+            rows={4}
+            value={form.description}
+            onChange={(e) => updateField("description", e.target.value)}
+            placeholder="Describe the issue or request, the impact, and any reference numbers"
+          />
+        </section>
+
+        <Banner tone="muted" icon="info">
+          Your request goes straight to the responsible team's queue and is tracked end-to-end — you'll be notified as it progresses.
+        </Banner>
+
+        {error && <Banner tone="error">{error}</Banner>}
+      </form>
+    );
+  }
+
   // ─── Manual Form ─────────────────────────
   function renderManualForm() {
     return (
@@ -1029,9 +1117,11 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
   }
 
   // ─── Determine modal config based on mode ─────────────────────────
-  const isFormMode = mode === "manual" || mode === "template_form" || mode === "form_send";
+  const isFormMode = mode === "manual" || mode === "template_form" || mode === "form_send" || mode === "corporate";
   const modalTitle =
-    mode === null || mode === "manual"
+    mode === "corporate"
+      ? "Raise a request"
+      : mode === null || mode === "manual"
       ? "Create ticket"
       : mode === "template_gallery"
       ? "Choose a template"
@@ -1044,7 +1134,9 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
       : "Form ticket created";
 
   const modalSubtitle =
-    mode === null
+    mode === "corporate"
+      ? "Pick a category and tell us what you need — we'll route it to the right team."
+      : mode === null
       ? "Choose how you'd like to create your ticket."
       : mode === "manual"
       ? "Capture request details to route the issue quickly."
@@ -1092,7 +1184,7 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
           </>
         ) : (
           <>
-            {mode !== null && (
+            {mode !== null && mode !== "corporate" && (
               <Button type="button" variant="ghost" onClick={goBack} icon={<Icon name="arrowLeft" size={16} />}>
                 Back
               </Button>
@@ -1106,12 +1198,14 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
                 type="submit"
                 form="ticket-create-form"
                 loading={loading}
-                icon={<Icon name={mode === "form_send" ? "send" : "plus"} size={16} />}
+                icon={<Icon name={mode === "form_send" || mode === "corporate" ? "send" : "plus"} size={16} />}
               >
                 {loading
-                  ? "Creating..."
+                  ? mode === "corporate" ? "Submitting..." : "Creating..."
                   : mode === "form_send"
                   ? "Create ticket & form link"
+                  : mode === "corporate"
+                  ? "Submit request"
                   : "Create ticket"}
               </Button>
             )}
@@ -1120,6 +1214,7 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
       }
     >
       {mode === null && renderModeSelection()}
+      {mode === "corporate" && renderCorporateForm()}
       {mode === "manual" && renderManualForm()}
       {mode === "template_gallery" && (
         <TemplateGallery

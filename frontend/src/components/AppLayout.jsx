@@ -14,6 +14,7 @@
 
 import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../contexts/auth";
+import { api } from "../services/api";
 import Icon from "./ui/Icon";
 import VodafoneLogo from "./ui/VodafoneLogo";
 import FloatingBlobs from "./ui/FloatingBlobs";
@@ -26,7 +27,7 @@ const navSections = [
     items: [
       { to: "/dashboard", label: "Dashboard", icon: "dashboard", moduleKey: "dashboard" },
       { to: "/tickets", label: "Tickets", icon: "tickets", moduleKey: "tickets" },
-      { to: "/approvals", label: "Approvals", icon: "checkCircle", moduleKey: "approvals" },
+      { to: "/approvals", label: "Approvals", icon: "checkCircle", roles: ["admin", "agent", "requester"], moduleKey: "approvals" },
     ],
   },
   {
@@ -70,6 +71,8 @@ export default function AppLayout({ children }) {
   );
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [unread, setUnread] = useState(0);
 
   const userMenuRef = useRef(null);
   const notificationsRef = useRef(null);
@@ -110,6 +113,8 @@ export default function AppLayout({ children }) {
     ? "Administrator"
     : userRoles.includes("agent")
     ? "Support Agent"
+    : userRoles.includes("corporate_customer")
+    ? "Corporate Customer"
     : "User";
 
   const displayName = user?.fullName || user?.full_name || user?.email || "User";
@@ -148,6 +153,63 @@ export default function AppLayout({ children }) {
       document.body.style.overflow = "";
     };
   }, [mobileOpen]);
+
+  // ── Notifications: load on mount, poll, refresh when the panel opens ──
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    const load = async () => {
+      try {
+        const data = await api("/notifications");
+        if (!active) return;
+        setNotifications(data.items || []);
+        setUnread(data.unread || 0);
+      } catch { /* ignore transient errors */ }
+    };
+    load();
+    const t = setInterval(load, 60000);
+    return () => { active = false; clearInterval(t); };
+  }, [user]);
+
+  useEffect(() => {
+    if (showNotifications && user) {
+      api("/notifications")
+        .then((d) => { setNotifications(d.items || []); setUnread(d.unread || 0); })
+        .catch(() => {});
+    }
+  }, [showNotifications, user]);
+
+  async function openNotification(n) {
+    setShowNotifications(false);
+    if (!n.is_read) {
+      setUnread((u) => Math.max(0, u - 1));
+      setNotifications((list) => list.map((x) => (x.id === n.id ? { ...x, is_read: 1 } : x)));
+      api(`/notifications/${n.id}/read`, { method: "POST" }).catch(() => {});
+    }
+    if (n.ticket_id) navigate(`/tickets/${n.ticket_id}`);
+  }
+
+  function markAllRead() {
+    setUnread(0);
+    setNotifications((list) => list.map((x) => ({ ...x, is_read: 1 })));
+    api("/notifications/read-all", { method: "POST" }).catch(() => {});
+  }
+
+  function notifAgo(ts) {
+    if (!ts) return "";
+    const s = Math.max(0, Math.floor((Date.now() - new Date(ts).getTime()) / 1000));
+    if (s < 60) return "just now";
+    const m = Math.floor(s / 60); if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60); if (h < 24) return `${h}h ago`;
+    return `${Math.floor(h / 24)}d ago`;
+  }
+
+  const NOTIF_TONE = {
+    queue: { icon: "tickets", cls: "bg-blue-500/10 text-blue-500" },
+    sdm: { icon: "userCheck", cls: "bg-[var(--accent)]/10 text-[var(--accent)]" },
+    warning: { icon: "alertTriangle", cls: "bg-amber-500/10 text-amber-500" },
+    error: { icon: "alert", cls: "bg-red-500/10 text-red-500" },
+  };
 
   /* Fade/slide treatment shared by every label that disappears on collapse */
   const labelCls = (extra) =>
@@ -436,6 +498,11 @@ export default function AppLayout({ children }) {
                   aria-expanded={showNotifications}
                 >
                   <Icon name="bell" size={18} />
+                  {unread > 0 && (
+                    <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-[var(--accent)] text-white text-[10px] font-semibold tabular-nums ring-2 ring-[var(--bg-elevated)]">
+                      {unread > 9 ? "9+" : unread}
+                    </span>
+                  )}
                 </button>
 
                 {showNotifications && (
@@ -449,15 +516,52 @@ export default function AppLayout({ children }) {
                       "animate-slide-down"
                     )}
                   >
-                    <div className="px-4 py-3 border-b border-[var(--border-default)]">
+                    <div className="px-4 py-3 border-b border-[var(--border-default)] flex items-center justify-between">
                       <p className="text-sm font-semibold text-[var(--fg-primary)]">
                         Notifications
                       </p>
+                      {unread > 0 && (
+                        <button
+                          onClick={markAllRead}
+                          className="text-[11px] font-medium text-[var(--accent)] hover:underline"
+                        >
+                          Mark all read
+                        </button>
+                      )}
                     </div>
-                    <div className="max-h-80 overflow-y-auto">
-                      <div className="px-4 py-8 text-center text-sm text-[var(--fg-muted)]">
-                        No new notifications
-                      </div>
+                    <div className="max-h-96 overflow-y-auto">
+                      {notifications.length === 0 ? (
+                        <div className="px-4 py-8 text-center text-sm text-[var(--fg-muted)]">
+                          No notifications yet
+                        </div>
+                      ) : (
+                        notifications.map((n) => {
+                          const tone = NOTIF_TONE[n.type] || { icon: "info", cls: "bg-[var(--bg-surface)] text-[var(--fg-muted)]" };
+                          return (
+                            <button
+                              key={n.id}
+                              onClick={() => openNotification(n)}
+                              className={cn(
+                                "w-full flex items-start gap-3 px-4 py-3 text-left border-b border-[var(--border-default)] last:border-0",
+                                "hover:bg-[var(--bg-surface)] transition-colors",
+                                !n.is_read && "bg-[var(--accent)]/[0.04]"
+                              )}
+                            >
+                              <span className={cn("h-8 w-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5", tone.cls)}>
+                                <Icon name={tone.icon} size={15} />
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <span className="flex items-center gap-2">
+                                  <span className="text-[13px] font-semibold text-[var(--fg-primary)] truncate flex-1">{n.title}</span>
+                                  {!n.is_read && <span className="h-2 w-2 rounded-full bg-[var(--accent)] shrink-0" />}
+                                </span>
+                                <span className="block text-xs text-[var(--fg-muted)] leading-snug mt-0.5 line-clamp-2">{n.message}</span>
+                                <span className="block text-[10px] text-[var(--fg-subtle)] mt-1">{notifAgo(n.created_at)}</span>
+                              </span>
+                            </button>
+                          );
+                        })
+                      )}
                     </div>
                   </div>
                 )}
