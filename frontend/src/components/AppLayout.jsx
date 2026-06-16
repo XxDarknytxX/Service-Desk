@@ -372,7 +372,7 @@ export default function AppLayout({ children }) {
                             className={labelCls("text-sm font-medium")}
                             aria-hidden={!expanded}
                           >
-                            {item.label}
+                            {item.to === "/users" && !userRoles.includes("admin") ? "Customers" : item.label}
                           </span>
                         </>
                       )}

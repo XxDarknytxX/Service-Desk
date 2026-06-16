@@ -54,6 +54,10 @@ export default function Users() {
   const [editingUser, setEditingUser] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState("");
+  // Team Members (org directory) vs Corporate Customers; agents only ever see customers.
+  const [userTab, setUserTab] = useState(user?.roles?.includes("admin") ? "team" : "customers");
+  const [statusFilter, setStatusFilter] = useState("active"); // active | inactive | all
+  const [customerMode, setCustomerMode] = useState(false); // create/edit a corporate customer
   const [showImportModal, setShowImportModal] = useState(false);
   const [importFile, setImportFile] = useState(null);
   const [importing, setImporting] = useState(false);
@@ -99,11 +103,13 @@ export default function Users() {
 
   function openCreateModal() {
     setEditingUser(null);
+    setCustomerMode(false);
     setFormData({
       full_name: "",
       email: "",
       password: "",
       title: "",
+      company: "",
       phone: "",
       roles: ["requester"],
       manager_id: "",
@@ -114,8 +120,30 @@ export default function Users() {
     setShowModal(true);
   }
 
+  // Corporate customers are a different kind of user: no org hierarchy/team,
+  // role fixed to corporate_customer, with a required company.
+  function openCreateCustomerModal() {
+    setEditingUser(null);
+    setCustomerMode(true);
+    setFormData({
+      full_name: "",
+      email: "",
+      password: "",
+      title: "",
+      company: "",
+      phone: "",
+      roles: ["corporate_customer"],
+      manager_id: "",
+      team_id: "",
+      is_active: true,
+    });
+    setGeneratedPassword(null);
+    setShowModal(true);
+  }
+
   async function openEditModal(u) {
     setEditingUser(u);
+    setCustomerMode((u.roles || []).includes("corporate_customer"));
 
     // Get current manager and team for this user
     let currentManagerId = "";
@@ -155,10 +183,16 @@ export default function Users() {
 
   async function handleSubmit(e) {
     e.preventDefault();
+    if (customerMode && !(formData.company || "").trim()) {
+      toast.error("Company is required for corporate customers");
+      return;
+    }
     setSubmitting(true);
     try {
       const payload = { ...formData };
-      if (editingUser && !payload.password) delete payload.password;
+      // Blank password → let the backend auto-generate (never send an empty string,
+      // which fails the "if present, min 6 chars" validation).
+      if (!payload.password) delete payload.password;
 
       // Clean up empty values
       if (!payload.manager_id) delete payload.manager_id;
@@ -286,6 +320,19 @@ export default function Users() {
     });
   }
 
+  const isCustomer = (u) => (u.roles || []).includes("corporate_customer");
+
+  async function handleToggleActive(u) {
+    const next = !(u.is_active);
+    try {
+      await api(`/users/${u.id}`, { method: "PATCH", body: { is_active: next } });
+      toast.success(next ? "User activated" : "User deactivated");
+      loadData();
+    } catch (error) {
+      toast.error(error.message || "Failed to update user");
+    }
+  }
+
   function toggleRole(role) {
     setFormData((prev) => {
       const has = prev.roles.includes(role);
@@ -337,15 +384,23 @@ export default function Users() {
     }
   }
 
+  // Agents may only ever see the corporate-customer list, never the org directory.
+  const effectiveTab = isAdmin ? userTab : "customers";
+
   const filteredUsers = users.filter((u) => {
     const matchesSearch =
       (u.full_name || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
       (u.email || "").toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesRole = !roleFilter || (u.roles || []).includes(roleFilter);
-    return matchesSearch && matchesRole;
+    const matchesTab = effectiveTab === "customers" ? isCustomer(u) : !isCustomer(u);
+    const matchesStatus =
+      statusFilter === "all" ? true : statusFilter === "active" ? !!u.is_active : !u.is_active;
+    const matchesRole = effectiveTab === "team" ? (!roleFilter || (u.roles || []).includes(roleFilter)) : true;
+    return matchesSearch && matchesTab && matchesStatus && matchesRole;
   });
 
-  const hasFilters = !!searchQuery || !!roleFilter;
+  const customerCount = users.filter(isCustomer).length;
+  const teamCount = users.length - customerCount;
+  const hasFilters = !!searchQuery || (effectiveTab === "team" && !!roleFilter) || statusFilter !== "active";
 
   const ROLE_FILTERS = [
     { value: "", label: "All", icon: "users" },
@@ -359,11 +414,20 @@ export default function Users() {
       <div className="space-y-5">
         {/* Header */}
         <PageHeader
-          icon="users"
-          title="Users"
-          subtitle={`${users.length} ${users.length === 1 ? "member" : "members"} in the directory`}
+          icon={effectiveTab === "customers" ? "building" : "users"}
+          title={effectiveTab === "customers" ? "Corporate Customers" : "Users"}
+          subtitle={
+            effectiveTab === "customers"
+              ? `${customerCount} ${customerCount === 1 ? "customer" : "customers"}`
+              : `${teamCount} ${teamCount === 1 ? "member" : "members"} in the directory`
+          }
           actions={
-            isAdmin && (
+            isAdmin &&
+            (effectiveTab === "customers" ? (
+              <Button onClick={openCreateCustomerModal} icon={<Icon name="userPlus" size={16} />}>
+                New Customer
+              </Button>
+            ) : (
               <>
                 <Button
                   variant="secondary"
@@ -376,9 +440,52 @@ export default function Users() {
                   Add User
                 </Button>
               </>
-            )
+            ))
           }
         />
+
+        {/* Sub-tabs (admins) + status filter */}
+        <div className="flex flex-wrap items-center gap-3">
+          {isAdmin && (
+            <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-default)]">
+              {[
+                { key: "team", label: "Team Members", icon: "users", count: teamCount },
+                { key: "customers", label: "Corporate Customers", icon: "building", count: customerCount },
+              ].map((t) => {
+                const active = userTab === t.key;
+                return (
+                  <button
+                    key={t.key}
+                    onClick={() => { setUserTab(t.key); setRoleFilter(""); }}
+                    className={cn(
+                      "inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all duration-200",
+                      active ? "bg-[var(--bg-elevated)] text-[var(--fg-primary)] shadow-[var(--shadow-sm)]" : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
+                    )}
+                  >
+                    <Icon name={t.icon} size={15} className={active ? "text-[var(--accent)]" : "text-[var(--fg-muted)]"} />
+                    {t.label}
+                    <span className="text-[11px] tabular-nums text-[var(--fg-muted)]">{t.count}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {/* Active / Inactive / All */}
+          <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-default)]">
+            {["active", "inactive", "all"].map((s) => (
+              <button
+                key={s}
+                onClick={() => setStatusFilter(s)}
+                className={cn(
+                  "px-3 py-1.5 rounded-lg text-sm font-medium capitalize transition-all duration-200",
+                  statusFilter === s ? "bg-[var(--bg-elevated)] text-[var(--fg-primary)] shadow-[var(--shadow-sm)]" : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
+                )}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        </div>
 
         {/* Filter / search toolbar */}
         <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-default)] shadow-[var(--shadow-card)] p-4">
@@ -402,7 +509,8 @@ export default function Users() {
             </div>
 
             <div className="flex items-center gap-3 flex-wrap">
-              {/* Role segmented filter */}
+              {/* Role segmented filter — org directory only */}
+              {effectiveTab === "team" && (
               <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-default)]">
                 {ROLE_FILTERS.map((r) => {
                   const active = roleFilter === r.value;
@@ -427,6 +535,7 @@ export default function Users() {
                   );
                 })}
               </div>
+              )}
 
               <Badge tone="slate" size="md">
                 {filteredUsers.length} {filteredUsers.length === 1 ? "user" : "users"}
@@ -463,10 +572,10 @@ export default function Users() {
               <table className="w-full">
                 <thead>
                   <tr className="bg-[var(--bg-surface)]/60 border-b border-[var(--border-default)]">
-                    <th className="px-4 py-3 text-left text-label">User</th>
-                    <th className="px-4 py-3 text-left text-label hidden md:table-cell">Title</th>
+                    <th className="px-4 py-3 text-left text-label">{effectiveTab === "customers" ? "Customer" : "User"}</th>
+                    <th className="px-4 py-3 text-left text-label hidden md:table-cell">{effectiveTab === "customers" ? "Position" : "Title"}</th>
                     <th className="px-4 py-3 text-left text-label hidden lg:table-cell">Phone</th>
-                    <th className="px-4 py-3 text-left text-label">Roles</th>
+                    <th className="px-4 py-3 text-left text-label">{effectiveTab === "customers" ? "Company" : "Roles"}</th>
                     <th className="px-4 py-3 text-left text-label">Status</th>
                     {isAdmin && (
                       <th className="px-4 py-3 text-right text-label">Actions</th>
@@ -515,15 +624,21 @@ export default function Users() {
                           <span className="text-sm text-[var(--fg-secondary)]">{u.phone || "—"}</span>
                         </td>
 
-                        {/* Roles */}
+                        {/* Roles / Company */}
                         <td className="px-4 py-3.5">
-                          <div className="flex gap-1.5 flex-wrap">
-                            {(u.roles || []).map((role) => (
-                              <Badge key={role} tone={roleBadgeColors[role] || "slate"} size="sm">
-                                {role}
-                              </Badge>
-                            ))}
-                          </div>
+                          {effectiveTab === "customers" ? (
+                            <span className="inline-flex items-center gap-1.5 text-sm text-[var(--fg-secondary)]">
+                              {u.company ? <><Icon name="building" size={13} className="text-[var(--fg-muted)]" />{u.company}</> : <span className="text-[var(--fg-muted)]">—</span>}
+                            </span>
+                          ) : (
+                            <div className="flex gap-1.5 flex-wrap">
+                              {(u.roles || []).map((role) => (
+                                <Badge key={role} tone={roleBadgeColors[role] || "slate"} size="sm">
+                                  {role}
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
                         </td>
 
                         {/* Status */}
@@ -545,11 +660,14 @@ export default function Users() {
                                 <Icon name="pencil" size={15} />
                               </button>
                               <button
-                                onClick={() => handleDeleteUser(u.id, u.full_name || u.email)}
-                                className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
-                                title="Delete user"
+                                onClick={() => handleToggleActive(u)}
+                                className={cn(
+                                  "p-2 rounded-lg transition-colors text-[var(--fg-muted)]",
+                                  u.is_active ? "hover:text-amber-500 hover:bg-amber-500/10" : "hover:text-emerald-500 hover:bg-emerald-500/10"
+                                )}
+                                title={u.is_active ? "Deactivate user" : "Activate user"}
                               >
-                                <Icon name="trash" size={15} />
+                                <Icon name={u.is_active ? "lock" : "lockOpen"} size={15} />
                               </button>
                             </div>
                           </td>
@@ -749,13 +867,13 @@ export default function Users() {
       <Modal
         open={showModal && !generatedPassword}
         onClose={() => setShowModal(false)}
-        title={editingUser ? "Edit User" : "Create User"}
-        subtitle={editingUser ? "Update user details and roles" : "Add a new member to the system"}
+        title={customerMode ? (editingUser ? "Edit Corporate Customer" : "New Corporate Customer") : (editingUser ? "Edit User" : "Create User")}
+        subtitle={customerMode ? "External customer — they can raise requests only." : (editingUser ? "Update user details and roles" : "Add a new member to the system")}
         actions={
           <>
             <Button variant="secondary" onClick={() => setShowModal(false)}>Cancel</Button>
             <Button onClick={handleSubmit} loading={submitting}>
-              {editingUser ? "Save Changes" : "Create User"}
+              {editingUser ? "Save Changes" : (customerMode ? "Create Customer" : "Create User")}
             </Button>
           </>
         }
@@ -809,10 +927,11 @@ export default function Users() {
               />
             </div>
             <Input
-              label="Company"
-              placeholder="e.g. Pacific Trade Fiji (for corporate customers)"
+              label={customerMode ? "Company" : "Company (for corporate customers)"}
+              placeholder="e.g. Pacific Trade Fiji"
               value={formData.company}
               onChange={(e) => setFormData({ ...formData, company: e.target.value })}
+              required={customerMode}
             />
             <Input
               label="Phone"
@@ -853,6 +972,9 @@ export default function Users() {
             </div>
           )}
 
+          {/* Org-only: assignments + roles (hidden for corporate customers) */}
+          {!customerMode && (
+          <>
           {/* Assignments */}
           <div className="space-y-4">
             <p className="text-label">Assignments</p>
@@ -921,6 +1043,8 @@ export default function Users() {
               })}
             </div>
           </div>
+          </>
+          )}
         </form>
       </Modal>
 
