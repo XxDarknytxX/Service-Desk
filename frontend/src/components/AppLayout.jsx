@@ -207,6 +207,7 @@ export default function AppLayout({ children }) {
   const NOTIF_TONE = {
     queue: { icon: "tickets", cls: "bg-blue-500/10 text-blue-500" },
     sdm: { icon: "userCheck", cls: "bg-[var(--accent)]/10 text-[var(--accent)]" },
+    mention: { icon: "messageCircle", cls: "bg-violet-500/10 text-violet-500" },
     warning: { icon: "alertTriangle", cls: "bg-amber-500/10 text-amber-500" },
     error: { icon: "alert", cls: "bg-red-500/10 text-red-500" },
   };

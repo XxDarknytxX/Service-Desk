@@ -11,7 +11,7 @@
  * exactly — this is a visual / layout redesign only.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api, approvalsApi, ticketsApi, templatesApi, slaApi, csatApi, formsApi } from "../services/api";
 import { useMeta } from "../contexts/meta";
@@ -59,6 +59,11 @@ export default function TicketDetail() {
   const [commentBody, setCommentBody] = useState("");
   const [isInternalNote, setIsInternalNote] = useState(false);
   const [submittingComment, setSubmittingComment] = useState(false);
+  // @mentions
+  const [mentionUsers, setMentionUsers] = useState([]);
+  const [mention, setMention] = useState({ open: false, query: "", start: 0 });
+  const [mentions, setMentions] = useState([]); // [{ id, name }]
+  const commentRef = useRef(null);
   const [tagInput, setTagInput] = useState("");
   const [addingTag, setAddingTag] = useState(false);
   const [teamMembers, setTeamMembers] = useState([]);
@@ -97,6 +102,11 @@ export default function TicketDetail() {
   const [newTeamId, setNewTeamId] = useState("");
   const [newTeamNotes, setNewTeamNotes] = useState("");
   const [addingTeam, setAddingTeam] = useState(false);
+  // NOC triage: only NOC members (+ admins) may reassign across teams; others flag back to NOC.
+  const [isNocMember, setIsNocMember] = useState(false);
+  const [showFlagModal, setShowFlagModal] = useState(false);
+  const [flagReason, setFlagReason] = useState("");
+  const [flagging, setFlagging] = useState(false);
 
   // Template response state
   const [templateResponse, setTemplateResponse] = useState(null);
@@ -123,6 +133,23 @@ export default function TicketDetail() {
   const isAgent = user?.roles?.includes("admin") || user?.roles?.includes("agent");
 
   useEffect(() => { loadTicketData(); }, [id]);
+
+  // Load the directory once for @mentions (agents only).
+  useEffect(() => {
+    if (isAgent) api("/users").then((d) => setMentionUsers(d.items || d.users || [])).catch(() => {});
+  }, [isAgent]);
+
+  // Is the current agent on the NOC team? Controls reassign vs flag-to-NOC.
+  useEffect(() => {
+    if (isAgent && user?.id) {
+      api(`/teams?userId=${user.id}`)
+        .then((d) => {
+          const teams = d.teams || d.items || [];
+          setIsNocMember(teams.some((t) => (t.name || "").toUpperCase() === "NOC"));
+        })
+        .catch(() => {});
+    }
+  }, [isAgent, user?.id]);
 
   // Lazy-load SLA history when SLA Analysis tab is selected
   useEffect(() => {
@@ -283,14 +310,46 @@ export default function TicketDetail() {
     }
   };
 
+  // Detect an "@query" being typed at the cursor and surface the picker.
+  const handleCommentChange = (e) => {
+    const val = e.target.value;
+    setCommentBody(val);
+    const pos = e.target.selectionStart ?? val.length;
+    const m = val.slice(0, pos).match(/(?:^|\s)@([\w.\-]*)$/);
+    if (m) setMention({ open: true, query: m[1], start: pos - m[1].length - 1 });
+    else setMention((s) => (s.open ? { ...s, open: false } : s));
+  };
+  const insertMention = (u) => {
+    const name = u.full_name || u.email;
+    const before = commentBody.slice(0, mention.start);
+    const after = commentBody.slice(mention.start + 1 + mention.query.length);
+    const piece = `@${name} `;
+    const next = before + piece + after;
+    setCommentBody(next);
+    setMentions((prev) => (prev.some((p) => p.id === u.id) ? prev : [...prev, { id: u.id, name }]));
+    setMention({ open: false, query: "", start: 0 });
+    setTimeout(() => {
+      const el = commentRef.current;
+      if (el) { const c = before.length + piece.length; el.focus(); el.setSelectionRange(c, c); }
+    }, 0);
+  };
+  const mentionMatches = mention.open
+    ? mentionUsers
+        .filter((u) => (u.full_name || u.email || "").toLowerCase().includes(mention.query.toLowerCase()))
+        .slice(0, 6)
+    : [];
+
   const handleSubmitComment = async (e) => {
     e.preventDefault();
     if (!commentBody.trim()) return;
     try {
       setSubmittingComment(true);
-      await api(`/tickets/${id}/comments`, { method: "POST", body: { body: commentBody, isPublic: !isInternalNote } });
+      const activeMentions = mentions.filter((m) => commentBody.includes("@" + m.name)).map((m) => m.id);
+      await api(`/tickets/${id}/comments`, { method: "POST", body: { body: commentBody, isPublic: !isInternalNote, mentions: activeMentions } });
       setCommentBody("");
       setIsInternalNote(false);
+      setMentions([]);
+      setMention({ open: false, query: "", start: 0 });
       await loadTicketData();
     } catch (err) {
       console.error("Comment failed:", err);
@@ -471,6 +530,22 @@ export default function TicketDetail() {
       toast.error(err.message || "Failed to reassign ticket");
     } finally {
       setReassigning(false);
+    }
+  };
+
+  // Flag a misrouted ticket back to the NOC queue for re-routing.
+  const submitFlagToNoc = async () => {
+    setFlagging(true);
+    try {
+      await api(`/tickets/${id}/flag-to-noc`, { method: "POST", body: { reason: flagReason.trim() || null } });
+      toast.success("Flagged back to the NOC queue for re-routing");
+      setShowFlagModal(false);
+      setFlagReason("");
+      await loadTicketData();
+    } catch (err) {
+      toast.error(err.message || "Failed to flag to NOC");
+    } finally {
+      setFlagging(false);
     }
   };
 
@@ -834,11 +909,18 @@ export default function TicketDetail() {
                   onClick={handleEscalate}
                   loading={actionLoading === "escalate"}
                 />
-                {user?.roles?.includes("admin") && (
+                {(user?.roles?.includes("admin") || isNocMember) && (
                   <ToolbarAction
                     icon="users"
                     label="Reassign"
                     onClick={handleOpenReassignModal}
+                  />
+                )}
+                {isAgent && !isNocMember && !user?.roles?.includes("admin") && ticket.team_name !== "NOC" && (
+                  <ToolbarAction
+                    icon="inbox"
+                    label="Flag to NOC"
+                    onClick={() => setShowFlagModal(true)}
                   />
                 )}
                 {(ticket.status_key === "new" || ticket.status_key === "open" || ticket.status_key === "pending") && ticket.assignee_id === user?.id && (
@@ -974,11 +1056,12 @@ export default function TicketDetail() {
                 <div className="h-8 w-8 rounded-full bg-[var(--accent)]/10 flex items-center justify-center text-xs font-bold text-[var(--accent)] flex-shrink-0">
                   {getInitial(user?.fullName || user?.full_name || user?.email)}
                 </div>
-                <div className="flex-1">
+                <div className="flex-1 relative">
                   <textarea
+                    ref={commentRef}
                     value={commentBody}
-                    onChange={(e) => setCommentBody(e.target.value)}
-                    placeholder="Add a comment..."
+                    onChange={handleCommentChange}
+                    placeholder={isAgent ? "Add a comment… type @ to mention a teammate" : "Add a comment…"}
                     rows={2}
                     className={cn(
                       "w-full px-3.5 py-2.5 rounded-xl text-sm resize-none transition-all",
@@ -988,6 +1071,26 @@ export default function TicketDetail() {
                       "focus:outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/20"
                     )}
                   />
+                  {mention.open && mentionMatches.length > 0 && (
+                    <div className="absolute z-50 left-0 right-0 mt-1 max-h-56 overflow-y-auto p-1 bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded-xl shadow-[var(--shadow-elevated)] animate-slide-down">
+                      {mentionMatches.map((u) => (
+                        <button
+                          key={u.id}
+                          type="button"
+                          onMouseDown={(e) => { e.preventDefault(); insertMention(u); }}
+                          className="w-full flex items-center gap-2.5 px-2.5 py-2 text-left rounded-lg hover:bg-[var(--bg-surface)] transition-colors"
+                        >
+                          <span className="h-6 w-6 rounded-full bg-[var(--accent)]/10 text-[var(--accent)] text-[10px] font-bold flex items-center justify-center shrink-0">
+                            {getInitial(u.full_name || u.email)}
+                          </span>
+                          <span className="min-w-0">
+                            <span className="block text-sm text-[var(--fg-primary)] truncate">{u.full_name || u.email}</span>
+                            {u.title && <span className="block text-[11px] text-[var(--fg-muted)] truncate">{u.title}</span>}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   {commentBody.trim() && (
                     <div className="flex items-center justify-between mt-2">
                       {isAgent && (
@@ -2283,6 +2386,41 @@ export default function TicketDetail() {
       </Modal>
 
       {/* Reassign Modal */}
+      <Modal
+        open={showFlagModal}
+        onClose={() => setShowFlagModal(false)}
+        title="Flag back to NOC"
+        subtitle="Send this misrouted request to the NOC queue — they'll re-route it to the right team."
+        size="sm"
+        actions={
+          <>
+            <Button variant="secondary" onClick={() => setShowFlagModal(false)}>Cancel</Button>
+            <Button onClick={submitFlagToNoc} loading={flagging} icon={<Icon name="inbox" size={14} />}>
+              Flag to NOC
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-amber-500/5 border border-amber-500/20">
+            <Icon name="alertTriangle" size={16} className="text-amber-500 shrink-0 mt-0.5" />
+            <p className="text-sm text-[var(--fg-secondary)]">
+              This unassigns the ticket and moves it to the NOC queue. As a non-NOC engineer you can't reassign across teams directly — NOC will route it for you.
+            </p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-[var(--fg-primary)] mb-1.5">Reason (optional)</label>
+            <textarea
+              value={flagReason}
+              onChange={(e) => setFlagReason(e.target.value)}
+              rows={3}
+              placeholder="e.g. This is a Cloud issue, not Transmission"
+              className="w-full px-3.5 py-2.5 rounded-xl text-sm resize-none bg-[var(--bg-base)] text-[var(--fg-primary)] placeholder:text-[var(--fg-muted)] border border-[var(--border-default)] focus:outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/20"
+            />
+          </div>
+        </div>
+      </Modal>
+
       <Modal
         open={showReassignModal}
         onClose={() => setShowReassignModal(false)}
