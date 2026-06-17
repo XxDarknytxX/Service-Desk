@@ -888,7 +888,9 @@ export default function TicketDetail() {
             {/* Quick Actions — one cohesive toolbar */}
             {isAgent && (
               <div className="inline-flex items-center flex-wrap rounded-xl bg-[var(--bg-surface)] border border-[var(--border-default)] p-1 gap-0.5 shrink-0">
-                {ticket.assignee_id !== user?.id && (
+                {/* NOC is a triage role — their job is to reassign, so the
+                    work-the-ticket actions (assign/approval/escalate) are hidden. */}
+                {ticket.assignee_id !== user?.id && !isNocMember && (
                   <ToolbarAction
                     icon="userPlus"
                     label="Assign to me"
@@ -896,24 +898,27 @@ export default function TicketDetail() {
                     loading={actionLoading === "assign"}
                   />
                 )}
-                {canSendForApproval && (
+                {canSendForApproval && !isNocMember && (
                   <ToolbarAction
                     icon="shield"
                     label="Send for Approval"
                     onClick={handleOpenApprovalModal}
                   />
                 )}
-                <ToolbarAction
-                  icon="arrowUp"
-                  label="Escalate"
-                  onClick={handleEscalate}
-                  loading={actionLoading === "escalate"}
-                />
+                {!isNocMember && (
+                  <ToolbarAction
+                    icon="arrowUp"
+                    label="Escalate"
+                    onClick={handleEscalate}
+                    loading={actionLoading === "escalate"}
+                  />
+                )}
                 {(user?.roles?.includes("admin") || isNocMember) && (
                   <ToolbarAction
                     icon="users"
                     label="Reassign"
                     onClick={handleOpenReassignModal}
+                    tone={isNocMember ? "accent" : undefined}
                   />
                 )}
                 {isAgent && !isNocMember && !user?.roles?.includes("admin") && ticket.team_name !== "NOC" && (
@@ -2844,6 +2849,8 @@ function ToolbarAction({ icon, label, onClick, loading, tone }) {
         "disabled:opacity-60",
         tone === "success"
           ? "text-emerald-500 hover:bg-emerald-500/10"
+          : tone === "accent"
+          ? "text-[var(--accent)] bg-[var(--accent)]/10 hover:bg-[var(--accent)]/15"
           : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-elevated)] hover:shadow-[var(--shadow-sm)]"
       )}
     >
