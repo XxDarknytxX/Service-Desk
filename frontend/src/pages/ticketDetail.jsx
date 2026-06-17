@@ -916,7 +916,7 @@ export default function TicketDetail() {
                 {(user?.roles?.includes("admin") || isNocMember) && (
                   <ToolbarAction
                     icon="users"
-                    label="Reassign"
+                    label={isNocMember ? "Triage" : "Reassign"}
                     onClick={handleOpenReassignModal}
                     tone={isNocMember ? "accent" : undefined}
                   />
@@ -2429,14 +2429,14 @@ export default function TicketDetail() {
       <Modal
         open={showReassignModal}
         onClose={() => setShowReassignModal(false)}
-        title="Reassign Ticket"
+        title={isNocMember ? "Triage Ticket" : "Reassign Ticket"}
         size="sm"
         actions={
           <>
             <Button variant="secondary" onClick={() => setShowReassignModal(false)}>Cancel</Button>
             <Button onClick={handleReassign} loading={reassigning}>
               <Icon name="arrowRight" size={14} className="mr-1.5" />
-              Reassign Ticket
+              {isNocMember ? "Triage Ticket" : "Reassign Ticket"}
             </Button>
           </>
         }
