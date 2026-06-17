@@ -140,6 +140,17 @@ async function assignSla(pool, ticketId, priorityId, teamId) {
          response_breached = 0, resolve_breached = 0`,
       [ticketId, policy.id, responseDue, resolveDue]
     );
+
+    // Log an SLA line item on the Activity timeline (fires on create + every re-assign).
+    await pool.query(
+      `INSERT INTO ticket_events (ticket_id, event_type, payload_json) VALUES (?, 'sla.assigned', ?)`,
+      [ticketId, JSON.stringify({
+        policy_id: policy.id,
+        response_due_at: responseDue,
+        resolve_due_at: resolveDue,
+        team_id: teamId,
+      })]
+    );
   } catch (e) {
     console.error("SLA assignment error:", e);
   }
@@ -668,7 +679,7 @@ export function makeTicketController(pool) {
           ticketId,
           actorId: req.user.id,
           type: "ticket.created",
-          payload: { ticketNumber },
+          payload: { ticketNumber, team_id: routedTeamId },
         });
 
         // Auto-assign SLA (always use the ticket's routed team for policy matching)
@@ -1215,7 +1226,7 @@ export function makeTicketController(pool) {
       try {
         // Get current ticket state
         const [currentRows] = await pool.query(
-          `SELECT t.team_id, t.assignee_id, t.approval_status
+          `SELECT t.team_id, t.assignee_id, t.approval_status, t.priority_id
            FROM tickets t WHERE t.id = ?`,
           [ticketId]
         );
@@ -1280,6 +1291,13 @@ export function makeTicketController(pool) {
             reason,
           },
         });
+
+        // When NOC triages to a new team, re-point and re-log the SLA against the
+        // new team's policy. Done after the reassign event so the timeline reads
+        // "Reassigned → SLA target set" in order. Emits its own sla.assigned line.
+        if (changingTeam) {
+          await assignSla(pool, ticketId, current.priority_id, team_id || null);
+        }
 
         // Notify the new queue when the team changes (e.g. an SDM re-routing a
         // corporate request to the correct team).
@@ -1858,6 +1876,9 @@ export function makeTicketController(pool) {
           // ticket.assigned events
           if (p.assignee_id != null) idSets.assignee_id?.add(p.assignee_id);
           if (p.previous_assignee_id != null) idSets.assignee_id?.add(p.previous_assignee_id);
+          // ticket.created (routed team) + sla.assigned (team). flagged_to_noc's
+          // from_team is already collected above.
+          if (p.team_id != null) idSets.team_id?.add(p.team_id);
         }
 
         // 2. Batch-query each lookup table
@@ -1922,6 +1943,15 @@ export function makeTicketController(pool) {
               from_value: resolve("assignee_id", event.payload.previous_assignee_id),
               to_value: resolve("assignee_id", event.payload.assignee_id),
             }];
+          }
+
+          // Attach a resolved team name so the timeline shows the routed team for
+          // creation / SLA assignment, and the originating team when flagged to NOC.
+          if ((event.event_type === "ticket.created" || event.event_type === "sla.assigned") && event.payload.team_id != null) {
+            event.routed_team = resolve("team_id", event.payload.team_id);
+          }
+          if (event.event_type === "ticket.flagged_to_noc" && event.payload.from_team != null) {
+            event.from_team_name = resolve("team_id", event.payload.from_team);
           }
 
           return { ...event, resolved_changes };

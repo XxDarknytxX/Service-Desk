@@ -707,6 +707,7 @@ export default function TicketDetail() {
     "ticket.assigned":         { icon: "userPlus",   label: "Assigned",           color: "text-violet-400" },
     "ticket.escalated":        { icon: "arrowUp",    label: "Escalated",          color: "text-orange-400" },
     "ticket.reassigned":       { icon: "users",      label: "Reassigned",         color: "text-amber-400" },
+    "ticket.flagged_to_noc":   { icon: "inbox",      label: "Flagged to NOC",     color: "text-orange-400" },
     "ticket.tag_added":        { icon: "tag",        label: "Tag Added",          color: "text-teal-400" },
     "ticket.tag_removed":      { icon: "tag",        label: "Tag Removed",        color: "text-slate-400" },
     "ticket.team_added":       { icon: "teams",      label: "Team Added",         color: "text-indigo-400" },
@@ -753,7 +754,7 @@ export default function TicketDetail() {
   const getEventDescription = (event) => {
     const p = event.payload || {};
     switch (event.event_type) {
-      case "ticket.created": return "created this ticket";
+      case "ticket.created": return event.routed_team ? `created this ticket — routed to ${event.routed_team}` : "created this ticket";
       case "ticket.updated": {
         if (event.resolved_changes?.length) {
           return `updated ${event.resolved_changes.map((c) => c.label).join(", ")}`;
@@ -768,6 +769,7 @@ export default function TicketDetail() {
       case "ticket.assigned": return "assigned this ticket";
       case "ticket.escalated": return "escalated this ticket";
       case "ticket.reassigned": return "reassigned this ticket";
+      case "ticket.flagged_to_noc": return `flagged back to NOC${event.from_team_name ? ` from ${event.from_team_name}` : ""}${p.reason ? ` — "${p.reason}"` : ""}`;
       case "ticket.team_added": return `added team "${p.team_name || ""}"`;
       case "ticket.team_removed": return `removed team "${p.team_name || ""}"`;
       case "ticket.team_completed": return `marked team work complete`;
@@ -778,6 +780,8 @@ export default function TicketDetail() {
       case "ticket.reopened": return "reopened this ticket";
       case "sla.paused": return "paused the SLA timer";
       case "sla.resumed": return "resumed the SLA timer";
+      case "sla.assigned": return event.routed_team ? `set the SLA target for ${event.routed_team}` : "set the SLA target";
+      case "sla.extended": return "extended the SLA target";
       case "form.sent": return `sent customer form "${p.form_name || ""}" to ${p.recipient_email || "the recipient"}`;
       case "form.completed": return `customer completed form "${p.form_name || ""}"${p.auto_reopened ? " — ticket reopened automatically" : ""}`;
       default: return event.event_type.replace("ticket.", "").replace(/[._]/g, " ");
@@ -913,12 +917,14 @@ export default function TicketDetail() {
                     loading={actionLoading === "escalate"}
                   />
                 )}
-                {(user?.roles?.includes("admin") || isNocMember) && (
+                {/* NOC can only triage while the ticket is in the NOC queue;
+                    once triaged out it can't be triaged again. Admins can always reassign. */}
+                {(user?.roles?.includes("admin") || (isNocMember && ticket.team_name === "NOC")) && (
                   <ToolbarAction
                     icon="users"
-                    label={isNocMember ? "Triage" : "Reassign"}
+                    label={isNocMember && ticket.team_name === "NOC" ? "Triage" : "Reassign"}
                     onClick={handleOpenReassignModal}
-                    tone={isNocMember ? "accent" : undefined}
+                    tone={isNocMember && ticket.team_name === "NOC" ? "accent" : undefined}
                   />
                 )}
                 {isAgent && !isNocMember && !user?.roles?.includes("admin") && ticket.team_name !== "NOC" && (
@@ -1283,6 +1289,25 @@ export default function TicketDetail() {
                                   <p className="text-xs text-[var(--fg-muted)] mt-2 ml-[88px]">
                                     Response remaining: {Math.round(event.payload.response_remaining_ms / 60000)}m
                                     {event.payload.resolve_remaining_ms != null && <> · Resolve remaining: {Math.round(event.payload.resolve_remaining_ms / 60000)}m</>}
+                                  </p>
+                                )}
+                                {/* Initial routing: which team the request landed in on creation. */}
+                                {event.event_type === "ticket.created" && event.routed_team && (
+                                  <p className="text-sm text-[var(--fg-secondary)] mt-2 ml-[88px]">
+                                    Routed to <span className="font-semibold text-[var(--fg-primary)]">{event.routed_team}</span>
+                                  </p>
+                                )}
+                                {/* SLA target set on creation and re-set on every (re)assignment. */}
+                                {event.event_type === "sla.assigned" && (
+                                  <p className="text-sm text-[var(--fg-secondary)] mt-2 ml-[88px]">
+                                    SLA target set{event.routed_team && <> for <span className="font-semibold text-[var(--fg-primary)]">{event.routed_team}</span></>}
+                                  </p>
+                                )}
+                                {/* Flagged back to NOC: which team it came from. */}
+                                {event.event_type === "ticket.flagged_to_noc" && (
+                                  <p className="text-sm text-[var(--fg-secondary)] mt-2 ml-[88px]">
+                                    {event.from_team_name ? <>Returned to NOC from <span className="font-semibold text-[var(--fg-primary)]">{event.from_team_name}</span></> : "Returned to the NOC triage queue"}
+                                    {event.payload?.reason && <span className="block text-xs text-[var(--fg-muted)] italic mt-1">Reason: {event.payload.reason}</span>}
                                   </p>
                                 )}
                               </div>
