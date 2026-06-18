@@ -1003,6 +1003,35 @@ export default function TicketDetail() {
         </div>
       </div>
 
+      {/* Customer resolution banner — prominent, full-width, above the workspace */}
+      {(ticket.status_key === "solved" || ticket.status_key === "closed") && !isAgent && (
+        <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/5 shadow-[var(--shadow-card)] p-5 flex flex-col sm:flex-row sm:items-center gap-4 animate-fade-up">
+          <span className="h-11 w-11 rounded-xl bg-emerald-500/15 text-emerald-500 flex items-center justify-center shrink-0">
+            <Icon name="checkCircle" size={22} />
+          </span>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-[15px] font-semibold text-[var(--fg-primary)]">
+              {ticket.status_key === "solved" ? "Is this resolved?" : "Need more help with this?"}
+            </h2>
+            <p className="text-sm text-[var(--fg-secondary)] mt-0.5 leading-relaxed">
+              {ticket.status_key === "solved"
+                ? "Your ticket was marked solved. Confirm to close it, or reopen if you still need help — it closes automatically in 3 days if you don't respond."
+                : "This ticket is closed. If it isn't fully resolved, reopen it and an agent will pick it back up."}
+            </p>
+          </div>
+          <div className="flex gap-2 shrink-0">
+            {ticket.status_key === "solved" && (
+              <Button onClick={() => handleQuickStatus("closed")} loading={actionLoading === "closed"}>
+                <Icon name="check" size={16} className="mr-1.5" /> Confirm &amp; close
+              </Button>
+            )}
+            <Button variant="secondary" onClick={() => handleQuickStatus("in_progress")} loading={actionLoading === "in_progress"}>
+              <Icon name="refresh" size={16} className="mr-1.5" /> Reopen
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* ── Two-column workspace ── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Left / main: conversation + timeline */}
@@ -2187,36 +2216,7 @@ export default function TicketDetail() {
                 )}
               </div>
             )}
-            {/* Customer resolution controls — solved awaits confirmation; closed can still be reopened */}
-            {(ticket.status_key === "solved" || ticket.status_key === "closed") && !isAgent && (
-              <div className="rounded-2xl border border-emerald-500/30 bg-[var(--bg-elevated)] shadow-[var(--shadow-card)] overflow-hidden animate-fade-up" style={{ animationDelay: "270ms" }}>
-                <div className="flex items-center gap-2.5 px-5 py-4 border-b border-[var(--border-default)]">
-                  <span className="h-8 w-8 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center">
-                    <Icon name="checkCircle" size={16} />
-                  </span>
-                  <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">
-                    {ticket.status_key === "solved" ? "Is this resolved?" : "Need more help?"}
-                  </h2>
-                </div>
-                <div className="p-4 space-y-3">
-                  <p className="text-xs text-[var(--fg-secondary)] leading-relaxed">
-                    {ticket.status_key === "solved"
-                      ? "Your ticket was marked solved. Confirm to close it, or reopen if you still need help. It will close automatically in 3 days if you don't confirm or reopen."
-                      : "This ticket is closed. If the issue isn't fully resolved, you can reopen it and an agent will pick it back up."}
-                  </p>
-                  <div className="flex gap-2">
-                    {ticket.status_key === "solved" && (
-                      <Button size="sm" onClick={() => handleQuickStatus("closed")} loading={actionLoading === "closed"} className="flex-1">
-                        <Icon name="check" size={14} className="mr-1.5" /> Confirm &amp; close
-                      </Button>
-                    )}
-                    <Button size="sm" variant="secondary" onClick={() => handleQuickStatus("in_progress")} loading={actionLoading === "in_progress"} className="flex-1">
-                      <Icon name="refresh" size={14} className="mr-1.5" /> Reopen
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            )}
+            {/* (Customer resolution confirm/reopen now lives in the prominent banner above the workspace.) */}
 
             {/* CSAT Rating Panel - shown for solved/closed tickets */}
             {(ticket.status_key === "solved" || ticket.status_key === "closed") && (

@@ -74,6 +74,13 @@ const FIELD_LABELS = {
   description: "Description",
   due_at: "Due Date",
   closed_at: "Closed Date",
+  status: "Status",
+};
+
+// Status keys → human labels (auto-transition events log the raw key as "status").
+const STATUS_LABELS = {
+  draft: "Draft", open: "Open", pending: "Pending", in_progress: "In Progress",
+  on_hold: "On Hold", solved: "Solved", closed: "Closed",
 };
 
 // Lookup table configs for batch ID resolution in audit trail
@@ -813,7 +820,7 @@ export function makeTicketController(pool) {
           if (pendingId) {
             await pool.query("UPDATE tickets SET status_id = ? WHERE id = ?", [pendingId, ticketId]);
             await insertEvent(pool, {
-              ticketId, actorId: req.user.id, type: "ticket.updated",
+              ticketId, actorId: null, type: "ticket.updated",
               payload: { changes: { status: { from: "open", to: "pending" } }, auto: true },
             });
           }
@@ -1046,7 +1053,7 @@ export function makeTicketController(pool) {
           if (pendingId) {
             await pool.query("UPDATE tickets SET status_id = ? WHERE id = ?", [pendingId, ticketId]);
             await insertEvent(pool, {
-              ticketId, actorId: req.user.id, type: "ticket.updated",
+              ticketId, actorId: null, type: "ticket.updated",
               payload: { changes: { status: { from: "open", to: "pending" } }, auto: true },
             });
           }
@@ -1173,10 +1180,8 @@ export function makeTicketController(pool) {
             }
           }
 
-          // Auto-set closed_at when solving/closing
+          // Resolving and closing both mean the resolution target was met.
           if (newStatusKey === "solved" || newStatusKey === "closed") {
-            req.body.closed_at = new Date();
-            // Mark SLA resolve as met
             try {
               await pool.query(
                 `UPDATE ticket_slas SET resolve_met_at = NOW()
@@ -1184,6 +1189,14 @@ export function makeTicketController(pool) {
                 [ticketId]
               );
             } catch (_) {}
+          }
+          // Resolve = solved_at (stamped directly so the Activity log doesn't show a
+          // misleading "Closed Date changed"). closed_at is reserved for an actual close.
+          if (newStatusKey === "solved") {
+            try { await pool.query("UPDATE tickets SET solved_at = NOW() WHERE id = ?", [ticketId]); } catch (_) {}
+          }
+          if (newStatusKey === "closed") {
+            req.body.closed_at = new Date();
           }
 
           // Handle on_hold: pause SLA timer
@@ -1267,12 +1280,12 @@ export function makeTicketController(pool) {
             } catch (_) {}
           }
 
-          // Handle reopen: increment reopened_count, clear closed_at
+          // Handle reopen: increment reopened_count, clear closed_at + solved_at
           if ((current.status_key === "solved" || current.status_key === "closed") && newStatusKey === "in_progress") {
             req.body.closed_at = null;
             try {
               await pool.query(
-                "UPDATE tickets SET reopened_count = COALESCE(reopened_count, 0) + 1 WHERE id = ?",
+                "UPDATE tickets SET reopened_count = COALESCE(reopened_count, 0) + 1, solved_at = NULL WHERE id = ?",
                 [ticketId]
               );
             } catch (_) {}
@@ -1583,7 +1596,7 @@ export function makeTicketController(pool) {
               if (pendingId) {
                 await pool.query("UPDATE tickets SET status_id = ? WHERE id = ?", [pendingId, ticketId]);
                 await insertEvent(pool, {
-                  ticketId, actorId: req.user.id, type: "ticket.updated",
+                  ticketId, actorId: null, type: "ticket.updated",
                   payload: { changes: { status: { from: current.status_key, to: "pending" } }, auto: true },
                 });
               }
@@ -2079,7 +2092,7 @@ export function makeTicketController(pool) {
             await pool.query("UPDATE tickets SET status_id = ? WHERE id = ?", [inProgressId, ticketId]);
             await insertEvent(pool, {
               ticketId,
-              actorId: req.user.id,
+              actorId: null,
               type: "ticket.updated",
               payload: { changes: { status: { from: ticket.status_key, to: "in_progress" } }, auto: true },
             });
@@ -2212,12 +2225,17 @@ export function makeTicketController(pool) {
           let resolved_changes = null;
 
           if (event.event_type === "ticket.updated" && event.payload.changes) {
-            resolved_changes = Object.entries(event.payload.changes).map(([field, change]) => ({
-              field,
-              label: FIELD_LABELS[field] || field.replace(/_id$/, "").replace(/_/g, " "),
-              from_value: resolve(field, change.from),
-              to_value: resolve(field, change.to),
-            }));
+            resolved_changes = Object.entries(event.payload.changes).map(([field, change]) => {
+              // Auto-transition events log the raw status key (e.g. "in_progress") under
+              // a "status" field — map those to the human label, not the raw key.
+              const isStatusKey = field === "status";
+              return {
+                field,
+                label: FIELD_LABELS[field] || field.replace(/_id$/, "").replace(/_/g, " "),
+                from_value: isStatusKey ? (STATUS_LABELS[change.from] || change.from) : resolve(field, change.from),
+                to_value: isStatusKey ? (STATUS_LABELS[change.to] || change.to) : resolve(field, change.to),
+              };
+            });
           }
 
           if (event.event_type === "ticket.reassigned") {

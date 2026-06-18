@@ -2,9 +2,10 @@
 // Auto-close tickets that have sat in "Solved" without the customer confirming
 // or reopening. Default window: 3 days. Runs from the background cron.
 //
-// A ticket's closed_at is set to the solve time when it is marked Solved (see
-// ticketController.update), so it measures how long the ticket has waited in
-// Solved. Reopening (or a customer reply) clears closed_at, which resets the clock.
+// A ticket's solved_at is stamped when it is marked Solved (see
+// ticketController.update), so it measures how long it has waited in Solved.
+// Reopening clears solved_at, which resets the clock. closed_at stays reserved
+// for an actual close.
 //
 // The sweep is bounded (BATCH_LIMIT per run) and notifies the requester, so a
 // backlog can never close silently or all at once.
@@ -25,9 +26,9 @@ export async function autoCloseSolvedTickets(pool, days = 3) {
     const [rows] = await pool.query(
       `SELECT id, requester_id, ticket_number, subject FROM tickets
        WHERE status_id = ?
-         AND closed_at IS NOT NULL
-         AND closed_at < (NOW() - INTERVAL ${window} DAY)
-       ORDER BY closed_at ASC
+         AND solved_at IS NOT NULL
+         AND solved_at < (NOW() - INTERVAL ${window} DAY)
+       ORDER BY solved_at ASC
        LIMIT ${BATCH_LIMIT}`,
       [solvedStatus.id]
     );
