@@ -2462,7 +2462,7 @@ export function makeTicketController(pool) {
       const ticketId = Number(req.params.id);
       try {
         const [ticketRows] = await pool.query(
-          `SELECT t.requester_id, t.first_responded_at, s.\`key\` AS status_key
+          `SELECT t.requester_id, t.first_responded_at, t.team_id, t.assignee_id, s.\`key\` AS status_key
            FROM tickets t
            INNER JOIN ticket_statuses s ON s.id = t.status_id
            WHERE t.id = ?`,
@@ -2481,10 +2481,26 @@ export function makeTicketController(pool) {
           [ticketId, req.user.id, req.body.body, isPublic ? 1 : 0]
         );
 
-        // Track first response time for SLA
+        // The TEAM response SLA is the handling team's alone — it's met only by
+        // that team's first public reply: a member of the ticket's CURRENT team
+        // (or its assignee, or an admin), and only once it's out of the NOC triage
+        // queue. NOC commenting after it handed the ticket off must NOT meet/answer
+        // the team's response SLA (nor set first_responded_at, which would rob the
+        // team's own first reply of the credit), nor advance the ticket.
+        let firstHandlingReply = false;
         if (isAgent(req.user) && isPublic && !ticket.first_responded_at) {
+          const isAdmin = (req.user.roles || []).includes("admin");
+          const nocTeamId = await getNocTeamId(pool);
+          const inTriageQueue = !!nocTeamId && ticket.team_id === nocTeamId;
+          const onHandlingTeam = isAdmin
+            || (ticket.assignee_id != null && ticket.assignee_id === req.user.id)
+            || await isTeamMember(pool, req.user.id, ticket.team_id);
+          firstHandlingReply = !inTriageQueue && onHandlingTeam;
+        }
+
+        // Track first response time + mark the team response SLA met.
+        if (firstHandlingReply) {
           await pool.query("UPDATE tickets SET first_responded_at = NOW() WHERE id = ?", [ticketId]);
-          // Mark SLA response as met
           try {
             await pool.query(
               `UPDATE ticket_slas SET response_met_at = NOW()
@@ -2500,13 +2516,11 @@ export function makeTicketController(pool) {
           } catch (_) {}
         }
 
-        // Auto-transition: an agent's FIRST public reply on a ticket in a handling
-        // team's queue advances it pending → in_progress. NOC-triage tickets stay
-        // "open" until routed out (a NOC reply during triage doesn't mark it worked).
-        // A customer comment never changes status — they reopen via the Reopen button,
-        // so a "thank you" on a Solved ticket won't reopen it.
-        if (isAgent(req.user) && isPublic && !ticket.first_responded_at &&
-            ticket.status_key === "pending") {
+        // Auto-transition: the handling team's FIRST public reply advances the
+        // ticket pending → in_progress. NOC-triage tickets stay "open" until routed
+        // out, and a NOC reply after hand-off doesn't qualify. A customer comment
+        // never changes status — they reopen via the Reopen button.
+        if (firstHandlingReply && ticket.status_key === "pending") {
           const inProgressId = await getLookupId(pool, "ticket_statuses", "in_progress");
           if (inProgressId) {
             await pool.query("UPDATE tickets SET status_id = ? WHERE id = ?", [inProgressId, ticketId]);
