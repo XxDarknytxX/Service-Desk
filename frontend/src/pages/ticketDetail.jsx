@@ -138,6 +138,10 @@ export default function TicketDetail() {
   const isAgent = user?.roles?.includes("admin") || user?.roles?.includes("agent");
   // The ticket's manager (team lead) — or an admin — can freeze (hold) the SLA.
   const isManager = !!(user?.roles?.includes("admin") || (ticket?.team_lead_id != null && Number(ticket.team_lead_id) === Number(user?.id)));
+  // Only an agent who owns the ticket — on its current team, assigned to it, or an
+  // admin — can work it (resolve / escalate / hold). Once NOC routes a ticket out
+  // of its queue, NOC is no longer on the team and loses these actions.
+  const canWork = !!(user?.roles?.includes("admin") || ticket?.viewer_is_team_member || (ticket?.assignee_id != null && Number(ticket.assignee_id) === Number(user?.id)));
 
   useEffect(() => { loadTicketData(); }, [id]);
 
@@ -923,33 +927,9 @@ export default function TicketDetail() {
             {/* Quick Actions — one cohesive toolbar */}
             {isAgent && (
               <div className="inline-flex items-center flex-wrap rounded-xl bg-[var(--bg-surface)] border border-[var(--border-default)] p-1 gap-0.5 shrink-0">
-                {/* NOC is a triage role — their job is to reassign, so the
-                    work-the-ticket actions (assign/approval/escalate) are hidden. */}
-                {ticket.assignee_id !== user?.id && !isNocMember && (
-                  <ToolbarAction
-                    icon="userPlus"
-                    label="Assign to me"
-                    onClick={handleAssignToMe}
-                    loading={actionLoading === "assign"}
-                  />
-                )}
-                {canSendForApproval && !isNocMember && (
-                  <ToolbarAction
-                    icon="shield"
-                    label="Send for Approval"
-                    onClick={handleOpenApprovalModal}
-                  />
-                )}
-                {!isNocMember && (
-                  <ToolbarAction
-                    icon="arrowUp"
-                    label="Escalate"
-                    onClick={handleEscalate}
-                    loading={actionLoading === "escalate"}
-                  />
-                )}
-                {/* NOC can only triage while the ticket is in the NOC queue;
-                    once triaged out it can't be triaged again. Admins can always reassign. */}
+                {/* Triage: NOC routes incoming tickets while they sit in its queue;
+                    admins can always re-route. Once routed out, only the owning team
+                    works the ticket. */}
                 {(user?.roles?.includes("admin") || (isNocMember && ticket.team_name === "NOC")) && (
                   <ToolbarAction
                     icon="users"
@@ -958,16 +938,31 @@ export default function TicketDetail() {
                     tone={isNocMember && ticket.team_name === "NOC" ? "accent" : undefined}
                   />
                 )}
-                {isAgent && !isNocMember && !user?.roles?.includes("admin") && ticket.team_name !== "NOC" && (
-                  <ToolbarAction
-                    icon="inbox"
-                    label="Flag to NOC"
-                    onClick={() => setShowFlagModal(true)}
-                  />
-                )}
-                {["open", "pending", "in_progress", "on_hold"].includes(ticket.status_key) && ticket.team_name !== "NOC" && (
+
+                {/* Work-the-ticket actions — only the agent who owns this ticket (on
+                    its current team, assigned, or admin) and only after it's left the
+                    NOC triage queue. */}
+                {canWork && ticket.team_name !== "NOC" && ["open", "pending", "in_progress", "on_hold"].includes(ticket.status_key) && (
                   <>
-                    <span className="w-px h-5 bg-[var(--border-default)] mx-1" />
+                    {["open", "pending", "in_progress"].includes(ticket.status_key) && ticket.assignee_id !== user?.id && (
+                      <ToolbarAction
+                        icon="userPlus"
+                        label="Assign to me"
+                        onClick={handleAssignToMe}
+                        loading={actionLoading === "assign"}
+                      />
+                    )}
+                    {/* Sent to the wrong queue? Hand it back to NOC to re-triage. */}
+                    {!user?.roles?.includes("admin") && ["open", "pending", "in_progress"].includes(ticket.status_key) && (
+                      <ToolbarAction
+                        icon="inbox"
+                        label="Reassign to NOC"
+                        onClick={() => setShowFlagModal(true)}
+                      />
+                    )}
+                    {["open", "pending", "in_progress"].includes(ticket.status_key) && (
+                      <span className="w-px h-5 bg-[var(--border-default)] mx-1" />
+                    )}
                     {/* Only the team manager (or admin) can freeze the SLA; an engineer
                         escalates to the manager, who reviews and reassigns it back. */}
                     {["open", "pending", "in_progress"].includes(ticket.status_key) && isManager && (
@@ -1005,59 +1000,110 @@ export default function TicketDetail() {
                     )}
                   </>
                 )}
-                {(ticket.status_key === "solved" || ticket.status_key === "closed") && (
-                  <>
-                    <span className="w-px h-5 bg-[var(--border-default)] mx-1" />
-                    {ticket.status_key === "solved" && (
-                      <ToolbarAction
-                        icon="check"
-                        label="Close"
-                        onClick={() => handleQuickStatus("closed")}
-                        loading={actionLoading === "closed"}
-                        tone="success"
-                      />
-                    )}
-                    <ToolbarAction
-                      icon="refresh"
-                      label="Reopen"
-                      onClick={() => handleQuickStatus("in_progress")}
-                      loading={actionLoading === "in_progress"}
-                    />
-                  </>
-                )}
+                {/* Closing or reopening a resolved ticket is the customer's call
+                    (see the resolution banner above) — agents don't close/reopen here. */}
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* Customer resolution banner — prominent, full-width, above the workspace */}
-      {(ticket.status_key === "solved" || ticket.status_key === "closed") && !isAgent && (
-        <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/5 shadow-[var(--shadow-card)] p-5 flex flex-col sm:flex-row sm:items-center gap-4 animate-fade-up">
-          <span className="h-11 w-11 rounded-xl bg-emerald-500/15 text-emerald-500 flex items-center justify-center shrink-0">
-            <Icon name="checkCircle" size={22} />
-          </span>
-          <div className="flex-1 min-w-0">
-            <h2 className="text-[15px] font-semibold text-[var(--fg-primary)]">
-              {ticket.status_key === "solved" ? "Is this resolved?" : "Need more help with this?"}
-            </h2>
-            <p className="text-sm text-[var(--fg-secondary)] mt-0.5 leading-relaxed">
-              {ticket.status_key === "solved"
-                ? "Your ticket was marked solved. Confirm to close it, or reopen if you still need help — it closes automatically in 3 days if you don't respond."
-                : "This ticket is closed. If it isn't fully resolved, reopen it and an agent will pick it back up."}
-            </p>
-          </div>
-          <div className="flex gap-2 shrink-0">
-            {ticket.status_key === "solved" && (
+      {/* Customer resolution banner — prominent, full-width, above the workspace.
+          Solved → confirm/reopen; once closed it becomes the satisfaction prompt,
+          which stays at the top even when the ticket closed automatically. */}
+      {!isAgent && (ticket.status_key === "solved" || ticket.status_key === "closed") && (
+        ticket.status_key === "solved" ? (
+          <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/5 shadow-[var(--shadow-card)] p-5 flex flex-col sm:flex-row sm:items-center gap-4 animate-fade-up">
+            <span className="h-11 w-11 rounded-xl bg-emerald-500/15 text-emerald-500 flex items-center justify-center shrink-0">
+              <Icon name="checkCircle" size={22} />
+            </span>
+            <div className="flex-1 min-w-0">
+              <h2 className="text-[15px] font-semibold text-[var(--fg-primary)]">Is this resolved?</h2>
+              <p className="text-sm text-[var(--fg-secondary)] mt-0.5 leading-relaxed">
+                Your ticket was marked solved. Confirm to close it, or reopen if you still need help — it closes automatically in 3 days if you don't respond.
+              </p>
+            </div>
+            <div className="flex gap-2 shrink-0">
               <Button onClick={() => handleQuickStatus("closed")} loading={actionLoading === "closed"}>
                 <Icon name="check" size={16} className="mr-1.5" /> Confirm &amp; close
               </Button>
-            )}
-            <Button variant="secondary" onClick={() => handleQuickStatus("in_progress")} loading={actionLoading === "in_progress"}>
+              <Button variant="secondary" onClick={() => handleQuickStatus("in_progress")} loading={actionLoading === "in_progress"}>
+                <Icon name="refresh" size={16} className="mr-1.5" /> Reopen
+              </Button>
+            </div>
+          </div>
+        ) : csatExisting ? (
+          /* Closed and already rated → thank-you, with reopen still available. */
+          <div className="rounded-2xl border border-amber-500/40 bg-amber-500/5 shadow-[var(--shadow-card)] p-5 flex flex-col sm:flex-row sm:items-center gap-4 animate-fade-up">
+            <span className="h-11 w-11 rounded-xl bg-amber-500/15 text-amber-500 flex items-center justify-center shrink-0">
+              <Icon name="star" size={22} />
+            </span>
+            <div className="flex-1 min-w-0">
+              <h2 className="text-[15px] font-semibold text-[var(--fg-primary)]">Thanks for your feedback!</h2>
+              <div className="flex items-center gap-1 mt-1">
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <span key={star} className={`text-lg ${star <= csatExisting.rating ? "text-amber-400" : "text-[var(--fg-muted)]"}`}>
+                    {star <= csatExisting.rating ? "★" : "☆"}
+                  </span>
+                ))}
+                <span className="text-xs text-[var(--fg-muted)] ml-1.5">You rated {csatExisting.rating}/5</span>
+              </div>
+              {csatExisting.comment && (
+                <p className="text-xs text-[var(--fg-secondary)] mt-1 italic">"{csatExisting.comment}"</p>
+              )}
+            </div>
+            <Button variant="secondary" onClick={() => handleQuickStatus("in_progress")} loading={actionLoading === "in_progress"} className="shrink-0">
               <Icon name="refresh" size={16} className="mr-1.5" /> Reopen
             </Button>
           </div>
-        </div>
+        ) : (
+          /* Closed but not yet rated → satisfaction prompt at the top (also the path
+             a customer lands on when the ticket auto-closed). */
+          <div className="rounded-2xl border border-amber-500/40 bg-amber-500/5 shadow-[var(--shadow-card)] p-5 animate-fade-up">
+            <div className="flex flex-col sm:flex-row sm:items-start gap-4">
+              <span className="h-11 w-11 rounded-xl bg-amber-500/15 text-amber-500 flex items-center justify-center shrink-0">
+                <Icon name="star" size={22} />
+              </span>
+              <div className="flex-1 min-w-0">
+                <h2 className="text-[15px] font-semibold text-[var(--fg-primary)]">How did we do?</h2>
+                <p className="text-sm text-[var(--fg-secondary)] mt-0.5 leading-relaxed">
+                  Your ticket is closed. Rate your experience to help us improve — or reopen it if it isn't fully resolved.
+                </p>
+                <div className="flex items-center gap-1 mt-3">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      type="button"
+                      onClick={() => setCsatRating(star)}
+                      onMouseEnter={() => setCsatHover(star)}
+                      onMouseLeave={() => setCsatHover(0)}
+                      className="text-2xl transition-colors"
+                    >
+                      <span className={(csatHover || csatRating) >= star ? "text-amber-400" : "text-[var(--fg-muted)]"}>
+                        {(csatHover || csatRating) >= star ? "★" : "☆"}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                <textarea
+                  value={csatComment}
+                  onChange={(e) => setCsatComment(e.target.value)}
+                  placeholder="Optional feedback..."
+                  rows={2}
+                  className="mt-3 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-base)] text-sm text-[var(--fg-primary)] p-2 resize-none focus:outline-none focus:border-[var(--accent)]"
+                />
+                <div className="flex gap-2 mt-3">
+                  <Button onClick={handleSubmitCsat} loading={csatSubmitting} disabled={!csatRating}>
+                    <Icon name="star" size={16} className="mr-1.5" /> Submit rating
+                  </Button>
+                  <Button variant="secondary" onClick={() => handleQuickStatus("in_progress")} loading={actionLoading === "in_progress"}>
+                    <Icon name="refresh" size={16} className="mr-1.5" /> Reopen
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
       )}
 
       {/* ── Two-column workspace ── */}
@@ -2246,8 +2292,9 @@ export default function TicketDetail() {
             )}
             {/* (Customer resolution confirm/reopen now lives in the prominent banner above the workspace.) */}
 
-            {/* CSAT Rating Panel - shown for solved/closed tickets */}
-            {(ticket.status_key === "solved" || ticket.status_key === "closed") && (
+            {/* CSAT Rating Panel — agents view the customer's rating here; the
+                customer rates from the resolution banner at the top, not the sidebar. */}
+            {isAgent && (ticket.status_key === "solved" || ticket.status_key === "closed") && (
               <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-card)] overflow-hidden animate-fade-up" style={{ animationDelay: "300ms" }}>
                 <div className="flex items-center gap-2.5 px-5 py-4 border-b border-[var(--border-default)]">
                   <span className="h-8 w-8 rounded-lg bg-amber-500/10 text-amber-500 flex items-center justify-center">

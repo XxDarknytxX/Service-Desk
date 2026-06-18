@@ -187,6 +187,17 @@ async function getTeamLeadId(pool, teamId) {
   return row?.user_id || null;
 }
 
+// Is this user a member of the given team? Used to keep "work the ticket" actions
+// (resolve, escalate to manager) scoped to the team that currently owns it — once
+// NOC routes a ticket out of its queue, NOC can no longer resolve it.
+async function isTeamMember(pool, userId, teamId) {
+  if (!teamId || !userId) return false;
+  const [rows] = await pool.query(
+    "SELECT 1 FROM team_members WHERE team_id = ? AND user_id = ? LIMIT 1", [teamId, userId]
+  );
+  return rows.length > 0;
+}
+
 // Resume a paused (on-hold) SLA — recompute due dates from the stored remaining time.
 async function resumeTicketSla(pool, ticketId, actorId) {
   try {
@@ -225,7 +236,9 @@ async function startTriageSla(pool, ticketId, priorityId, actorId) {
          due_at = VALUES(due_at), started_at = NOW(), met_at = NULL, breached = 0, updated_at = NOW()`,
       [ticketId, priorityId || null, minutes, dueAt]
     );
-    await insertEvent(pool, { ticketId, actorId, type: "triage_sla.assigned", payload: { target_minutes: minutes, due_at: dueAt } });
+    // Starting the triage clock is automatic — attribute it to System, not the
+    // person who created/routed the ticket.
+    await insertEvent(pool, { ticketId, actorId: null, type: "triage_sla.assigned", payload: { target_minutes: minutes, due_at: dueAt } });
   } catch (e) {
     console.error("Triage SLA start error:", e);
   }
@@ -596,6 +609,7 @@ export function makeTicketController(pool) {
             org.name AS organization_name,
             team.name AS team_name,
             (SELECT tm.user_id FROM team_members tm WHERE tm.team_id = t.team_id AND tm.is_lead = 1 LIMIT 1) AS team_lead_id,
+            EXISTS(SELECT 1 FROM team_members tmv WHERE tmv.team_id = t.team_id AND tmv.user_id = ?) AS viewer_is_team_member,
             sc.name AS service_category_name,
             tmpl.name AS template_name, tmpl.icon AS template_icon
           FROM tickets t
@@ -610,7 +624,7 @@ export function makeTicketController(pool) {
           LEFT JOIN service_categories sc ON sc.id = t.service_category_id
           LEFT JOIN ticket_templates tmpl ON tmpl.id = t.template_id
           WHERE t.id = ?`,
-          [ticketId]
+          [req.user.id, ticketId]
         );
         const ticket = rows[0];
         if (!ticket) return send.notFound(res, "Ticket not found");
@@ -1217,6 +1231,17 @@ export function makeTicketController(pool) {
             }
           }
 
+          // An agent can only resolve/close a ticket that's in their own team's
+          // queue (or one they're assigned, or an admin) — once NOC routes a ticket
+          // to another team it can no longer resolve it.
+          if (isAgent(req.user) && (newStatusKey === "solved" || newStatusKey === "closed")) {
+            const isAdmin = (req.user.roles || []).includes("admin");
+            const isAssignee = current.assignee_id != null && current.assignee_id === req.user.id;
+            if (!isAdmin && !isAssignee && !(await isTeamMember(pool, req.user.id, current.team_id))) {
+              return send.forbidden(res, "You can only resolve or close a ticket that's in your team's queue.");
+            }
+          }
+
           // Resolving and closing both mean the resolution target was met.
           if (newStatusKey === "solved" || newStatusKey === "closed") {
             try {
@@ -1561,6 +1586,14 @@ export function makeTicketController(pool) {
           `SELECT team_id, ticket_number, subject, assignee_id FROM tickets WHERE id = ?`, [ticketId]
         );
         if (!t) return send.notFound(res, "Ticket not found");
+
+        // You can only escalate a ticket that's in your own team's queue — e.g. NOC
+        // can't escalate a ticket it already routed to another team.
+        const escIsAdmin = (req.user.roles || []).includes("admin");
+        if (!escIsAdmin && !(await isTeamMember(pool, req.user.id, t.team_id))) {
+          return send.forbidden(res, "You can only act on a ticket that's in your team's queue.");
+        }
+
         const leadId = await getTeamLeadId(pool, t.team_id);
         if (!leadId) return send.bad(res, "This ticket's team has no manager set to escalate to.");
         if (leadId === req.user.id) return send.bad(res, "You are the team manager — you can hold this ticket directly.");
