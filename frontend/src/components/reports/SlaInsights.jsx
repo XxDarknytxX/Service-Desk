@@ -35,7 +35,7 @@ const fmtDur = (ms) => {
   return `${d}d ${h % 24}h`;
 };
 const sevHex = (hrs) => SEV[sevIndex(hrs)].color;
-const STATUS_TONE = { new: "blue", open: "indigo", pending: "amber", on_hold: "slate", solved: "emerald", closed: "slate" };
+const STATUS_TONE = { draft: "slate", open: "blue", pending: "amber", in_progress: "indigo", on_hold: "violet", solved: "emerald", closed: "slate" };
 const initials = (name) => (name || "?").split(" ").map((x) => x[0]).join("").toUpperCase().slice(0, 2);
 const ease = [0.22, 1, 0.36, 1];
 

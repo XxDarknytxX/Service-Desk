@@ -92,10 +92,11 @@ export default function Badge({
 export function StatusBadge({ status, size = "md", className }) {
   const statusConfig = {
     // Ticket statuses
-    new: { tone: "blue", label: "New", dot: true },
+    draft: { tone: "slate", label: "Draft", dot: true },
     open: { tone: "blue", label: "Open", dot: true },
     pending: { tone: "amber", label: "Pending", dot: true },
-    on_hold: { tone: "slate", label: "On Hold", dot: true },
+    in_progress: { tone: "indigo", label: "In Progress", dot: true },
+    on_hold: { tone: "violet", label: "On Hold", dot: true },
     solved: { tone: "emerald", label: "Solved", dot: true },
     closed: { tone: "slate", label: "Closed", dot: false },
 

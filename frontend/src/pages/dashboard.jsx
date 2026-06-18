@@ -37,10 +37,11 @@ function cn(...parts) {
 }
 
 const STATUS_META = {
-  new: { tone: "blue", hex: "#3B82F6", text: "text-blue-500" },
-  open: { tone: "indigo", hex: "#6366F1", text: "text-indigo-500" },
+  draft: { tone: "slate", hex: "#94A3B8", text: "text-slate-400" },
+  open: { tone: "blue", hex: "#3B82F6", text: "text-blue-500" },
   pending: { tone: "amber", hex: "#F59E0B", text: "text-amber-500" },
-  on_hold: { tone: "slate", hex: "#94A3B8", text: "text-slate-400" },
+  in_progress: { tone: "indigo", hex: "#6366F1", text: "text-indigo-500" },
+  on_hold: { tone: "violet", hex: "#8B5CF6", text: "text-violet-500" },
   solved: { tone: "emerald", hex: "#10B981", text: "text-emerald-500" },
   closed: { tone: "slate", hex: "#64748B", text: "text-slate-400" },
 };
