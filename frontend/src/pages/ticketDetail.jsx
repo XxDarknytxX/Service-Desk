@@ -46,6 +46,10 @@ export default function TicketDetail() {
   const statuses = meta?.statuses || [];
   const priorities = meta?.priorities || [];
   const teams = meta?.teams || [];
+  // Reassign/triage targets: exactly the 4 corporate-flow teams, for everyone
+  // (NOC members + admins). NOC/Corporate/EXCO/ICT/IT are intentionally excluded.
+  const REASSIGN_TEAMS = ["Cloud", "Transmission", "MTX", "Security Operations"];
+  const reassignTeams = teams.filter((t) => REASSIGN_TEAMS.includes(t.name));
 
   const [ticket, setTicket] = useState(null);
   const [comments, setComments] = useState([]);
@@ -517,6 +521,13 @@ export default function TicketDetail() {
   };
 
   const handleReassign = async () => {
+    // The requirements note is mandatory only on a team change (triage hand-off),
+    // matching the backend. A same-team assignee swap doesn't need one.
+    const teamChanging = (reassignTeamId ? parseInt(reassignTeamId) : null) !== (ticket?.team_id ?? null);
+    if (teamChanging && !reassignReason.trim()) {
+      toast.error("A requirements note is required when reassigning to another team.");
+      return;
+    }
     setReassigning(true);
     try {
       await ticketsApi.reassign(id, {
@@ -733,6 +744,9 @@ export default function TicketDetail() {
     "approval_sla.escalated":  { icon: "arrowUp",    label: "Approval Escalated",  color: "text-orange-400" },
     "form.sent":               { icon: "send",       label: "Form Sent",           color: "text-cyan-400" },
     "form.completed":          { icon: "checkCircle", label: "Form Completed",     color: "text-emerald-400" },
+    "triage_sla.assigned":     { icon: "clock",      label: "Triage SLA Started",  color: "text-blue-400" },
+    "triage_sla.met":          { icon: "check",      label: "Triage SLA Met",      color: "text-emerald-400" },
+    "triage_sla.breached":     { icon: "alertTriangle", label: "Triage SLA Breached", color: "text-rose-400" },
   };
 
   const groupEventsByDate = (events) => {
@@ -1303,6 +1317,26 @@ export default function TicketDetail() {
                                     SLA target set{event.routed_team && <> for <span className="font-semibold text-[var(--fg-primary)]">{event.routed_team}</span></>}
                                   </p>
                                 )}
+                                {/* Triage SLA started — the NOC "reassign on time" clock. */}
+                                {event.event_type === "triage_sla.assigned" && (
+                                  <p className="text-sm text-[var(--fg-secondary)] mt-2 ml-[88px]">
+                                    NOC must reassign within{event.payload?.target_minutes != null && <> <span className="font-semibold text-[var(--fg-primary)]">{event.payload.target_minutes}m</span></>}
+                                  </p>
+                                )}
+                                {/* Triage SLA met — NOC routed the ticket out of the queue. */}
+                                {event.event_type === "triage_sla.met" && (
+                                  <p className="text-sm text-[var(--fg-secondary)] mt-2 ml-[88px]">
+                                    Reassigned out of NOC {event.payload?.on_time === false
+                                      ? <span className="font-semibold text-rose-400">(late)</span>
+                                      : <span className="font-semibold text-emerald-400">(on time)</span>}
+                                  </p>
+                                )}
+                                {/* Triage SLA breached — not routed out of NOC in time. */}
+                                {event.event_type === "triage_sla.breached" && (
+                                  <p className="text-sm text-[var(--fg-secondary)] mt-2 ml-[88px]">
+                                    Not routed out of the NOC queue before the triage target
+                                  </p>
+                                )}
                                 {/* Flagged back to NOC: which team it came from. */}
                                 {event.event_type === "ticket.flagged_to_noc" && (
                                   <p className="text-sm text-[var(--fg-secondary)] mt-2 ml-[88px]">
@@ -1360,8 +1394,8 @@ export default function TicketDetail() {
                       </div>
                     </div>
 
-                    {/* Response & Resolution SLA Cards */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {/* Response, Resolution & (NOC) Triage SLA Cards */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                       {/* Response SLA */}
                       {(() => {
                         const breached = !!slaData.response_breached;
@@ -1450,6 +1484,63 @@ export default function TicketDetail() {
                               {breached && (
                                 <div className="flex justify-between text-sm">
                                   <span className="text-[var(--fg-muted)]">Breached</span>
+                                  <span className="text-rose-400 font-semibold">{remaining ? remaining.text : "Yes"}</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      {/* Triage SLA — only for tickets that passed through the NOC queue */}
+                      {slaData.triage_present && (() => {
+                        const met = !!slaData.triage_met_at;        // reassigned out of NOC
+                        const breached = !!slaData.triage_breached; // missed the target
+                        const metLate = met && breached;            // reassigned, but after the target
+                        const overdue = !met && breached;           // still in NOC, past the target
+                        // For an overdue row the server clamps remaining to 0, so derive the
+                        // real overdue magnitude from the due date (null → wall-clock fallback).
+                        const remaining = getSlaRemaining(slaData.triage_due_at, overdue ? null : slaData.triage_remaining_ms);
+                        return (
+                          <div className={cn(
+                            "rounded-xl border p-4",
+                            overdue ? "border-rose-500/30 bg-rose-500/5"
+                              : metLate ? "border-amber-500/30 bg-amber-500/5"
+                              : met ? "border-emerald-500/30 bg-emerald-500/5"
+                              : "border-[var(--border-default)] bg-[var(--bg-base)]"
+                          )}>
+                            <div className="flex items-center justify-between mb-4">
+                              <span className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">Triage SLA</span>
+                              <Badge tone={met ? (metLate ? "amber" : "emerald") : breached ? "rose" : "amber"} className="text-xs">
+                                {met ? (metLate ? "Met late" : "Met") : breached ? "Breached" : "Pending"}
+                              </Badge>
+                            </div>
+                            <div className="space-y-3">
+                              <div className="flex justify-between text-sm">
+                                <span className="text-[var(--fg-muted)]">Target</span>
+                                <span className="text-[var(--fg-primary)] font-medium">{slaData.triage_minutes ?? "N/A"}m to reassign</span>
+                              </div>
+                              <div className="flex justify-between text-sm">
+                                <span className="text-[var(--fg-muted)]">Due at</span>
+                                <span className="text-[var(--fg-primary)] font-medium">{formatDate(slaData.triage_due_at)}</span>
+                              </div>
+                              {met && (
+                                <div className="flex justify-between text-sm">
+                                  <span className="text-[var(--fg-muted)]">Reassigned</span>
+                                  <span className={cn("font-medium", metLate ? "text-amber-400" : "text-emerald-400")}>{formatDate(slaData.triage_met_at)}</span>
+                                </div>
+                              )}
+                              {!met && !breached && remaining && (
+                                <div className="flex justify-between text-sm">
+                                  <span className="text-[var(--fg-muted)]">Remaining</span>
+                                  <span className={cn("font-semibold", remaining.tone === "rose" ? "text-rose-400" : remaining.tone === "amber" ? "text-amber-400" : "text-emerald-400")}>
+                                    {remaining.text}
+                                  </span>
+                                </div>
+                              )}
+                              {overdue && (
+                                <div className="flex justify-between text-sm">
+                                  <span className="text-[var(--fg-muted)]">Overdue</span>
                                   <span className="text-rose-400 font-semibold">{remaining ? remaining.text : "Yes"}</span>
                                 </div>
                               )}
@@ -2534,7 +2625,7 @@ export default function TicketDetail() {
                 )}
               >
                 <option value="">Select a team...</option>
-                {teams.map(t => (
+                {reassignTeams.map(t => (
                   <option key={t.id} value={t.id}>{t.name}</option>
                 ))}
               </select>
@@ -2583,13 +2674,15 @@ export default function TicketDetail() {
           <div>
             <div className="flex items-center gap-2 mb-2">
               <Icon name="edit" size={14} className="text-[var(--fg-muted)]" />
-              <label className="text-sm font-medium text-[var(--fg-primary)]">Reason</label>
-              <span className="text-xs text-[var(--fg-muted)]">(optional)</span>
+              <label className="text-sm font-medium text-[var(--fg-primary)]">Requirements</label>
+              {(reassignTeamId ? parseInt(reassignTeamId) : null) !== (ticket?.team_id ?? null)
+                ? <span className="text-xs text-rose-400">(required)</span>
+                : <span className="text-xs text-[var(--fg-muted)]">(optional)</span>}
             </div>
             <textarea
               value={reassignReason}
               onChange={(e) => setReassignReason(e.target.value)}
-              placeholder="Explain why this ticket is being reassigned..."
+              placeholder="Describe the requirements — what the receiving team needs to do..."
               rows={3}
               className={cn(
                 "w-full px-3 py-2.5 rounded-lg text-sm resize-none transition-all",

@@ -156,6 +156,55 @@ async function assignSla(pool, ticketId, priorityId, teamId) {
   }
 }
 
+// ── NOC triage SLA ────────────────────────────────────────────────────────
+// A second SLA, separate from the team response/resolve SLA: how long the NOC
+// queue has to route a ticket out to the correct team ("reassign on time").
+// Tracked in its own table (ticket_triage_slas) so the team SLA re-point on
+// (re)assign can never clobber it. Priority-based calendar minutes.
+const TRIAGE_SLA_MINUTES = { 1: 120, 2: 60, 3: 30, 4: 15 }; // low / normal / high / urgent
+const DEFAULT_TRIAGE_MINUTES = 60;
+
+async function getNocTeamId(pool) {
+  const [[row]] = await pool.query(`SELECT id FROM teams WHERE name = 'NOC' LIMIT 1`);
+  return row?.id || null;
+}
+
+// Start (or restart) the triage clock when a ticket enters the NOC queue.
+async function startTriageSla(pool, ticketId, priorityId, actorId) {
+  try {
+    const minutes = TRIAGE_SLA_MINUTES[priorityId] || DEFAULT_TRIAGE_MINUTES;
+    const dueAt = new Date(Date.now() + minutes * 60000);
+    await pool.query(
+      `INSERT INTO ticket_triage_slas (ticket_id, priority_id, target_minutes, due_at, started_at, met_at, breached)
+       VALUES (?, ?, ?, ?, NOW(), NULL, 0)
+       ON DUPLICATE KEY UPDATE priority_id = VALUES(priority_id), target_minutes = VALUES(target_minutes),
+         due_at = VALUES(due_at), started_at = NOW(), met_at = NULL, breached = 0, updated_at = NOW()`,
+      [ticketId, priorityId || null, minutes, dueAt]
+    );
+    await insertEvent(pool, { ticketId, actorId, type: "triage_sla.assigned", payload: { target_minutes: minutes, due_at: dueAt } });
+  } catch (e) {
+    console.error("Triage SLA start error:", e);
+  }
+}
+
+// Mark the triage clock met when NOC routes the ticket out of the queue.
+async function meetTriageSla(pool, ticketId, actorId) {
+  try {
+    const [res] = await pool.query(
+      `UPDATE ticket_triage_slas SET met_at = NOW(), updated_at = NOW()
+       WHERE ticket_id = ? AND met_at IS NULL`,
+      [ticketId]
+    );
+    if (res.affectedRows > 0) {
+      const [[row]] = await pool.query(`SELECT due_at, breached FROM ticket_triage_slas WHERE ticket_id = ?`, [ticketId]);
+      const onTime = row ? (!row.breached && new Date() <= new Date(row.due_at)) : null;
+      await insertEvent(pool, { ticketId, actorId, type: "triage_sla.met", payload: { on_time: onTime } });
+    }
+  } catch (e) {
+    console.error("Triage SLA meet error:", e);
+  }
+}
+
 /**
  * Calculate SLA due date respecting business hours.
  * Uses the timezone from business_hours table to convert correctly.
@@ -562,6 +611,16 @@ export function makeTicketController(pool) {
         let responseRemainingMs = sla.response_due_at ? Math.max(0, new Date(sla.response_due_at) - now) : null;
         let resolveRemainingMs = sla.resolve_due_at ? Math.max(0, new Date(sla.resolve_due_at) - now) : null;
 
+        // Triage SLA lives in its own table; present only for tickets that passed
+        // through the NOC queue. This is the second, separate SLA.
+        const [triageRows] = await pool.query(
+          `SELECT target_minutes, due_at, met_at, breached, started_at
+           FROM ticket_triage_slas WHERE ticket_id = ?`,
+          [ticketId]
+        );
+        const triage = triageRows[0] || null;
+        const triageRemainingMs = triage && triage.due_at ? Math.max(0, new Date(triage.due_at) - now) : null;
+
         // If using business hours, calculate business-minutes remaining instead of wall clock
         if (useBH && bhId) {
           if (sla.response_due_at && !sla.response_met_at) {
@@ -580,6 +639,18 @@ export function makeTicketController(pool) {
             use_business_hours: !!useBH,
             response_status: sla.response_met_at ? "met" : sla.response_breached ? "breached" : (responseRemainingMs !== null && responseRemainingMs < 3600000) ? "at_risk" : "on_track",
             resolve_status: sla.resolve_met_at ? "met" : sla.resolve_breached ? "breached" : (resolveRemainingMs !== null && resolveRemainingMs < 14400000) ? "at_risk" : "on_track",
+            // NOC triage SLA — null/false when the ticket never passed through NOC.
+            triage_present: !!triage,
+            triage_minutes: triage ? triage.target_minutes : null,
+            triage_due_at: triage ? triage.due_at : null,
+            triage_met_at: triage ? triage.met_at : null,
+            triage_breached: triage ? !!triage.breached : false,
+            triage_started_at: triage ? triage.started_at : null,
+            triage_remaining_ms: triageRemainingMs,
+            triage_status: triage
+              ? (triage.met_at ? "met" : triage.breached ? "breached"
+                 : (triageRemainingMs !== null && triageRemainingMs < 300000) ? "at_risk" : "on_track")
+              : null,
           }
         });
       } catch (e) {
@@ -696,6 +767,13 @@ export function makeTicketController(pool) {
              WHERE ticket_id = ?`,
             [slaGracePct, slaGracePct, ticketId]
           );
+        }
+
+        // If the request landed in the NOC triage queue, start the triage SLA —
+        // the separate "NOC must reassign on time" clock.
+        const nocTeamIdOnCreate = await getNocTeamId(pool);
+        if (nocTeamIdOnCreate && routedTeamId === nocTeamIdOnCreate) {
+          await startTriageSla(pool, ticketId, priorityId, req.user.id);
         }
 
         // Save template responses if a template was used
@@ -1241,6 +1319,20 @@ export function makeTicketController(pool) {
           if (!isAdmin && !(await isNocMember(pool, req.user.id))) {
             return send.forbidden(res, "Only NOC can reassign a ticket to another team — use \"Flag back to NOC\" instead.");
           }
+          // A requirements note is mandatory on a team change (triage hand-off).
+          if (!reason || !reason.trim()) {
+            return send.bad(res, "A requirements note is required when reassigning to another team.");
+          }
+          // Triage targets are restricted to the corporate-flow teams (matches the
+          // UI dropdown). Enforced here too so a direct API call can't route a
+          // ticket back into NOC (which would leave it untriaged) or to an
+          // internal team that isn't part of this flow.
+          const [allowedTeams] = await pool.query(
+            `SELECT id FROM teams WHERE name IN ('Cloud','Transmission','MTX','Security Operations')`
+          );
+          if (!allowedTeams.some((t) => t.id === Number(team_id))) {
+            return send.bad(res, "Tickets can only be reassigned to Cloud, Transmission, MTX, or Security Operations.");
+          }
         }
 
         // Build update query
@@ -1292,10 +1384,27 @@ export function makeTicketController(pool) {
           },
         });
 
-        // When NOC triages to a new team, re-point and re-log the SLA against the
-        // new team's policy. Done after the reassign event so the timeline reads
-        // "Reassigned → SLA target set" in order. Emits its own sla.assigned line.
+        // On a team-change (triage hand-off): post the requirements note as an
+        // internal comment for the receiving team, mark the triage SLA met if the
+        // ticket is leaving the NOC queue, then re-point the team SLA to the new
+        // team's policy. Order: Reassigned → Comment → Triage met → SLA target set.
+        // (Assignee-only reassigns within the same team don't post a note.)
         if (changingTeam) {
+          if (reason && reason.trim()) {
+            const [cmt] = await pool.query(
+              `INSERT INTO ticket_comments (ticket_id, author_id, body, is_public) VALUES (?, ?, ?, 0)`,
+              [ticketId, req.user.id, reason.trim()]
+            );
+            await insertEvent(pool, {
+              ticketId, actorId: req.user.id, type: "ticket.commented",
+              payload: { commentId: cmt.insertId, isPublic: false, source: "reassign" },
+            });
+          }
+
+          const nocTeamId = await getNocTeamId(pool);
+          if (nocTeamId && current.team_id === nocTeamId) {
+            await meetTriageSla(pool, ticketId, req.user.id);
+          }
           await assignSla(pool, ticketId, current.priority_id, team_id || null);
         }
 
@@ -1350,6 +1459,10 @@ export function makeTicketController(pool) {
           [ticketId, current.team_id, noc.id, current.assignee_id, reason || "Flagged back to NOC for re-routing", req.user.id]
         );
         await insertEvent(pool, { ticketId, actorId: req.user.id, type: "ticket.flagged_to_noc", payload: { from_team: current.team_id, reason: reason || null } });
+
+        // Re-entering the NOC queue (re)starts the triage SLA against the ticket's priority.
+        const [[prRow]] = await pool.query(`SELECT priority_id FROM tickets WHERE id = ?`, [ticketId]);
+        await startTriageSla(pool, ticketId, prRow?.priority_id ?? null, req.user.id);
 
         const [members] = await pool.query(`SELECT user_id FROM team_members WHERE team_id = ? AND user_id <> ?`, [noc.id, req.user.id]);
         if (members.length) {
@@ -1838,7 +1951,7 @@ export function makeTicketController(pool) {
            FROM ticket_events e
            LEFT JOIN users u ON u.id = e.actor_id
            WHERE e.ticket_id = ?
-           ORDER BY e.created_at ASC`,
+           ORDER BY e.created_at ASC, e.id ASC`,
           [ticketId]
         );
 

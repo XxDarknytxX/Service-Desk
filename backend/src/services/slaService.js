@@ -63,6 +63,50 @@ export function makeSlaService(pool) {
     },
 
     /**
+     * Check and mark breached TRIAGE SLAs (the NOC "reassign-on-time" SLA).
+     * A triage row breaches when its due_at passes while the ticket is still in
+     * the NOC queue, not yet routed out, and not closed. Emits one
+     * triage_sla.breached event per newly-breached ticket. Runs in the same
+     * 2-minute cron as checkAndMarkBreaches.
+     */
+    async checkAndMarkTriageBreaches() {
+      try {
+        const [due] = await pool.query(
+          `SELECT tts.ticket_id
+           FROM ticket_triage_slas tts
+           INNER JOIN tickets t ON t.id = tts.ticket_id
+           INNER JOIN ticket_statuses s ON s.id = t.status_id
+           INNER JOIN teams tm ON tm.id = t.team_id
+           WHERE tts.breached = 0
+             AND tts.met_at IS NULL
+             AND tts.due_at < NOW()
+             AND tm.name = 'NOC'
+             AND s.is_closed = 0`
+        );
+        if (due.length === 0) return 0;
+
+        const ids = due.map((r) => r.ticket_id);
+        await pool.query(
+          `UPDATE ticket_triage_slas SET breached = 1, updated_at = NOW()
+           WHERE ticket_id IN (?) AND breached = 0 AND met_at IS NULL`,
+          [ids]
+        );
+        for (const id of ids) {
+          await pool.query(
+            `INSERT INTO ticket_events (ticket_id, event_type, payload_json)
+             VALUES (?, 'triage_sla.breached', ?)`,
+            [id, JSON.stringify({ breached_at: new Date() })]
+          );
+        }
+        console.log(`[SLA Service] Marked ${ids.length} triage breach(es)`);
+        return ids.length;
+      } catch (error) {
+        console.error("[SLA Service] Error checking triage breaches:", error);
+        return 0;
+      }
+    },
+
+    /**
      * Get tickets that are at risk of breaching SLA
      */
     async getAtRiskTickets(responseThresholdMinutes = 60, resolveThresholdMinutes = 240) {

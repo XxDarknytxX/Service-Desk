@@ -210,6 +210,7 @@ const AUTO_APPROVE_INTERVAL = 5 * 60 * 1000;    // every 5 minutes
 setInterval(async () => {
   try {
     await slaService.checkAndMarkBreaches();
+    await slaService.checkAndMarkTriageBreaches();
   } catch (err) {
     console.error("[Cron] SLA breach check error:", err.message);
   }
