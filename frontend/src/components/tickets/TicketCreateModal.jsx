@@ -93,7 +93,7 @@ function StepDots({ step }) {
   );
 }
 
-export default function TicketCreateModal({ open, onClose, meta, user, onCreated }) {
+export default function TicketCreateModal({ open, onClose, meta, user, onCreated, resumeTicket }) {
   const toast = useToast();
   // Mode: null (choosing), 'manual', 'template_gallery', 'template_form',
   //       'form_pick', 'form_send', 'form_done'  (customer-form ticket flow)
@@ -101,6 +101,8 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
   const [corpStep, setCorpStep] = useState(1); // corporate flow: 1=choose, 2=details
   const [form, setForm] = useState(defaultForm);
   const [loading, setLoading] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [resumingDraftId, setResumingDraftId] = useState(null);
   const [teamMembers, setTeamMembers] = useState([]);
   const [loadingMembers, setLoadingMembers] = useState(false);
 
@@ -158,10 +160,8 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
   // customer-form "done" screen) after the parent refetches.
   useEffect(() => {
     if (open) {
-      setMode(isCorporate ? "corporate" : null);
-      setCorpStep(1);
-      setForm({ ...defaultForm, organizationId: defaultOrgId });
       setLoading(false);
+      setSavingDraft(false);
       setTeamMembers([]);
       setSelectedTemplate(null);
       setTemplateValues({});
@@ -173,6 +173,27 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
       setCfEmail("");
       setCfName("");
       setCfResult(null);
+      if (resumeTicket) {
+        // Resume a saved draft → jump straight to the details step, pre-filled.
+        const catKey = (meta?.serviceCategories || []).find((c) => c.id === resumeTicket.service_category_id)?.key || "";
+        setResumingDraftId(resumeTicket.id);
+        setMode(isCorporate ? "corporate" : "manual");
+        setCorpStep(2);
+        setForm({
+          ...defaultForm,
+          organizationId: resumeTicket.organization_id || defaultOrgId,
+          subject: resumeTicket.subject || "",
+          description: resumeTicket.description || "",
+          priorityKey: resumeTicket.priority_key || "normal",
+          serviceCategoryKey: catKey,
+          teamId: resumeTicket.team_id ? String(resumeTicket.team_id) : "",
+        });
+      } else {
+        setResumingDraftId(null);
+        setMode(isCorporate ? "corporate" : null);
+        setCorpStep(1);
+        setForm({ ...defaultForm, organizationId: defaultOrgId });
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -325,30 +346,14 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
 
     setLoading(true);
     try {
-      const payload = {
-        subject: form.subject,
-        description: form.description,
-        priorityKey: form.priorityKey,
-        typeKey: form.typeKey,
-        channelKey: form.channelKey,
-        organizationId: form.organizationId ? Number(form.organizationId) : undefined,
-        assigneeId: form.assigneeId ? Number(form.assigneeId) : undefined,
-        teamId: form.teamId ? Number(form.teamId) : undefined,
-        requesterId: form.requesterId ? Number(form.requesterId) : undefined,
-        serviceCategoryKey: form.serviceCategoryKey || undefined,
-      };
-
-      // Add template data if using a template
-      if (mode === "template_form" && selectedTemplate) {
-        payload.templateId = selectedTemplate.id;
-        payload.templateResponses = templateValues;
-      }
-
-      const data = await api("/tickets", { method: "POST", body: payload });
+      const payload = buildPayload();
+      const data = resumingDraftId
+        ? await api(`/tickets/${resumingDraftId}/submit`, { method: "POST", body: payload })
+        : await api("/tickets", { method: "POST", body: payload });
       if (data.requiresApproval) {
-        toast.info("Ticket created and sent for approval");
+        toast.info(resumingDraftId ? "Request submitted for approval" : "Ticket created and sent for approval");
       } else {
-        toast.success("Ticket created successfully");
+        toast.success(resumingDraftId ? "Request submitted" : "Ticket created successfully");
       }
       onCreated?.(data.id);
       onClose?.();
@@ -356,6 +361,48 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
       toast.error(err.message || "Failed to create ticket");
     } finally {
       setLoading(false);
+    }
+  }
+
+  // Shared payload from the current form (used by both submit and save-draft).
+  function buildPayload() {
+    const payload = {
+      subject: form.subject,
+      description: form.description,
+      priorityKey: form.priorityKey,
+      typeKey: form.typeKey,
+      channelKey: form.channelKey,
+      organizationId: form.organizationId ? Number(form.organizationId) : undefined,
+      assigneeId: form.assigneeId ? Number(form.assigneeId) : undefined,
+      teamId: form.teamId ? Number(form.teamId) : undefined,
+      requesterId: form.requesterId ? Number(form.requesterId) : undefined,
+      serviceCategoryKey: form.serviceCategoryKey || undefined,
+    };
+    if (mode === "template_form" && selectedTemplate) {
+      payload.templateId = selectedTemplate.id;
+      payload.templateResponses = templateValues;
+    }
+    return payload;
+  }
+
+  // Save the current form as a draft — no required-field validation, no routing.
+  async function handleSaveDraft() {
+    setSavingDraft(true);
+    try {
+      const payload = buildPayload();
+      if (resumingDraftId) {
+        await api(`/tickets/${resumingDraftId}/submit?draftOnly=1`, { method: "POST", body: payload });
+      } else {
+        payload.statusKey = "draft";
+        await api("/tickets", { method: "POST", body: payload });
+      }
+      toast.success("Saved as draft");
+      onCreated?.();
+      onClose?.();
+    } catch (err) {
+      toast.error(err.message || "Couldn't save draft");
+    } finally {
+      setSavingDraft(false);
     }
   }
 
@@ -1264,9 +1311,14 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
                 Next
               </Button>
             ) : (
-              <Button key="corp-submit" type="button" onClick={onSubmit} loading={loading} icon={<Icon name="send" size={16} />}>
-                {loading ? "Submitting..." : "Submit request"}
-              </Button>
+              <>
+                <Button key="corp-draft" type="button" variant="ghost" onClick={handleSaveDraft} loading={savingDraft} icon={<Icon name="edit" size={16} />}>
+                  Save as draft
+                </Button>
+                <Button key="corp-submit" type="button" onClick={onSubmit} loading={loading} icon={<Icon name="send" size={16} />}>
+                  {loading ? "Submitting..." : "Submit request"}
+                </Button>
+              </>
             )}
           </>
         ) : (

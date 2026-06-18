@@ -25,6 +25,7 @@ export function makeTicketRouter(controller) {
   router.patch("/tickets/:id", requireAuth, controller.update);
 
   // Quick actions
+  router.post("/tickets/:id/submit", requireAuth, controller.submitDraft);
   router.post("/tickets/:id/assign", requireAuth, controller.assignToMe);
   router.post("/tickets/:id/escalate", requireAuth, controller.escalate);
   router.post("/tickets/:id/reassign", requireAuth, controller.reassign);

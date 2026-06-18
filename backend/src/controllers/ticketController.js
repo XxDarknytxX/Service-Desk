@@ -425,6 +425,11 @@ export function makeTicketController(pool) {
           where.push("s.is_closed = 0");
         }
 
+        // Drafts are unsubmitted — keep them out of active queues (they're is_closed=0).
+        if (req.query.excludeDrafts === 'true') {
+          where.push("s.`key` <> 'draft'");
+        }
+
         if (req.query.priority) {
           where.push("p.`key` = ?");
           params.push(req.query.priority);
@@ -963,6 +968,121 @@ export function makeTicketController(pool) {
             flowType: approvalResult.flowType,
             totalSteps: approvalResult.totalSteps,
           } : null,
+        });
+      } catch (e) {
+        console.error(e);
+        return send.serverErr(res);
+      }
+    },
+
+    // POST /api/tickets/:id/submit  — promote a saved draft into a live ticket.
+    // (?draftOnly=1 just persists edits to the draft without submitting.)
+    submitDraft: async (req, res) => {
+      const ticketId = Number(req.params.id);
+      const draftOnly = req.query.draftOnly === "1" || req.query.draftOnly === "true";
+      try {
+        const [[t]] = await pool.query(
+          `SELECT t.*, s.\`key\` AS status_key FROM tickets t
+           JOIN ticket_statuses s ON s.id = t.status_id WHERE t.id = ?`,
+          [ticketId]
+        );
+        if (!t) return send.notFound(res, "Ticket not found");
+        // Scoped carve-out: only the owner (or an agent) may edit/submit, and only
+        // while it is still a draft. This safely bypasses update()'s field lock.
+        if (!isAgent(req.user) && t.requester_id !== req.user.id) return send.forbidden(res);
+        if (t.status_key !== "draft") return send.bad(res, "Only a draft can be submitted.");
+
+        // Apply any edited fields + re-route by (possibly changed) service category.
+        const { subject, description, priorityKey, typeKey, serviceCategoryKey, estimatedCost } = req.body;
+        const sets = [], vals = [];
+        if (subject !== undefined) { sets.push("subject = ?"); vals.push(subject); }
+        if (description !== undefined) { sets.push("description = ?"); vals.push(description || null); }
+        let priorityId = t.priority_id;
+        if (priorityKey) { const pid = await getLookupId(pool, "ticket_priorities", priorityKey); if (pid) { priorityId = pid; sets.push("priority_id = ?"); vals.push(pid); } }
+        if (typeKey) { const tid = await getLookupId(pool, "ticket_types", typeKey); if (tid) { sets.push("type_id = ?"); vals.push(tid); } }
+        let serviceCategoryId = t.service_category_id;
+        let routedTeamId = t.team_id;
+        if (serviceCategoryKey) {
+          const [[cat]] = await pool.query("SELECT id, routing_team_id FROM service_categories WHERE `key` = ? AND is_active = 1 LIMIT 1", [serviceCategoryKey]);
+          if (cat) { serviceCategoryId = cat.id; routedTeamId = cat.routing_team_id || routedTeamId; sets.push("service_category_id = ?"); vals.push(cat.id); sets.push("team_id = ?"); vals.push(routedTeamId); }
+        }
+        if (estimatedCost !== undefined) { sets.push("estimated_cost = ?"); vals.push(estimatedCost || null); }
+        if (sets.length) { vals.push(ticketId); await pool.query(`UPDATE tickets SET ${sets.join(", ")} WHERE id = ?`, vals); }
+
+        // Autosave only — still a draft.
+        if (draftOnly) {
+          await insertEvent(pool, { ticketId, actorId: req.user.id, type: "ticket.draft_saved", payload: {} });
+          return send.ok(res, { id: ticketId, isDraft: true });
+        }
+
+        // ── Promote to a submitted ticket (mirrors create()'s submit pipeline) ──
+        const ticketNumber = t.ticket_number;
+        const subjectVal = subject !== undefined ? subject : t.subject;
+        const openId = await getLookupId(pool, "ticket_statuses", "open");
+        if (openId) await pool.query("UPDATE tickets SET status_id = ? WHERE id = ?", [openId, ticketId]);
+        await insertEvent(pool, {
+          ticketId, actorId: req.user.id, type: "ticket.created",
+          payload: { ticketNumber, team_id: routedTeamId, from_draft: true },
+        });
+
+        // SLA + status: NOC triage stays open (triage SLA only); handling team → pending + team SLA.
+        const nocTeamId = await getNocTeamId(pool);
+        if (nocTeamId && routedTeamId === nocTeamId) {
+          await startTriageSla(pool, ticketId, priorityId, req.user.id);
+        } else if (routedTeamId) {
+          const pendingId = await getLookupId(pool, "ticket_statuses", "pending");
+          if (pendingId) {
+            await pool.query("UPDATE tickets SET status_id = ? WHERE id = ?", [pendingId, ticketId]);
+            await insertEvent(pool, {
+              ticketId, actorId: req.user.id, type: "ticket.updated",
+              payload: { changes: { status: { from: "open", to: "pending" } }, auto: true },
+            });
+          }
+          await assignSla(pool, ticketId, priorityId, routedTeamId);
+        } else {
+          await assignSla(pool, ticketId, priorityId, routedTeamId);
+        }
+
+        // Approval flow (pause SLA + assign approval SLAs if required).
+        let requesterDepartmentId = null;
+        try { const [ru] = await pool.query("SELECT department_id FROM users WHERE id = ?", [t.requester_id]); requesterDepartmentId = ru[0]?.department_id || null; } catch (_) {}
+        const approvalResult = await processTicketApproval(pool, ticketId, {
+          priority_key: priorityKey || "normal", type_key: typeKey || "incident",
+          team_id: routedTeamId, department_id: requesterDepartmentId, estimated_cost: estimatedCost || null,
+        }, t.requester_id);
+        if (approvalResult && approvalResult.requiresApproval) {
+          try {
+            const [slas] = await pool.query(`SELECT response_due_at, resolve_due_at, response_met_at, resolve_met_at FROM ticket_slas WHERE ticket_id = ?`, [ticketId]);
+            if (slas.length > 0) {
+              const sla = slas[0]; const now = new Date();
+              const rr = sla.response_due_at && !sla.response_met_at ? Math.max(0, new Date(sla.response_due_at) - now) : null;
+              const vr = sla.resolve_due_at && !sla.resolve_met_at ? Math.max(0, new Date(sla.resolve_due_at) - now) : null;
+              await pool.query(`UPDATE ticket_slas SET paused_at = NOW(), response_remaining_ms = ?, resolve_remaining_ms = ?, updated_at = NOW() WHERE ticket_id = ?`, [rr, vr, ticketId]);
+              await insertEvent(pool, { ticketId, actorId: req.user.id, type: "sla.paused", payload: { reason: "pending_approval", response_remaining_ms: rr, resolve_remaining_ms: vr } });
+            }
+          } catch (slaPauseErr) { console.error("SLA pause on approval error:", slaPauseErr); }
+          try { await approvalSlaService.assignApprovalSlas(ticketId); } catch (aslErr) { console.error("Approval SLA assignment error:", aslErr); }
+        }
+
+        // Corporate-flow notifications: alert the routed queue + the SDM.
+        if (serviceCategoryId && routedTeamId) {
+          try {
+            const [[cat]] = await pool.query("SELECT name FROM service_categories WHERE id = ?", [serviceCategoryId]);
+            const [[team]] = await pool.query("SELECT name FROM teams WHERE id = ?", [routedTeamId]);
+            const catName = cat?.name || "Service"; const teamName = team?.name || "the team";
+            const [members] = await pool.query("SELECT user_id FROM team_members WHERE team_id = ? AND user_id <> ?", [routedTeamId, t.requester_id]);
+            const [sdms] = await pool.query("SELECT id FROM users WHERE title = 'Service Delivery Manager' AND is_active = 1 AND id <> ?", [t.requester_id]);
+            const recips = new Map();
+            for (const m of members) recips.set(m.user_id, [m.user_id, ticketId, `New ${catName} request in ${teamName}`, `${ticketNumber} — ${subjectVal}`, "queue"]);
+            for (const s of sdms) recips.set(s.id, [s.id, ticketId, `Corporate request routed — ${catName}`, `${ticketNumber} routed to ${teamName}. Reassign if it belongs in another queue.`, "sdm"]);
+            const rows = [...recips.values()];
+            if (rows.length) await pool.query("INSERT INTO notifications (user_id, ticket_id, title, message, type) VALUES ?", [rows]);
+          } catch (notifyErr) { console.error("Corporate routing notification error:", notifyErr); }
+        }
+
+        return send.ok(res, {
+          id: ticketId, ticketNumber,
+          requiresApproval: !!(approvalResult && approvalResult.requiresApproval),
         });
       } catch (e) {
         console.error(e);

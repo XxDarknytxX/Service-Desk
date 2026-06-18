@@ -81,6 +81,7 @@ export default function Tickets() {
   const [selectedTickets, setSelectedTickets] = useState([])
   const [bulkActionLoading, setBulkActionLoading] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(searchParams.get("create") === "1")
+  const [resumeTicket, setResumeTicket] = useState(null)
 
   // New: column visibility & view mode
   const [visibleCols, setVisibleCols] = useState(loadVisibleCols)
@@ -126,17 +127,24 @@ export default function Tickets() {
       if (queueView === "my-tickets") {
         params.set("assignee", user.id)
         params.set("excludeResolved", "true")
+        params.set("excludeDrafts", "true")
       } else if (queueView === "team-queue") {
         if (user.team_id) {
           params.set("teamId", user.team_id)
           params.set("assignee", "unassigned")
           params.set("excludeResolved", "true")
+          params.set("excludeDrafts", "true")
         }
       } else if (queueView === "my-requests") {
         params.set("requesterId", user.id)
+        params.set("excludeDrafts", "true")
       } else if (queueView === "open-requests") {
         params.set("requesterId", user.id)
         params.set("excludeResolved", "true")
+        params.set("excludeDrafts", "true")
+      } else if (queueView === "drafts") {
+        params.set("requesterId", user.id)
+        params.set("status", "draft")
       } else if (queueView === "closed-requests") {
         params.set("requesterId", user.id)
         params.set("status", "solved,closed")
@@ -221,6 +229,7 @@ export default function Tickets() {
     newParams.delete("create")
     setSearchParams(newParams)
     setShowCreateModal(false)
+    setResumeTicket(null)
   }
 
   const handleTicketCreated = (_id, opts) => {
@@ -229,6 +238,13 @@ export default function Tickets() {
   }
 
   const handleRowClick = (ticketId) => {
+    // A draft re-opens the create modal in resume mode instead of the detail page.
+    const t = tickets.find((x) => x.id === ticketId)
+    if (t?.status_key === "draft") {
+      setResumeTicket(t)
+      setShowCreateModal(true)
+      return
+    }
     navigate(`/tickets/${ticketId}`)
   }
 
@@ -413,6 +429,7 @@ export default function Tickets() {
   const QUEUES = isCorporate
     ? [
         { key: "open-requests", label: "Open Requests", icon: "inbox", desc: "Your active requests" },
+        { key: "drafts", label: "Drafts", icon: "edit", desc: "Requests you saved but haven't submitted" },
         { key: "closed-requests", label: "Closed Requests", icon: "checkCircle", desc: "Your completed requests" },
       ]
     : [
@@ -925,6 +942,7 @@ export default function Tickets() {
         meta={meta}
         user={user}
         onCreated={handleTicketCreated}
+        resumeTicket={resumeTicket}
       />
     </>
   )
