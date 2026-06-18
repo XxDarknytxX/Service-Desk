@@ -1420,10 +1420,19 @@ export default function TicketDetail() {
                           <Icon name="sla" size={20} className="text-[var(--accent)]" />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <h3 className="text-sm font-semibold text-[var(--fg-primary)]">{slaData.policy_name || "SLA Policy"}</h3>
-                          <p className="text-xs text-[var(--fg-muted)]">
-                            Response target: {slaData.response_minutes ?? "N/A"}m · Resolution target: {slaData.resolve_minutes ?? "N/A"}m
-                          </p>
+                          {slaData.team_sla_present ? (
+                            <>
+                              <h3 className="text-sm font-semibold text-[var(--fg-primary)]">{slaData.policy_name || "SLA Policy"}</h3>
+                              <p className="text-xs text-[var(--fg-muted)]">
+                                Response target: {slaData.response_minutes ?? "N/A"}m · Resolution target: {slaData.resolve_minutes ?? "N/A"}m
+                              </p>
+                            </>
+                          ) : (
+                            <>
+                              <h3 className="text-sm font-semibold text-[var(--fg-primary)]">NOC Triage SLA</h3>
+                              <p className="text-xs text-[var(--fg-muted)]">In the NOC queue — the team SLA starts once it's routed.</p>
+                            </>
+                          )}
                         </div>
                         {slaData.paused_at && (
                           <Badge tone="amber" className="text-xs flex-shrink-0">Paused</Badge>
@@ -1433,6 +1442,9 @@ export default function TicketDetail() {
 
                     {/* Response, Resolution & (NOC) Triage SLA Cards */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {/* Response + Resolution show only once the team SLA has started
+                          (a NOC-triage ticket only has the Triage SLA below). */}
+                      {slaData.team_sla_present && (<>
                       {/* Response SLA */}
                       {(() => {
                         const breached = !!slaData.response_breached;
@@ -1528,6 +1540,7 @@ export default function TicketDetail() {
                           </div>
                         );
                       })()}
+                      </>)}
 
                       {/* Triage SLA — only for tickets that passed through the NOC queue */}
                       {slaData.triage_present && (() => {
@@ -1885,10 +1898,10 @@ export default function TicketDetail() {
                     </span>
                     <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">SLA</h2>
                   </span>
-                  <span className="text-[11px] text-[var(--fg-muted)] truncate">{slaData.policy_name}</span>
+                  <span className="text-[11px] text-[var(--fg-muted)] truncate">{slaData.policy_name || (slaData.triage_present ? "NOC Triage" : "")}</span>
                 </div>
                 <div className="p-4 space-y-2.5">
-                  {(() => {
+                  {slaData.team_sla_present && (() => {
                     const r = getSlaRemaining(slaData.response_due_at, slaData.response_remaining_ms);
                     const met = !!slaData.response_met_at;
                     return (
@@ -1906,7 +1919,7 @@ export default function TicketDetail() {
                       </div>
                     );
                   })()}
-                  {(() => {
+                  {slaData.team_sla_present && (() => {
                     const r = getSlaRemaining(slaData.resolve_due_at, slaData.resolve_remaining_ms);
                     const met = !!slaData.resolve_met_at;
                     return (
@@ -1931,7 +1944,7 @@ export default function TicketDetail() {
                     const metLate = met && breached;
                     const r = getSlaRemaining(slaData.triage_due_at, (!met && breached) ? null : slaData.triage_remaining_ms);
                     return (
-                      <div className="flex items-center justify-between border-t border-[var(--border-default)] pt-2.5">
+                      <div className={cn("flex items-center justify-between", slaData.team_sla_present && "border-t border-[var(--border-default)] pt-2.5")}>
                         <span className="text-xs text-[var(--fg-muted)]">Triage</span>
                         {met ? (
                           <span className={`text-xs font-medium ${metLate ? "text-amber-400" : "text-emerald-400"}`}>{metLate ? "Met late" : "✓ Met"}</span>

@@ -604,34 +604,41 @@ export function makeTicketController(pool) {
            WHERE ts.ticket_id = ?`,
           [ticketId]
         );
-        if (rows.length === 0) return send.ok(res, { sla: null });
 
-        const sla = rows[0];
-        const now = new Date();
-
-        // Check if policy uses business hours
-        const [policyRows] = await pool.query(
-          "SELECT use_business_hours, business_hours_id FROM sla_policies WHERE id = ?",
-          [sla.policy_id]
-        );
-        const useBH = policyRows[0]?.use_business_hours;
-        const bhId = policyRows[0]?.business_hours_id;
-
-        let responseRemainingMs = sla.response_due_at ? Math.max(0, new Date(sla.response_due_at) - now) : null;
-        let resolveRemainingMs = sla.resolve_due_at ? Math.max(0, new Date(sla.resolve_due_at) - now) : null;
-
-        // Triage SLA lives in its own table; present only for tickets that passed
-        // through the NOC queue. This is the second, separate SLA.
+        // Triage SLA lives in its own table (the NOC "reassign on time" clock). A
+        // NOC-routed ticket has ONLY this — its team response/resolve SLA has not
+        // started yet — so fetch it BEFORE bailing on a missing team SLA row.
         const [triageRows] = await pool.query(
           `SELECT target_minutes, due_at, met_at, breached, started_at
            FROM ticket_triage_slas WHERE ticket_id = ?`,
           [ticketId]
         );
         const triage = triageRows[0] || null;
+
+        // Nothing to show only if there is NEITHER a team SLA nor a triage SLA.
+        if (rows.length === 0 && !triage) return send.ok(res, { sla: null });
+
+        const sla = rows[0] || null;
+        const now = new Date();
+
+        // Check if the (team) policy uses business hours
+        let useBH = false, bhId = null;
+        if (sla) {
+          const [policyRows] = await pool.query(
+            "SELECT use_business_hours, business_hours_id FROM sla_policies WHERE id = ?",
+            [sla.policy_id]
+          );
+          useBH = policyRows[0]?.use_business_hours;
+          bhId = policyRows[0]?.business_hours_id;
+        }
+
+        let responseRemainingMs = sla?.response_due_at ? Math.max(0, new Date(sla.response_due_at) - now) : null;
+        let resolveRemainingMs = sla?.resolve_due_at ? Math.max(0, new Date(sla.resolve_due_at) - now) : null;
+
         const triageRemainingMs = triage && triage.due_at ? Math.max(0, new Date(triage.due_at) - now) : null;
 
         // If using business hours, calculate business-minutes remaining instead of wall clock
-        if (useBH && bhId) {
+        if (sla && useBH && bhId) {
           if (sla.response_due_at && !sla.response_met_at) {
             responseRemainingMs = await calcBusinessMsRemaining(pool, now, new Date(sla.response_due_at), bhId);
           }
@@ -642,12 +649,15 @@ export function makeTicketController(pool) {
 
         return send.ok(res, {
           sla: {
-            ...sla,
+            ...(sla || {}),
+            // The team response/resolve SLA is present only after the ticket is in a
+            // handling team (NOC-triage tickets only have the triage SLA below).
+            team_sla_present: !!sla,
             response_remaining_ms: responseRemainingMs,
             resolve_remaining_ms: resolveRemainingMs,
             use_business_hours: !!useBH,
-            response_status: sla.response_met_at ? "met" : sla.response_breached ? "breached" : (responseRemainingMs !== null && responseRemainingMs < 3600000) ? "at_risk" : "on_track",
-            resolve_status: sla.resolve_met_at ? "met" : sla.resolve_breached ? "breached" : (resolveRemainingMs !== null && resolveRemainingMs < 14400000) ? "at_risk" : "on_track",
+            response_status: sla?.response_met_at ? "met" : sla?.response_breached ? "breached" : (responseRemainingMs !== null && responseRemainingMs < 3600000) ? "at_risk" : "on_track",
+            resolve_status: sla?.resolve_met_at ? "met" : sla?.resolve_breached ? "breached" : (resolveRemainingMs !== null && resolveRemainingMs < 14400000) ? "at_risk" : "on_track",
             // NOC triage SLA — null/false when the ticket never passed through NOC.
             triage_present: !!triage,
             triage_minutes: triage ? triage.target_minutes : null,
