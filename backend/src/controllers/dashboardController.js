@@ -38,6 +38,10 @@ export function makeDashboardController(pool) {
           params.push(req.user.id);
         }
 
+        // Drafts are unsubmitted — keep them out of dashboard aggregates + recent
+        // (avoids leaking other users' drafts to agents, and dead-linking in Recent).
+        filter.push("s.`key` <> 'draft'");
+
         const where = filter.length ? `WHERE ${filter.join(" AND ")}` : "";
 
         const [rows] = await pool.query(

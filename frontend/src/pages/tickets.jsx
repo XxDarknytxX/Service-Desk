@@ -238,9 +238,10 @@ export default function Tickets() {
   }
 
   const handleRowClick = (ticketId) => {
-    // A draft re-opens the create modal in resume mode instead of the detail page.
+    // A draft re-opens the create modal in resume mode — but only for its owner
+    // (drafts are private; no one else should be able to resume/submit them).
     const t = tickets.find((x) => x.id === ticketId)
-    if (t?.status_key === "draft") {
+    if (t?.status_key === "draft" && t.requester_id === user.id) {
       setResumeTicket(t)
       setShowCreateModal(true)
       return

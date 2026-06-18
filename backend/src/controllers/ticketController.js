@@ -425,8 +425,11 @@ export function makeTicketController(pool) {
           where.push("s.is_closed = 0");
         }
 
-        // Drafts are unsubmitted — keep them out of active queues (they're is_closed=0).
-        if (req.query.excludeDrafts === 'true') {
+        // Drafts are private, unsubmitted requests. Exclude them from EVERY list by
+        // default (agents must not see other users' drafts); a caller opts in only by
+        // explicitly filtering status=draft (the owner's Drafts queue) or includeDrafts=true.
+        const statusReq = (req.query.status || "").split(",").map((s) => s.trim());
+        if (!statusReq.includes("draft") && req.query.includeDrafts !== "true") {
           where.push("s.`key` <> 'draft'");
         }
 
@@ -709,15 +712,13 @@ export function makeTicketController(pool) {
         // explicit teamId to override it.
         let serviceCategoryId = null;
         let routedTeamId = teamId || null;
-        let slaGracePct = 0;
         if (serviceCategoryKey) {
           const [[cat]] = await pool.query(
-            "SELECT id, routing_team_id, sla_grace_pct FROM service_categories WHERE `key` = ? AND is_active = 1 LIMIT 1",
+            "SELECT id, routing_team_id FROM service_categories WHERE `key` = ? AND is_active = 1 LIMIT 1",
             [serviceCategoryKey]
           );
           if (cat) {
             serviceCategoryId = cat.id;
-            slaGracePct = cat.sla_grace_pct || 0;
             if (!teamId || !isAgent(req.user)) routedTeamId = cat.routing_team_id || routedTeamId;
           }
         }
@@ -989,7 +990,8 @@ export function makeTicketController(pool) {
         if (!t) return send.notFound(res, "Ticket not found");
         // Scoped carve-out: only the owner (or an agent) may edit/submit, and only
         // while it is still a draft. This safely bypasses update()'s field lock.
-        if (!isAgent(req.user) && t.requester_id !== req.user.id) return send.forbidden(res);
+        // A draft is private and unsubmitted — only its owner may edit/submit it.
+        if (t.requester_id !== req.user.id) return send.forbidden(res);
         if (t.status_key !== "draft") return send.bad(res, "Only a draft can be submitted.");
 
         // Apply any edited fields + re-route by (possibly changed) service category.
@@ -1501,6 +1503,11 @@ export function makeTicketController(pool) {
         if (assignee_id !== undefined) {
           updates.push("assignee_id = ?");
           params.push(assignee_id || null);
+        } else if (changingTeam) {
+          // A team hand-off with no explicit assignee clears the old team's owner,
+          // so the receiving queue starts unassigned (no stale NOC assignee).
+          updates.push("assignee_id = ?");
+          params.push(null);
         }
 
         if (updates.length === 0) {
@@ -1560,14 +1567,14 @@ export function makeTicketController(pool) {
           if (nocTeamId && current.team_id === nocTeamId) {
             await meetTriageSla(pool, ticketId, req.user.id);
             // Leaving the NOC triage queue → the ticket enters the handling team's
-            // queue. Advance open → pending (it was held in NOC triage).
-            if (current.status_key === "open") {
+            // queue. Normalize an in-triage status → pending.
+            if (current.status_key === "open" || current.status_key === "in_progress") {
               const pendingId = await getLookupId(pool, "ticket_statuses", "pending");
               if (pendingId) {
                 await pool.query("UPDATE tickets SET status_id = ? WHERE id = ?", [pendingId, ticketId]);
                 await insertEvent(pool, {
                   ticketId, actorId: req.user.id, type: "ticket.updated",
-                  payload: { changes: { status: { from: "open", to: "pending" } }, auto: true },
+                  payload: { changes: { status: { from: current.status_key, to: "pending" } }, auto: true },
                 });
               }
             }
@@ -2050,12 +2057,13 @@ export function makeTicketController(pool) {
           } catch (_) {}
         }
 
-        // Auto-transition: an agent's FIRST public reply advances a queued/triage
-        // ticket into "in_progress" (the canonical pending → in_progress trigger).
+        // Auto-transition: an agent's FIRST public reply on a ticket in a handling
+        // team's queue advances it pending → in_progress. NOC-triage tickets stay
+        // "open" until routed out (a NOC reply during triage doesn't mark it worked).
         // A customer comment never changes status — they reopen via the Reopen button,
         // so a "thank you" on a Solved ticket won't reopen it.
         if (isAgent(req.user) && isPublic && !ticket.first_responded_at &&
-            (ticket.status_key === "pending" || ticket.status_key === "open")) {
+            ticket.status_key === "pending") {
           const inProgressId = await getLookupId(pool, "ticket_statuses", "in_progress");
           if (inProgressId) {
             await pool.query("UPDATE tickets SET status_id = ? WHERE id = ?", [inProgressId, ticketId]);

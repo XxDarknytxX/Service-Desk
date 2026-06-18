@@ -977,16 +977,18 @@ export default function TicketDetail() {
                     />
                   </>
                 )}
-                {ticket.status_key === "solved" && (
+                {(ticket.status_key === "solved" || ticket.status_key === "closed") && (
                   <>
                     <span className="w-px h-5 bg-[var(--border-default)] mx-1" />
-                    <ToolbarAction
-                      icon="check"
-                      label="Close"
-                      onClick={() => handleQuickStatus("closed")}
-                      loading={actionLoading === "closed"}
-                      tone="success"
-                    />
+                    {ticket.status_key === "solved" && (
+                      <ToolbarAction
+                        icon="check"
+                        label="Close"
+                        onClick={() => handleQuickStatus("closed")}
+                        loading={actionLoading === "closed"}
+                        tone="success"
+                      />
+                    )}
                     <ToolbarAction
                       icon="refresh"
                       label="Reopen"
@@ -2158,24 +2160,29 @@ export default function TicketDetail() {
                 )}
               </div>
             )}
-            {/* Customer resolution confirmation — solved tickets awaiting the requester */}
-            {ticket.status_key === "solved" && !isAgent && (
+            {/* Customer resolution controls — solved awaits confirmation; closed can still be reopened */}
+            {(ticket.status_key === "solved" || ticket.status_key === "closed") && !isAgent && (
               <div className="rounded-2xl border border-emerald-500/30 bg-[var(--bg-elevated)] shadow-[var(--shadow-card)] overflow-hidden animate-fade-up" style={{ animationDelay: "270ms" }}>
                 <div className="flex items-center gap-2.5 px-5 py-4 border-b border-[var(--border-default)]">
                   <span className="h-8 w-8 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center">
                     <Icon name="checkCircle" size={16} />
                   </span>
-                  <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">Is this resolved?</h2>
+                  <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">
+                    {ticket.status_key === "solved" ? "Is this resolved?" : "Need more help?"}
+                  </h2>
                 </div>
                 <div className="p-4 space-y-3">
                   <p className="text-xs text-[var(--fg-secondary)] leading-relaxed">
-                    Your ticket was marked solved. Confirm to close it, or reopen if you still need help.
-                    It will close automatically in 3 days if you don't confirm or reopen.
+                    {ticket.status_key === "solved"
+                      ? "Your ticket was marked solved. Confirm to close it, or reopen if you still need help. It will close automatically in 3 days if you don't confirm or reopen."
+                      : "This ticket is closed. If the issue isn't fully resolved, you can reopen it and an agent will pick it back up."}
                   </p>
                   <div className="flex gap-2">
-                    <Button size="sm" onClick={() => handleQuickStatus("closed")} loading={actionLoading === "closed"} className="flex-1">
-                      <Icon name="check" size={14} className="mr-1.5" /> Confirm &amp; close
-                    </Button>
+                    {ticket.status_key === "solved" && (
+                      <Button size="sm" onClick={() => handleQuickStatus("closed")} loading={actionLoading === "closed"} className="flex-1">
+                        <Icon name="check" size={14} className="mr-1.5" /> Confirm &amp; close
+                      </Button>
+                    )}
                     <Button size="sm" variant="secondary" onClick={() => handleQuickStatus("in_progress")} loading={actionLoading === "in_progress"} className="flex-1">
                       <Icon name="refresh" size={14} className="mr-1.5" /> Reopen
                     </Button>

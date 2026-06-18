@@ -36,7 +36,9 @@ export function makeReportController(pool) {
     async getTicketMetrics(req, res) {
       try {
         const { start_date, end_date, team_id, assignee_id, priority_id, type_id, channel_id } = req.query;
-        let where = "WHERE 1=1";
+        // Drafts are unsubmitted — never count them in analytics. Filter via status_id
+        // so it works in queries that don't join ticket_statuses (byPriority/type/channel).
+        let where = "WHERE t.status_id NOT IN (SELECT id FROM ticket_statuses WHERE `key` = 'draft')";
         const p = [];
 
         if (start_date) { where += " AND t.created_at >= ?"; p.push(start_date); }
