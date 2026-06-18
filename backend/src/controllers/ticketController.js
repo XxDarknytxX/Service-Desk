@@ -172,6 +172,12 @@ async function assignSla(pool, ticketId, priorityId, teamId) {
 const TRIAGE_SLA_MINUTES = { 1: 120, 2: 60, 3: 30, 4: 15 }; // low / normal / high / urgent
 const DEFAULT_TRIAGE_MINUTES = 60;
 
+// Manager review SLA — the window a team manager (lead) has to act once a ticket
+// is escalated to them (reassign it back to an engineer, or resolve it). Its own
+// calendar minutes, priority-based. Urgent 30m / High 60m / Normal 120m / Low 240m.
+const MANAGER_SLA_MINUTES = { 1: 240, 2: 120, 3: 60, 4: 30 }; // low / normal / high / urgent
+const DEFAULT_MANAGER_MINUTES = 120;
+
 async function getNocTeamId(pool) {
   const [[row]] = await pool.query(`SELECT id FROM teams WHERE name = 'NOC' LIMIT 1`);
   return row?.id || null;
@@ -196,6 +202,31 @@ async function isTeamMember(pool, userId, teamId) {
     "SELECT 1 FROM team_members WHERE team_id = ? AND user_id = ? LIMIT 1", [teamId, userId]
   );
   return rows.length > 0;
+}
+
+// Pause the team SLA — store the remaining time so it can be resumed later.
+// No-op if there's no team SLA row or it's already paused. Returns true if paused.
+async function pauseTicketSla(pool, ticketId, actorId) {
+  try {
+    const [slas] = await pool.query(
+      `SELECT response_due_at, resolve_due_at, response_met_at, resolve_met_at, paused_at
+       FROM ticket_slas WHERE ticket_id = ?`, [ticketId]
+    );
+    if (slas.length === 0 || slas[0].paused_at) return false;
+    const sla = slas[0];
+    const now = new Date();
+    const responseRemaining = sla.response_due_at && !sla.response_met_at
+      ? Math.max(0, new Date(sla.response_due_at) - now) : null;
+    const resolveRemaining = sla.resolve_due_at && !sla.resolve_met_at
+      ? Math.max(0, new Date(sla.resolve_due_at) - now) : null;
+    await pool.query(
+      `UPDATE ticket_slas SET paused_at = NOW(), response_remaining_ms = ?, resolve_remaining_ms = ?, updated_at = NOW()
+       WHERE ticket_id = ?`,
+      [responseRemaining, resolveRemaining, ticketId]
+    );
+    await insertEvent(pool, { ticketId, actorId, type: "sla.paused", payload: { response_remaining_ms: responseRemaining, resolve_remaining_ms: resolveRemaining } });
+    return true;
+  } catch (e) { console.error("Pause SLA error:", e); return false; }
 }
 
 // Resume a paused (on-hold) SLA — recompute due dates from the stored remaining time.
@@ -244,6 +275,20 @@ async function startTriageSla(pool, ticketId, priorityId, actorId) {
   }
 }
 
+// Re-target an in-flight triage clock when NOC re-prioritises during triage —
+// keeps the original started_at, just recomputes due_at from the new priority.
+async function recomputeTriageSla(pool, ticketId, priorityId) {
+  try {
+    const minutes = TRIAGE_SLA_MINUTES[priorityId] || DEFAULT_TRIAGE_MINUTES;
+    await pool.query(
+      `UPDATE ticket_triage_slas
+       SET target_minutes = ?, priority_id = ?, due_at = DATE_ADD(started_at, INTERVAL ? MINUTE), updated_at = NOW()
+       WHERE ticket_id = ? AND met_at IS NULL`,
+      [minutes, priorityId || null, minutes, ticketId]
+    );
+  } catch (e) { console.error("Triage SLA recompute error:", e); }
+}
+
 // Mark the triage clock met when NOC routes the ticket out of the queue.
 async function meetTriageSla(pool, ticketId, actorId) {
   try {
@@ -260,6 +305,58 @@ async function meetTriageSla(pool, ticketId, actorId) {
   } catch (e) {
     console.error("Triage SLA meet error:", e);
   }
+}
+
+// Start (or restart) the manager review clock when a ticket is escalated to its
+// team manager. Upserted on ticket_id so a re-escalation restarts it.
+async function startManagerSla(pool, ticketId, priorityId, managerId) {
+  try {
+    const minutes = MANAGER_SLA_MINUTES[priorityId] || DEFAULT_MANAGER_MINUTES;
+    const dueAt = new Date(Date.now() + minutes * 60000);
+    await pool.query(
+      `INSERT INTO ticket_manager_slas (ticket_id, manager_id, priority_id, target_minutes, due_at, started_at, met_at, breached, outcome)
+       VALUES (?, ?, ?, ?, ?, NOW(), NULL, 0, 'pending')
+       ON DUPLICATE KEY UPDATE manager_id = VALUES(manager_id), priority_id = VALUES(priority_id),
+         target_minutes = VALUES(target_minutes), due_at = VALUES(due_at), started_at = NOW(),
+         met_at = NULL, breached = 0, outcome = 'pending', updated_at = NOW()`,
+      [ticketId, managerId || null, priorityId || null, minutes, dueAt]
+    );
+    await insertEvent(pool, { ticketId, actorId: null, type: "manager_sla.started", payload: { target_minutes: minutes, due_at: dueAt, manager_id: managerId || null } });
+  } catch (e) {
+    console.error("Manager SLA start error:", e);
+  }
+}
+
+// Mark the manager clock met when the manager acts (reassigns back / resolves).
+// outcome ∈ {reassigned_back, resolved}. No-op if there's no open manager SLA.
+async function meetManagerSla(pool, ticketId, outcome, actorId) {
+  try {
+    const [res] = await pool.query(
+      `UPDATE ticket_manager_slas SET met_at = NOW(), outcome = ?, updated_at = NOW()
+       WHERE ticket_id = ? AND met_at IS NULL`,
+      [outcome, ticketId]
+    );
+    if (res.affectedRows > 0) {
+      const [[row]] = await pool.query(`SELECT due_at, breached FROM ticket_manager_slas WHERE ticket_id = ?`, [ticketId]);
+      const onTime = row ? (!row.breached && new Date() <= new Date(row.due_at)) : null;
+      await insertEvent(pool, { ticketId, actorId, type: "manager_sla.met", payload: { outcome, on_time: onTime } });
+      return true;
+    }
+    return false;
+  } catch (e) {
+    console.error("Manager SLA meet error:", e);
+    return false;
+  }
+}
+
+// Is there an open (unmet) manager SLA for this ticket? (i.e. it's with the manager)
+async function hasOpenManagerSla(pool, ticketId) {
+  try {
+    const [rows] = await pool.query(
+      `SELECT 1 FROM ticket_manager_slas WHERE ticket_id = ? AND met_at IS NULL LIMIT 1`, [ticketId]
+    );
+    return rows.length > 0;
+  } catch (_) { return false; }
 }
 
 /**
@@ -673,11 +770,22 @@ export function makeTicketController(pool) {
         );
         const triage = triageRows[0] || null;
 
-        // Nothing to show only if there is NEITHER a team SLA nor a triage SLA.
-        if (rows.length === 0 && !triage) return send.ok(res, { sla: null });
+        // Manager review SLA — its own clock, started when the ticket is escalated
+        // to the team manager and met when they reassign back / resolve.
+        const [managerRows] = await pool.query(
+          `SELECT m.target_minutes, m.due_at, m.met_at, m.breached, m.started_at, m.outcome, m.manager_id, u.full_name AS manager_name
+           FROM ticket_manager_slas m LEFT JOIN users u ON u.id = m.manager_id
+           WHERE m.ticket_id = ?`,
+          [ticketId]
+        );
+        const manager = managerRows[0] || null;
+
+        // Nothing to show only if there is no team SLA, no triage SLA, and no manager SLA.
+        if (rows.length === 0 && !triage && !manager) return send.ok(res, { sla: null });
 
         const sla = rows[0] || null;
         const now = new Date();
+        const managerRemainingMs = manager && manager.due_at && !manager.met_at ? Math.max(0, new Date(manager.due_at) - now) : null;
 
         // Check if the (team) policy uses business hours
         let useBH = false, bhId = null;
@@ -727,6 +835,23 @@ export function makeTicketController(pool) {
             triage_status: triage
               ? (triage.met_at ? "met" : triage.breached ? "breached"
                  : (triageRemainingMs !== null && triageRemainingMs < 300000) ? "at_risk" : "on_track")
+              : null,
+            // Manager review SLA — null/false unless the ticket was escalated to a
+            // manager. "open" = still with the manager (frozen team SLA).
+            manager_present: !!manager,
+            manager_minutes: manager ? manager.target_minutes : null,
+            manager_due_at: manager ? manager.due_at : null,
+            manager_met_at: manager ? manager.met_at : null,
+            manager_breached: manager ? (!!manager.breached || (!manager.met_at && managerRemainingMs === 0)) : false,
+            manager_started_at: manager ? manager.started_at : null,
+            manager_outcome: manager ? manager.outcome : null,
+            manager_name: manager ? manager.manager_name : null,
+            manager_remaining_ms: managerRemainingMs,
+            manager_open: !!manager && !manager.met_at,
+            manager_status: manager
+              ? (manager.met_at ? "met"
+                 : (manager.breached || managerRemainingMs === 0) ? "breached"
+                 : (managerRemainingMs !== null && managerRemainingMs < 600000) ? "at_risk" : "on_track")
               : null,
           }
         });
@@ -1212,6 +1337,18 @@ export function makeTicketController(pool) {
           }
         }
 
+        // Priority (urgency) is NOC's call and drives the SLA — it can only be set
+        // by NOC while the ticket is still in the triage queue (or by an admin).
+        // Once it's routed to a handling team the priority is locked.
+        if (req.body.priority_id !== undefined && Number(req.body.priority_id) !== current.priority_id) {
+          const prIsAdmin = (req.user.roles || []).includes("admin");
+          const nocTeamId = await getNocTeamId(pool);
+          const inNocQueue = !!nocTeamId && current.team_id === nocTeamId;
+          if (!prIsAdmin && !(inNocQueue && await isNocMember(pool, req.user.id))) {
+            return send.forbidden(res, "Only NOC can set a ticket's priority, and only while it's in the triage queue.");
+          }
+        }
+
         // Validate status transitions
         if (req.body.status_id && req.body.status_id !== current.status_id) {
           const newStatusKey = await getStatusKey(pool, req.body.status_id);
@@ -1251,6 +1388,10 @@ export function makeTicketController(pool) {
                 [ticketId]
               );
             } catch (_) {}
+            // If the manager resolved a ticket that was escalated to them, that
+            // closes the manager review clock (the manager solved it themselves —
+            // the engineer's frozen SLA stays as-is, completed by someone else).
+            await meetManagerSla(pool, ticketId, "resolved", req.user.id);
           }
           // Resolve = solved_at (stamped directly so the Activity log doesn't show a
           // misleading "Closed Date changed"). closed_at is reserved for an actual close.
@@ -1409,11 +1550,18 @@ export function makeTicketController(pool) {
           payload: { changes },
         });
 
-        // Re-assign SLA if priority or team changed
+        // Re-target the SLA when priority or team changed. During NOC triage the
+        // live clock is the triage SLA (the team SLA hasn't started yet), so
+        // re-target that; otherwise re-point the team response/resolve SLA.
         if (req.body.priority_id || req.body.team_id) {
           const newPriorityId = req.body.priority_id || current.priority_id;
           const newTeamId = req.body.team_id || current.team_id;
-          await assignSla(pool, ticketId, newPriorityId, newTeamId);
+          const nocTeamId = await getNocTeamId(pool);
+          if (req.body.priority_id && nocTeamId && newTeamId === nocTeamId) {
+            await recomputeTriageSla(pool, ticketId, newPriorityId);
+          } else {
+            await assignSla(pool, ticketId, newPriorityId, newTeamId);
+          }
         }
 
         return send.ok(res, { ok: true });
@@ -1433,6 +1581,15 @@ export function makeTicketController(pool) {
       const allowedFields = ["status_id", "priority_id", "assignee_id", "team_id"];
       const fields = Object.keys(updates).filter(k => allowedFields.includes(k));
       if (fields.length === 0) return send.bad(res, "No valid fields to update");
+
+      // Priority (urgency) is NOC's call — keep bulk priority changes to NOC
+      // members and admins (the per-ticket triage-window rule is enforced in update()).
+      if (updates.priority_id !== undefined) {
+        const bulkIsAdmin = (req.user.roles || []).includes("admin");
+        if (!bulkIsAdmin && !(await isNocMember(pool, req.user.id))) {
+          return send.forbidden(res, "Only NOC can change ticket priority.");
+        }
+      }
 
       try {
         // If updating status, check for approval requirements
@@ -1597,7 +1754,7 @@ export function makeTicketController(pool) {
       const { reason } = req.body;
       try {
         const [[t]] = await pool.query(
-          `SELECT team_id, ticket_number, subject, assignee_id FROM tickets WHERE id = ?`, [ticketId]
+          `SELECT team_id, priority_id, ticket_number, subject, assignee_id FROM tickets WHERE id = ?`, [ticketId]
         );
         if (!t) return send.notFound(res, "Ticket not found");
 
@@ -1618,6 +1775,12 @@ export function makeTicketController(pool) {
           ticketId, actorId: req.user.id, type: "ticket.escalated_to_manager",
           payload: { manager_id: leadId, from_assignee: t.assignee_id, reason: reason || null },
         });
+
+        // Freeze the engineer's (team) SLA while the manager reviews, and start the
+        // manager's own review clock. The manager closes it by reassigning back
+        // (which resumes the team SLA) or resolving.
+        await pauseTicketSla(pool, ticketId, null);
+        await startManagerSla(pool, ticketId, t.priority_id, leadId);
         if (reason && reason.trim()) {
           const [cmt] = await pool.query(
             `INSERT INTO ticket_comments (ticket_id, author_id, body, is_public) VALUES (?, ?, ?, 0)`,
@@ -1685,15 +1848,19 @@ export function makeTicketController(pool) {
           }
         }
 
-        // Reassigning a held ticket resumes its SLA (below), so it's part of the
-        // freeze lifecycle — gate it to the manager (lead) or an admin. This is the
-        // sanctioned "manager hands it back" path; a regular engineer can't use a
-        // reassign to quietly un-freeze a ticket.
-        if (current.status_key === "on_hold") {
+        // A ticket that's with the manager — held (on_hold) or escalated (an open
+        // manager SLA) — can only be reassigned back by the manager (lead) or an
+        // admin; that's the sanctioned "manager hands it back" path and it resumes
+        // the frozen team SLA below. The manager must also leave a comment.
+        const hadOpenMgrSla = await hasOpenManagerSla(pool, ticketId);
+        if (current.status_key === "on_hold" || hadOpenMgrSla) {
           const isAdmin = (req.user.roles || []).includes("admin");
           const leadId = await getTeamLeadId(pool, current.team_id);
           if (!isAdmin && req.user.id !== leadId) {
-            return send.forbidden(res, "Only the team manager can reassign a held ticket.");
+            return send.forbidden(res, "Only the team manager can reassign this ticket back.");
+          }
+          if (hadOpenMgrSla && (!reason || !reason.trim())) {
+            return send.bad(res, "Add a comment on your review before reassigning the ticket back.");
           }
         }
 
@@ -1787,19 +1954,21 @@ export function makeTicketController(pool) {
           await assignSla(pool, ticketId, current.priority_id, team_id || null);
         }
 
-        // Manager continuing a frozen ticket: reassigning a held ticket back resumes
-        // its SLA and returns it to a working state (in_progress if assigned, else the
-        // team queue → pending).
-        if (current.status_key === "on_hold") {
+        // Manager continuing a frozen ticket: reassigning a held (on_hold) or
+        // escalated (open manager SLA) ticket back resumes the frozen team SLA,
+        // closes the manager's review clock, and returns it to a working state
+        // (in_progress if assigned, else the team queue → pending).
+        if (current.status_key === "on_hold" || hadOpenMgrSla) {
           await resumeTicketSla(pool, ticketId, req.user.id);
+          if (hadOpenMgrSla) await meetManagerSla(pool, ticketId, "reassigned_back", req.user.id);
           const [[after]] = await pool.query("SELECT assignee_id FROM tickets WHERE id = ?", [ticketId]);
           const targetKey = after?.assignee_id ? "in_progress" : "pending";
           const targetId = await getLookupId(pool, "ticket_statuses", targetKey);
-          if (targetId) {
+          if (targetId && current.status_key !== targetKey) {
             await pool.query("UPDATE tickets SET status_id = ? WHERE id = ?", [targetId, ticketId]);
             await insertEvent(pool, {
               ticketId, actorId: null, type: "ticket.updated",
-              payload: { changes: { status: { from: "on_hold", to: targetKey } }, auto: true },
+              payload: { changes: { status: { from: current.status_key, to: targetKey } }, auto: true },
             });
           }
         }

@@ -100,6 +100,9 @@ export default function TicketDetail() {
   const [reassignReason, setReassignReason] = useState("");
   const [reassigning, setReassigning] = useState(false);
   const [reassignTeamMembers, setReassignTeamMembers] = useState([]);
+  // "triage" (NOC re-routes to another team) vs "manager_back" (manager hands an
+  // escalated ticket back to an engineer / the queue, with a required comment).
+  const [reassignMode, setReassignMode] = useState("triage");
 
   // Multi-team state
   const [ticketTeams, setTicketTeams] = useState([]);
@@ -142,6 +145,12 @@ export default function TicketDetail() {
   // admin — can work it (resolve / escalate / hold). Once NOC routes a ticket out
   // of its queue, NOC is no longer on the team and loses these actions.
   const canWork = !!(user?.roles?.includes("admin") || ticket?.viewer_is_team_member || (ticket?.assignee_id != null && Number(ticket.assignee_id) === Number(user?.id)));
+  // Priority (urgency) is NOC's call and only while the ticket is in the triage
+  // queue; admins can always change it. Everyone else sees priority read-only.
+  const canSetPriority = !!(user?.roles?.includes("admin") || (isNocMember && ticket?.team_name === "NOC"));
+  // The ticket is currently "with the manager" — escalated, team SLA frozen,
+  // manager review clock running — until the manager reassigns back or resolves.
+  const withManager = !!slaData?.manager_open;
 
   useEffect(() => { loadTicketData(); }, [id]);
 
@@ -501,11 +510,31 @@ export default function TicketDetail() {
 
   // Reassign handlers
   const handleOpenReassignModal = async () => {
+    setReassignMode("triage");
     setShowReassignModal(true);
     setReassignTeamId(ticket?.team_id?.toString() || "");
     setReassignAgentId(ticket?.assignee_id?.toString() || "");
     setReassignReason("");
     // Load team members for current team
+    if (ticket?.team_id) {
+      try {
+        const data = await api(`/teams/${ticket.team_id}/members`);
+        setReassignTeamMembers(data.members || []);
+      } catch (err) {
+        setReassignTeamMembers([]);
+      }
+    }
+  };
+
+  // Manager hands an escalated ticket back: same team, pick an engineer (or leave
+  // it to the queue), and a comment is required. Closes the manager review SLA
+  // and resumes the engineer's frozen SLA.
+  const handleOpenManagerReassign = async () => {
+    setReassignMode("manager_back");
+    setShowReassignModal(true);
+    setReassignTeamId(ticket?.team_id?.toString() || "");
+    setReassignAgentId("");
+    setReassignReason("");
     if (ticket?.team_id) {
       try {
         const data = await api(`/teams/${ticket.team_id}/members`);
@@ -532,11 +561,15 @@ export default function TicketDetail() {
   };
 
   const handleReassign = async () => {
-    // The requirements note is mandatory only on a team change (triage hand-off),
-    // matching the backend. A same-team assignee swap doesn't need one.
+    // The requirements note is mandatory on a team change (triage hand-off) and on
+    // a manager handing an escalated ticket back — matching the backend.
     const teamChanging = (reassignTeamId ? parseInt(reassignTeamId) : null) !== (ticket?.team_id ?? null);
     if (teamChanging && !reassignReason.trim()) {
       toast.error("A requirements note is required when reassigning to another team.");
+      return;
+    }
+    if (reassignMode === "manager_back" && !reassignReason.trim()) {
+      toast.error("Add a comment on your review before reassigning the ticket back.");
       return;
     }
     setReassigning(true);
@@ -758,6 +791,9 @@ export default function TicketDetail() {
     "triage_sla.assigned":     { icon: "clock",      label: "Triage SLA Started",  color: "text-blue-400" },
     "triage_sla.met":          { icon: "check",      label: "Triage SLA Met",      color: "text-emerald-400" },
     "triage_sla.breached":     { icon: "alertTriangle", label: "Triage SLA Breached", color: "text-rose-400" },
+    "ticket.escalated_to_manager": { icon: "arrowUp", label: "Escalated to Manager", color: "text-violet-400" },
+    "manager_sla.started":     { icon: "clock",      label: "Manager SLA Started",  color: "text-violet-400" },
+    "manager_sla.met":         { icon: "check",      label: "Manager SLA Met",      color: "text-emerald-400" },
   };
 
   const groupEventsByDate = (events) => {
@@ -902,6 +938,16 @@ export default function TicketDetail() {
                 {ticket.type_label && (
                   <Badge tone="slate" size="sm">{ticket.type_label}</Badge>
                 )}
+                {ticket.reopened_count > 0 && (
+                  <Badge tone="amber" size="sm" dot title={`This ticket was reopened ${ticket.reopened_count} time${ticket.reopened_count > 1 ? "s" : ""}`}>
+                    Reopened{ticket.reopened_count > 1 ? ` ×${ticket.reopened_count}` : ""}
+                  </Badge>
+                )}
+                {withManager && (
+                  <Badge tone="violet" size="sm" dot title="Escalated to the team manager for review">
+                    With Manager
+                  </Badge>
+                )}
                 <span className="text-xs text-[var(--fg-muted)] ml-1">
                   Opened {getTimeAgo(ticket.created_at)} by{" "}
                   <span className="text-[var(--fg-secondary)] font-medium">{ticket.requester_name}</span>
@@ -931,62 +977,83 @@ export default function TicketDetail() {
                     its current team, assigned, or admin) and only after it's left the
                     NOC triage queue. */}
                 {canWork && ticket.team_name !== "NOC" && ["open", "pending", "in_progress", "on_hold"].includes(ticket.status_key) && (
-                  <>
-                    {["open", "pending", "in_progress"].includes(ticket.status_key) && ticket.assignee_id !== user?.id && (
-                      <ToolbarAction
-                        icon="userPlus"
-                        label="Assign to me"
-                        onClick={handleAssignToMe}
-                        loading={actionLoading === "assign"}
-                      />
-                    )}
-                    {/* Sent to the wrong queue? Hand it back to NOC to re-triage. */}
-                    {!user?.roles?.includes("admin") && ["open", "pending", "in_progress"].includes(ticket.status_key) && (
-                      <ToolbarAction
-                        icon="inbox"
-                        label="Reassign to NOC"
-                        onClick={() => setShowFlagModal(true)}
-                      />
-                    )}
-                    {["open", "pending", "in_progress"].includes(ticket.status_key) && (
-                      <span className="w-px h-5 bg-[var(--border-default)] mx-1" />
-                    )}
-                    {/* Only the team manager (or admin) can freeze the SLA; an engineer
-                        escalates to the manager, who reviews and reassigns it back. */}
-                    {["open", "pending", "in_progress"].includes(ticket.status_key) && isManager && (
-                      <ToolbarAction
-                        icon="pause"
-                        label="Hold"
-                        onClick={() => handleQuickStatus("on_hold")}
-                        loading={actionLoading === "on_hold"}
-                      />
-                    )}
-                    {["open", "pending", "in_progress"].includes(ticket.status_key) && !isManager && ticket.team_lead_id && (
-                      <ToolbarAction
-                        icon="arrowUp"
-                        label="Escalate to Manager"
-                        onClick={handleEscalateToManager}
-                        loading={actionLoading === "escalateManager"}
-                      />
-                    )}
-                    {ticket.status_key === "on_hold" && isManager && (
-                      <ToolbarAction
-                        icon="play"
-                        label="Resume"
-                        onClick={() => handleQuickStatus("in_progress")}
-                        loading={actionLoading === "in_progress"}
-                      />
-                    )}
-                    {["open", "pending", "in_progress"].includes(ticket.status_key) && (
-                      <ToolbarAction
-                        icon="checkCircle"
-                        label="Resolve"
-                        onClick={() => handleQuickStatus("solved")}
-                        loading={actionLoading === "solved"}
-                        tone="success"
-                      />
-                    )}
-                  </>
+                  withManager ? (
+                    /* With the manager: only the manager (or admin) acts — hand it
+                       back to an engineer (with a comment) or resolve it. */
+                    isManager && (
+                      <>
+                        <ToolbarAction
+                          icon="users"
+                          label="Reassign back"
+                          onClick={handleOpenManagerReassign}
+                        />
+                        <ToolbarAction
+                          icon="checkCircle"
+                          label="Resolve"
+                          onClick={() => handleQuickStatus("solved")}
+                          loading={actionLoading === "solved"}
+                          tone="success"
+                        />
+                      </>
+                    )
+                  ) : (
+                    <>
+                      {["open", "pending", "in_progress"].includes(ticket.status_key) && ticket.assignee_id !== user?.id && (
+                        <ToolbarAction
+                          icon="userPlus"
+                          label="Assign to me"
+                          onClick={handleAssignToMe}
+                          loading={actionLoading === "assign"}
+                        />
+                      )}
+                      {/* Sent to the wrong queue? Hand it back to NOC to re-triage. */}
+                      {!user?.roles?.includes("admin") && ["open", "pending", "in_progress"].includes(ticket.status_key) && (
+                        <ToolbarAction
+                          icon="inbox"
+                          label="Reassign to NOC"
+                          onClick={() => setShowFlagModal(true)}
+                        />
+                      )}
+                      {["open", "pending", "in_progress"].includes(ticket.status_key) && (
+                        <span className="w-px h-5 bg-[var(--border-default)] mx-1" />
+                      )}
+                      {/* Only the team manager (or admin) can freeze the SLA; an engineer
+                          escalates to the manager, who reviews and reassigns it back. */}
+                      {["open", "pending", "in_progress"].includes(ticket.status_key) && isManager && (
+                        <ToolbarAction
+                          icon="pause"
+                          label="Hold"
+                          onClick={() => handleQuickStatus("on_hold")}
+                          loading={actionLoading === "on_hold"}
+                        />
+                      )}
+                      {["open", "pending", "in_progress"].includes(ticket.status_key) && !isManager && ticket.team_lead_id && (
+                        <ToolbarAction
+                          icon="arrowUp"
+                          label="Escalate to Manager"
+                          onClick={handleEscalateToManager}
+                          loading={actionLoading === "escalateManager"}
+                        />
+                      )}
+                      {ticket.status_key === "on_hold" && isManager && (
+                        <ToolbarAction
+                          icon="play"
+                          label="Resume"
+                          onClick={() => handleQuickStatus("in_progress")}
+                          loading={actionLoading === "in_progress"}
+                        />
+                      )}
+                      {["open", "pending", "in_progress"].includes(ticket.status_key) && (
+                        <ToolbarAction
+                          icon="checkCircle"
+                          label="Resolve"
+                          onClick={() => handleQuickStatus("solved")}
+                          loading={actionLoading === "solved"}
+                          tone="success"
+                        />
+                      )}
+                    </>
+                  )
                 )}
                 {/* Closing or reopening a resolved ticket is the customer's call
                     (see the resolution banner above) — agents don't close/reopen here. */}
@@ -1907,9 +1974,9 @@ export default function TicketDetail() {
                 <Badge tone={STATUS_COLORS[ticket.status_key] || "slate"} className="text-xs">{ticket.status_label}</Badge>
               </DetailRow>
 
-              {/* Priority */}
+              {/* Priority — NOC sets urgency during triage; locked for everyone else. */}
               <DetailRow label="Priority" icon="flag">
-                {isAgent ? (
+                {canSetPriority ? (
                   <DetailSelect
                     value={ticket.priority_id}
                     onChange={(v) => handleUpdateField("priority_id", parseInt(v))}
@@ -2056,6 +2123,42 @@ export default function TicketDetail() {
                           <Badge tone="rose" className="text-xs">Breached</Badge>
                         ) : met ? (
                           <span className="text-xs font-medium text-emerald-400">✓ Met</span>
+                        ) : r ? (
+                          <span className={`text-xs font-medium ${r.tone === "rose" ? "text-rose-400" : r.tone === "amber" ? "text-amber-400" : "text-emerald-400"}`}>{r.text}</span>
+                        ) : (
+                          <span className="text-xs font-medium text-emerald-400">Met</span>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
+            {slaData?.manager_present && (
+              <div className="rounded-2xl border border-violet-500/30 bg-[var(--bg-elevated)] shadow-[var(--shadow-card)] overflow-hidden animate-fade-up" style={{ animationDelay: "180ms" }}>
+                <div className="px-5 py-4 border-b border-[var(--border-default)] flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-2.5 min-w-0">
+                    <span className="h-8 w-8 rounded-lg bg-violet-500/10 text-violet-500 flex items-center justify-center shrink-0">
+                      <Icon name="sla" size={16} />
+                    </span>
+                    <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">Manager SLA</h2>
+                  </span>
+                  <span className="text-[11px] text-[var(--fg-muted)] truncate">{slaData.manager_name || "Manager"}</span>
+                </div>
+                <div className="p-4 space-y-2.5">
+                  {(() => {
+                    const met = !!slaData.manager_met_at;
+                    const breached = !!slaData.manager_breached;
+                    const metLate = met && breached;
+                    const r = getSlaRemaining(slaData.manager_due_at, (!met && breached) ? null : slaData.manager_remaining_ms);
+                    const outcomeLabel = slaData.manager_outcome === "resolved" ? "Resolved" : slaData.manager_outcome === "reassigned_back" ? "Handed back" : null;
+                    return (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-[var(--fg-muted)]">{met && outcomeLabel ? outcomeLabel : "Review"}</span>
+                        {met ? (
+                          <span className={`text-xs font-medium ${metLate ? "text-amber-400" : "text-emerald-400"}`}>{metLate ? "Met late" : "✓ Met"}</span>
+                        ) : breached ? (
+                          <Badge tone="rose" className="text-xs">Breached</Badge>
                         ) : r ? (
                           <span className={`text-xs font-medium ${r.tone === "rose" ? "text-rose-400" : r.tone === "amber" ? "text-amber-400" : "text-emerald-400"}`}>{r.text}</span>
                         ) : (
@@ -2666,14 +2769,14 @@ export default function TicketDetail() {
       <Modal
         open={showReassignModal}
         onClose={() => setShowReassignModal(false)}
-        title={isNocMember ? "Triage Ticket" : "Reassign Ticket"}
+        title={reassignMode === "manager_back" ? "Reassign back to engineer" : isNocMember ? "Triage Ticket" : "Reassign Ticket"}
         size="sm"
         actions={
           <>
             <Button variant="secondary" onClick={() => setShowReassignModal(false)}>Cancel</Button>
             <Button onClick={handleReassign} loading={reassigning}>
               <Icon name="arrowRight" size={14} className="mr-1.5" />
-              {isNocMember ? "Triage Ticket" : "Reassign Ticket"}
+              {reassignMode === "manager_back" ? "Reassign back" : isNocMember ? "Triage Ticket" : "Reassign Ticket"}
             </Button>
           </>
         }
@@ -2724,7 +2827,8 @@ export default function TicketDetail() {
               <div className="h-px flex-1 bg-[var(--border-default)]" />
             </div>
 
-            {/* Team Selection */}
+            {/* Team Selection — hidden when the manager hands back within the team. */}
+            {reassignMode !== "manager_back" && (
             <div className="p-3 rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)]">
               <div className="flex items-center gap-2 mb-3">
                 <div className="w-8 h-8 rounded-lg bg-[var(--accent)]/10 flex items-center justify-center">
@@ -2751,6 +2855,7 @@ export default function TicketDetail() {
                 ))}
               </select>
             </div>
+            )}
 
             {/* Assignee Selection */}
             <div className={cn(
@@ -2795,15 +2900,19 @@ export default function TicketDetail() {
           <div>
             <div className="flex items-center gap-2 mb-2">
               <Icon name="edit" size={14} className="text-[var(--fg-muted)]" />
-              <label className="text-sm font-medium text-[var(--fg-primary)]">Requirements</label>
-              {(reassignTeamId ? parseInt(reassignTeamId) : null) !== (ticket?.team_id ?? null)
+              <label className="text-sm font-medium text-[var(--fg-primary)]">
+                {reassignMode === "manager_back" ? "Review comment" : "Requirements"}
+              </label>
+              {(reassignMode === "manager_back" || (reassignTeamId ? parseInt(reassignTeamId) : null) !== (ticket?.team_id ?? null))
                 ? <span className="text-xs text-rose-400">(required)</span>
                 : <span className="text-xs text-[var(--fg-muted)]">(optional)</span>}
             </div>
             <textarea
               value={reassignReason}
               onChange={(e) => setReassignReason(e.target.value)}
-              placeholder="Describe the requirements — what the receiving team needs to do..."
+              placeholder={reassignMode === "manager_back"
+                ? "Summarise your review and what the engineer should do next..."
+                : "Describe the requirements — what the receiving team needs to do..."}
               rows={3}
               className={cn(
                 "w-full px-3 py-2.5 rounded-lg text-sm resize-none transition-all",
