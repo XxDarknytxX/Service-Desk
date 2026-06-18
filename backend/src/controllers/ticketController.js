@@ -52,12 +52,13 @@ async function insertEvent(pool, { ticketId, actorId, type, payload }) {
 
 // Valid status transitions: from -> [allowed destinations]
 const STATUS_TRANSITIONS = {
-  new:      ["open", "pending", "on_hold", "solved", "closed"],
-  open:     ["pending", "on_hold", "solved", "closed"],
-  pending:  ["open", "on_hold", "solved", "closed"],
-  on_hold:  ["open", "pending", "solved", "closed"],
-  solved:   ["open", "closed"],  // reopen goes to open
-  closed:   ["open"],            // reopen goes to open
+  draft:       ["open"],                                                  // submit
+  open:        ["pending", "in_progress", "on_hold", "solved", "closed"], // NOC triage → route / work / resolve
+  pending:     ["in_progress", "on_hold", "open", "solved", "closed"],    // queue → pickup / park / re-triage
+  in_progress: ["on_hold", "pending", "open", "solved", "closed"],        // working → park / hand back / resolve
+  on_hold:     ["in_progress", "pending", "open", "solved", "closed"],    // resume / re-route / resolve
+  solved:      ["in_progress", "closed"],                                 // reopen → in_progress; confirm → closed
+  closed:      ["in_progress"],                                           // reopen → in_progress
 };
 
 // Human-readable field labels for audit trail resolution
@@ -688,7 +689,10 @@ export function makeTicketController(pool) {
           return send.forbidden(res);
         }
 
-        const statusId = (await getLookupId(pool, "ticket_statuses", statusKey || "new")) || 1;
+        const requestedStatus = statusKey === "draft" ? "draft" : "open";
+        const statusId =
+          (await getLookupId(pool, "ticket_statuses", requestedStatus)) ||
+          (await getLookupId(pool, "ticket_statuses", "open"));
         const priorityId =
           (await getLookupId(pool, "ticket_priorities", priorityKey || "normal")) || 1;
         const typeId = (await getLookupId(pool, "ticket_types", typeKey || "incident")) || 1;
@@ -746,6 +750,32 @@ export function makeTicketController(pool) {
           ticketId,
         ]);
 
+        const isDraft = requestedStatus === "draft";
+
+        // DRAFT: parked, not submitted. No routing event, no SLA, no triage clock,
+        // no approval flow, no notifications. Persist template responses only, return.
+        if (isDraft) {
+          if (templateId && templateResponses) {
+            try {
+              const [tmplRows] = await pool.query(
+                "SELECT fields_schema FROM ticket_templates WHERE id = ?", [templateId]
+              );
+              const schemaSnapshot = tmplRows[0]?.fields_schema || null;
+              await pool.query(
+                `INSERT INTO ticket_template_responses (ticket_id, template_id, response_data, schema_snapshot)
+                 VALUES (?, ?, ?, ?)`,
+                [ticketId, templateId, JSON.stringify(templateResponses),
+                 typeof schemaSnapshot === "string" ? schemaSnapshot : JSON.stringify(schemaSnapshot)]
+              );
+            } catch (tmplErr) { console.error("Draft template response save error:", tmplErr); }
+          }
+          await insertEvent(pool, {
+            ticketId, actorId: req.user.id, type: "ticket.draft_saved",
+            payload: { ticketNumber },
+          });
+          return send.created(res, { id: ticketId, ticketNumber, isDraft: true });
+        }
+
         await insertEvent(pool, {
           ticketId,
           actorId: req.user.id,
@@ -753,27 +783,28 @@ export function makeTicketController(pool) {
           payload: { ticketNumber, team_id: routedTeamId },
         });
 
-        // Auto-assign SLA (always use the ticket's routed team for policy matching)
-        await assignSla(pool, ticketId, priorityId, routedTeamId);
-
-        // Triage categories ("Not sure") get a longer SLA — stretch the due dates.
-        if (slaGracePct > 0) {
-          await pool.query(
-            `UPDATE ticket_slas
-             SET response_due_at = CASE WHEN response_due_at IS NOT NULL
-                   THEN DATE_ADD(response_due_at, INTERVAL ROUND(GREATEST(0, TIMESTAMPDIFF(SECOND, NOW(), response_due_at)) * ? / 100) SECOND) END,
-                 resolve_due_at = CASE WHEN resolve_due_at IS NOT NULL
-                   THEN DATE_ADD(resolve_due_at, INTERVAL ROUND(GREATEST(0, TIMESTAMPDIFF(SECOND, NOW(), resolve_due_at)) * ? / 100) SECOND) END
-             WHERE ticket_id = ?`,
-            [slaGracePct, slaGracePct, ticketId]
-          );
-        }
-
-        // If the request landed in the NOC triage queue, start the triage SLA —
-        // the separate "NOC must reassign on time" clock.
+        // SLA + status depend on where a SUBMITTED ticket lands:
+        //  • NOC triage ("Not sure"): stays `open`; ONLY the triage SLA runs. The team
+        //    response/resolve SLA must NOT start until NOC routes it out (reassign()).
+        //  • Any handling (non-NOC) team: flip to `pending` and start the team SLA now.
         const nocTeamIdOnCreate = await getNocTeamId(pool);
-        if (nocTeamIdOnCreate && routedTeamId === nocTeamIdOnCreate) {
+        const routedToNoc = nocTeamIdOnCreate && routedTeamId === nocTeamIdOnCreate;
+
+        if (routedToNoc) {
           await startTriageSla(pool, ticketId, priorityId, req.user.id);
+        } else if (routedTeamId) {
+          const pendingId = await getLookupId(pool, "ticket_statuses", "pending");
+          if (pendingId) {
+            await pool.query("UPDATE tickets SET status_id = ? WHERE id = ?", [pendingId, ticketId]);
+            await insertEvent(pool, {
+              ticketId, actorId: req.user.id, type: "ticket.updated",
+              payload: { changes: { status: { from: "open", to: "pending" } }, auto: true },
+            });
+          }
+          await assignSla(pool, ticketId, priorityId, routedTeamId);
+        } else {
+          // No team yet (rare agent-created path): keep `open`, start its SLA.
+          await assignSla(pool, ticketId, priorityId, routedTeamId);
         }
 
         // Save template responses if a template was used
@@ -1004,7 +1035,7 @@ export function makeTicketController(pool) {
           // CLOSED one). They must never self-solve/close an active ticket — that would
           // falsely mark the resolve SLA met with no agent work.
           if (!isAgent(req.user)) {
-            const requesterAllowed = { solved: ["closed", "open"], closed: ["open"] };
+            const requesterAllowed = { solved: ["closed", "in_progress"], closed: ["in_progress"] };
             if (!(requesterAllowed[current.status_key] || []).includes(newStatusKey)) {
               return send.forbidden(res, "You can only confirm or reopen a solved ticket.");
             }
@@ -1105,7 +1136,7 @@ export function makeTicketController(pool) {
           }
 
           // Handle reopen: increment reopened_count, clear closed_at
-          if ((current.status_key === "solved" || current.status_key === "closed") && newStatusKey === "open") {
+          if ((current.status_key === "solved" || current.status_key === "closed") && newStatusKey === "in_progress") {
             req.body.closed_at = null;
             try {
               await pool.query(
@@ -1237,20 +1268,8 @@ export function makeTicketController(pool) {
         // Assign to current user
         await pool.query("UPDATE tickets SET assignee_id = ? WHERE id = ?", [req.user.id, ticketId]);
 
-        // If still "new", transition to "open"
-        const statusKey = await getStatusKey(pool, current.status_id);
-        if (statusKey === "new") {
-          const openId = await getLookupId(pool, "ticket_statuses", "open");
-          if (openId) {
-            await pool.query("UPDATE tickets SET status_id = ? WHERE id = ?", [openId, ticketId]);
-            await insertEvent(pool, {
-              ticketId,
-              actorId: req.user.id,
-              type: "ticket.updated",
-              payload: { changes: { status: { from: "new", to: "open" } }, auto: true },
-            });
-          }
-        }
+        // Pickup records the assignee only. Status advances to in_progress on the
+        // agent's first public reply (addComment), the single source of truth.
 
         await insertEvent(pool, {
           ticketId,
@@ -1320,8 +1339,8 @@ export function makeTicketController(pool) {
       try {
         // Get current ticket state
         const [currentRows] = await pool.query(
-          `SELECT t.team_id, t.assignee_id, t.approval_status, t.priority_id
-           FROM tickets t WHERE t.id = ?`,
+          `SELECT t.team_id, t.assignee_id, t.approval_status, t.priority_id, s.\`key\` AS status_key
+           FROM tickets t JOIN ticket_statuses s ON s.id = t.status_id WHERE t.id = ?`,
           [ticketId]
         );
         if (currentRows.length === 0) return send.notFound(res);
@@ -1420,6 +1439,18 @@ export function makeTicketController(pool) {
           const nocTeamId = await getNocTeamId(pool);
           if (nocTeamId && current.team_id === nocTeamId) {
             await meetTriageSla(pool, ticketId, req.user.id);
+            // Leaving the NOC triage queue → the ticket enters the handling team's
+            // queue. Advance open → pending (it was held in NOC triage).
+            if (current.status_key === "open") {
+              const pendingId = await getLookupId(pool, "ticket_statuses", "pending");
+              if (pendingId) {
+                await pool.query("UPDATE tickets SET status_id = ? WHERE id = ?", [pendingId, ticketId]);
+                await insertEvent(pool, {
+                  ticketId, actorId: req.user.id, type: "ticket.updated",
+                  payload: { changes: { status: { from: "open", to: "pending" } }, auto: true },
+                });
+              }
+            }
           }
           await assignSla(pool, ticketId, current.priority_id, team_id || null);
         }
@@ -1800,11 +1831,11 @@ export function makeTicketController(pool) {
           [ticketId]
         );
         if (ticketRows[0]?.status_key === "solved" || ticketRows[0]?.status_key === "closed") {
-          const openId = await getLookupId(pool, "ticket_statuses", "open");
-          if (openId) {
+          const inProgressId = await getLookupId(pool, "ticket_statuses", "in_progress");
+          if (inProgressId) {
             await pool.query(
               `UPDATE tickets SET status_id = ?, closed_at = NULL, reopened_count = COALESCE(reopened_count, 0) + 1 WHERE id = ?`,
-              [openId, ticketId]
+              [inProgressId, ticketId]
             );
 
             await insertEvent(pool, {
@@ -1899,49 +1930,20 @@ export function makeTicketController(pool) {
           } catch (_) {}
         }
 
-        // Auto-transition: if requester comments on pending ticket, move to open
-        if (!isAgent(req.user) && ticket.status_key === "pending") {
-          const openId = await getLookupId(pool, "ticket_statuses", "open");
-          if (openId) {
-            await pool.query("UPDATE tickets SET status_id = ? WHERE id = ?", [openId, ticketId]);
+        // Auto-transition: an agent's FIRST public reply advances a queued/triage
+        // ticket into "in_progress" (the canonical pending → in_progress trigger).
+        // A customer comment never changes status — they reopen via the Reopen button,
+        // so a "thank you" on a Solved ticket won't reopen it.
+        if (isAgent(req.user) && isPublic && !ticket.first_responded_at &&
+            (ticket.status_key === "pending" || ticket.status_key === "open")) {
+          const inProgressId = await getLookupId(pool, "ticket_statuses", "in_progress");
+          if (inProgressId) {
+            await pool.query("UPDATE tickets SET status_id = ? WHERE id = ?", [inProgressId, ticketId]);
             await insertEvent(pool, {
               ticketId,
               actorId: req.user.id,
               type: "ticket.updated",
-              payload: { changes: { status: { from: "pending", to: "open" } }, auto: true },
-            });
-          }
-        }
-
-        // Auto-transition: an agent's first public reply moves a brand-new ticket
-        // into "open" (so the lifecycle advances without manual bookkeeping).
-        if (isAgent(req.user) && isPublic && ticket.status_key === "new") {
-          const openId = await getLookupId(pool, "ticket_statuses", "open");
-          if (openId) {
-            await pool.query("UPDATE tickets SET status_id = ? WHERE id = ?", [openId, ticketId]);
-            await insertEvent(pool, {
-              ticketId,
-              actorId: req.user.id,
-              type: "ticket.updated",
-              payload: { changes: { status: { from: "new", to: "open" } }, auto: true },
-            });
-          }
-        }
-
-        // Auto-transition: a requester replying to a SOLVED ticket means it isn't
-        // resolved — reopen it (clears the auto-close clock) so an agent picks it up.
-        if (!isAgent(req.user) && ticket.status_key === "solved") {
-          const openId = await getLookupId(pool, "ticket_statuses", "open");
-          if (openId) {
-            await pool.query(
-              "UPDATE tickets SET status_id = ?, closed_at = NULL, reopened_count = COALESCE(reopened_count, 0) + 1 WHERE id = ?",
-              [openId, ticketId]
-            );
-            await insertEvent(pool, {
-              ticketId,
-              actorId: req.user.id,
-              type: "ticket.updated",
-              payload: { changes: { status: { from: "solved", to: "open" } }, auto: true },
+              payload: { changes: { status: { from: ticket.status_key, to: "in_progress" } }, auto: true },
             });
           }
         }

@@ -85,7 +85,7 @@ export function makeDashboardController(pool) {
         const [openCount] = await pool.query(
           `SELECT COUNT(*) as count FROM tickets t
            INNER JOIN ticket_statuses s ON s.id = t.status_id
-           WHERE s.\`key\` IN ('new', 'open') ${!isAgent(req.user) ? 'AND t.requester_id = ?' : ''}`,
+           WHERE s.\`key\` IN ('open', 'pending', 'in_progress') ${!isAgent(req.user) ? 'AND t.requester_id = ?' : ''}`,
           isAgent(req.user) ? [] : [req.user.id]
         );
 
@@ -93,7 +93,7 @@ export function makeDashboardController(pool) {
           `SELECT COUNT(*) as count FROM tickets t
            INNER JOIN ticket_priorities p ON p.id = t.priority_id
            INNER JOIN ticket_statuses s ON s.id = t.status_id
-           WHERE p.\`key\` IN ('high', 'urgent') AND s.\`key\` NOT IN ('closed', 'solved')
+           WHERE p.\`key\` IN ('high', 'urgent') AND s.is_closed = 0 AND s.\`key\` != 'draft'
            ${!isAgent(req.user) ? 'AND t.requester_id = ?' : ''}`,
           isAgent(req.user) ? [] : [req.user.id]
         );

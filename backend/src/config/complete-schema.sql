@@ -735,12 +735,13 @@ ON DUPLICATE KEY UPDATE description = VALUES(description);
 
 -- Ticket Statuses
 INSERT INTO ticket_statuses (`key`, label, is_closed, sort_order) VALUES
-  ('new', 'New', 0, 1),
+  ('draft', 'Draft', 0, 1),
   ('open', 'Open', 0, 2),
   ('pending', 'Pending', 0, 3),
-  ('on_hold', 'On hold', 0, 4),
-  ('solved', 'Solved', 1, 5),
-  ('closed', 'Closed', 1, 6)
+  ('in_progress', 'In Progress', 0, 4),
+  ('on_hold', 'On Hold', 0, 5),
+  ('solved', 'Solved', 1, 6),
+  ('closed', 'Closed', 1, 7)
 ON DUPLICATE KEY UPDATE label = VALUES(label), is_closed = VALUES(is_closed), sort_order = VALUES(sort_order);
 
 -- Ticket Priorities

@@ -388,8 +388,8 @@ export function makeFormController(pool) {
         }
 
         // ── Ticket workflow integration ──
-        // Log the completion on the linked ticket and, if the ticket was
-        // parked as "pending" (waiting on the customer), move it back to open.
+        // Log the completion on the linked ticket and, if the ticket was parked
+        // "on_hold" (waiting on the customer form), resume it to in_progress.
         if (invite.ticket_id) {
           try {
             const payload = {
@@ -403,13 +403,13 @@ export function makeFormController(pool) {
                WHERE t.id = ?`,
               [invite.ticket_id]
             );
-            if (tickets.length && tickets[0].status_key === "pending") {
-              const [openStatus] = await pool.query(
-                `SELECT id FROM ticket_statuses WHERE \`key\` = 'open' LIMIT 1`
+            if (tickets.length && tickets[0].status_key === "on_hold") {
+              const [inProgressStatus] = await pool.query(
+                `SELECT id FROM ticket_statuses WHERE \`key\` = 'in_progress' LIMIT 1`
               );
-              if (openStatus.length) {
+              if (inProgressStatus.length) {
                 await pool.query(`UPDATE tickets SET status_id = ? WHERE id = ?`, [
-                  openStatus[0].id,
+                  inProgressStatus[0].id,
                   invite.ticket_id,
                 ]);
                 payload.auto_reopened = true;
