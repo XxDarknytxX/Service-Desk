@@ -981,10 +981,10 @@ export function makeTicketController(pool) {
           }
         }
 
-        // Requesters can only reopen their own solved tickets
+        // Requesters can only confirm-close or reopen their OWN solved ticket.
         if (!isAgent(req.user)) {
           if (current.requester_id !== req.user.id) return send.forbidden(res);
-          // Only allow status_id change (reopen)
+          // Only allow status_id change (confirm-close / reopen)
           const allowedFields = Object.keys(req.body).filter(k => k === "status_id");
           if (allowedFields.length === 0 || Object.keys(req.body).length !== allowedFields.length) {
             return send.forbidden(res, "Requesters can only update ticket status");
@@ -998,6 +998,16 @@ export function makeTicketController(pool) {
           const allowed = STATUS_TRANSITIONS[current.status_key] || [];
           if (!allowed.includes(newStatusKey)) {
             return send.bad(res, `Cannot transition from ${current.status_key} to ${newStatusKey}`);
+          }
+
+          // A requester may only confirm-close or reopen a SOLVED ticket (or reopen a
+          // CLOSED one). They must never self-solve/close an active ticket — that would
+          // falsely mark the resolve SLA met with no agent work.
+          if (!isAgent(req.user)) {
+            const requesterAllowed = { solved: ["closed", "open"], closed: ["open"] };
+            if (!(requesterAllowed[current.status_key] || []).includes(newStatusKey)) {
+              return send.forbidden(res, "You can only confirm or reopen a solved ticket.");
+            }
           }
 
           // Auto-set closed_at when solving/closing
@@ -1233,6 +1243,12 @@ export function makeTicketController(pool) {
           const openId = await getLookupId(pool, "ticket_statuses", "open");
           if (openId) {
             await pool.query("UPDATE tickets SET status_id = ? WHERE id = ?", [openId, ticketId]);
+            await insertEvent(pool, {
+              ticketId,
+              actorId: req.user.id,
+              type: "ticket.updated",
+              payload: { changes: { status: { from: "new", to: "open" } }, auto: true },
+            });
           }
         }
 
@@ -1893,6 +1909,39 @@ export function makeTicketController(pool) {
               actorId: req.user.id,
               type: "ticket.updated",
               payload: { changes: { status: { from: "pending", to: "open" } }, auto: true },
+            });
+          }
+        }
+
+        // Auto-transition: an agent's first public reply moves a brand-new ticket
+        // into "open" (so the lifecycle advances without manual bookkeeping).
+        if (isAgent(req.user) && isPublic && ticket.status_key === "new") {
+          const openId = await getLookupId(pool, "ticket_statuses", "open");
+          if (openId) {
+            await pool.query("UPDATE tickets SET status_id = ? WHERE id = ?", [openId, ticketId]);
+            await insertEvent(pool, {
+              ticketId,
+              actorId: req.user.id,
+              type: "ticket.updated",
+              payload: { changes: { status: { from: "new", to: "open" } }, auto: true },
+            });
+          }
+        }
+
+        // Auto-transition: a requester replying to a SOLVED ticket means it isn't
+        // resolved — reopen it (clears the auto-close clock) so an agent picks it up.
+        if (!isAgent(req.user) && ticket.status_key === "solved") {
+          const openId = await getLookupId(pool, "ticket_statuses", "open");
+          if (openId) {
+            await pool.query(
+              "UPDATE tickets SET status_id = ?, closed_at = NULL, reopened_count = COALESCE(reopened_count, 0) + 1 WHERE id = ?",
+              [openId, ticketId]
+            );
+            await insertEvent(pool, {
+              ticketId,
+              actorId: req.user.id,
+              type: "ticket.updated",
+              payload: { changes: { status: { from: "solved", to: "open" } }, auto: true },
             });
           }
         }

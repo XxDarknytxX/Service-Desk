@@ -46,6 +46,7 @@ import { makeNotificationController } from "./controllers/notificationController
 import { makeNotificationRouter } from "./routes/notifications.js";
 import { makeSlaService } from "./services/slaService.js";
 import { processAutoApprovals } from "./services/approvalWorkflow.js";
+import { autoCloseSolvedTickets } from "./services/autoCloseService.js";
 
 const isProd = process.env.NODE_ENV === "production";
 
@@ -222,6 +223,12 @@ setInterval(async () => {
     if (count > 0) console.log(`[Cron] Auto-approved ${count} timed-out approvals`);
   } catch (err) {
     console.error("[Cron] Auto-approval check error:", err.message);
+  }
+  try {
+    // Close tickets the customer left in "Solved" without confirming (3-day window).
+    await autoCloseSolvedTickets(pool, 3);
+  } catch (err) {
+    console.error("[Cron] Auto-close check error:", err.message);
   }
 }, AUTO_APPROVE_INTERVAL);
 
