@@ -282,7 +282,8 @@ async function recomputeTriageSla(pool, ticketId, priorityId) {
     const minutes = TRIAGE_SLA_MINUTES[priorityId] || DEFAULT_TRIAGE_MINUTES;
     await pool.query(
       `UPDATE ticket_triage_slas
-       SET target_minutes = ?, priority_id = ?, due_at = DATE_ADD(started_at, INTERVAL ? MINUTE), updated_at = NOW()
+       SET target_minutes = ?, priority_id = ?,
+           due_at = GREATEST(DATE_ADD(started_at, INTERVAL ? MINUTE), NOW()), updated_at = NOW()
        WHERE ticket_id = ? AND met_at IS NULL`,
       [minutes, priorityId || null, minutes, ticketId]
     );
@@ -1377,6 +1378,15 @@ export function makeTicketController(pool) {
             if (!isAdmin && !isAssignee && !(await isTeamMember(pool, req.user.id, current.team_id))) {
               return send.forbidden(res, "You can only resolve or close a ticket that's in your team's queue.");
             }
+            // While the ticket is with the manager (escalated), only the manager
+            // (lead) or an admin may resolve it — not a different engineer who
+            // happens to be on the team. Mirrors the reassign-back gate.
+            if (!isAdmin && await hasOpenManagerSla(pool, ticketId)) {
+              const leadId = await getTeamLeadId(pool, current.team_id);
+              if (req.user.id !== leadId) {
+                return send.forbidden(res, "This ticket is with the manager — only they can resolve it.");
+              }
+            }
           }
 
           // Resolving and closing both mean the resolution target was met.
@@ -1628,6 +1638,18 @@ export function makeTicketController(pool) {
           }
         }
 
+        // Tickets currently with the manager (open manager SLA) must be acted on
+        // from their detail page so the manager gate + review clock apply — keep
+        // them out of bulk reassign/resolve/priority changes entirely.
+        const [mgrOpenRows] = await pool.query(
+          `SELECT ticket_id FROM ticket_manager_slas
+           WHERE ticket_id IN (${ticketIds.map(() => "?").join(",")}) AND met_at IS NULL`,
+          ticketIds
+        );
+        if (mgrOpenRows.length > 0) {
+          return send.bad(res, "Some selected tickets are with the manager. Act on them from their detail page.");
+        }
+
         const setClauses = fields.map(f => `${f} = ?`);
         const setValues = fields.map(f => updates[f]);
 
@@ -1710,11 +1732,14 @@ export function makeTicketController(pool) {
         if (currentRows.length === 0) return send.notFound(res);
         const current = currentRows[0];
 
-        // Only the owning team (or an admin) can escalate a ticket's priority —
-        // once NOC routes it out of its queue it can no longer act on it.
+        // This endpoint bumps the ticket's PRIORITY, which is NOC's call and only
+        // while the ticket is in the triage queue — same rule as update(). After
+        // the ticket is routed to a handling team the priority is locked.
         const escIsAdmin = (req.user.roles || []).includes("admin");
-        if (!escIsAdmin && !(await isTeamMember(pool, req.user.id, current.team_id))) {
-          return send.forbidden(res, "You can only act on a ticket that's in your team's queue.");
+        const escNocTeamId = await getNocTeamId(pool);
+        const escInNocQueue = !!escNocTeamId && current.team_id === escNocTeamId;
+        if (!escIsAdmin && !(escInNocQueue && await isNocMember(pool, req.user.id))) {
+          return send.forbidden(res, "Only NOC can change a ticket's priority, and only while it's in the triage queue.");
         }
 
         // Escalation order: low -> normal -> high -> urgent
@@ -1754,9 +1779,16 @@ export function makeTicketController(pool) {
       const { reason } = req.body;
       try {
         const [[t]] = await pool.query(
-          `SELECT team_id, priority_id, ticket_number, subject, assignee_id FROM tickets WHERE id = ?`, [ticketId]
+          `SELECT t.team_id, t.priority_id, t.ticket_number, t.subject, t.assignee_id, s.\`key\` AS status_key
+           FROM tickets t JOIN ticket_statuses s ON s.id = t.status_id WHERE t.id = ?`, [ticketId]
         );
         if (!t) return send.notFound(res, "Ticket not found");
+
+        // Only an active ticket can be escalated — not a draft, solved, or closed
+        // one (this also stops re-escalating a ticket the manager already resolved).
+        if (!["open", "pending", "in_progress"].includes(t.status_key)) {
+          return send.bad(res, "Only an open ticket can be escalated to the manager.");
+        }
 
         // You can only escalate a ticket that's in your own team's queue — e.g. NOC
         // can't escalate a ticket it already routed to another team.
@@ -1857,7 +1889,7 @@ export function makeTicketController(pool) {
           const isAdmin = (req.user.roles || []).includes("admin");
           const leadId = await getTeamLeadId(pool, current.team_id);
           if (!isAdmin && req.user.id !== leadId) {
-            return send.forbidden(res, "Only the team manager can reassign this ticket back.");
+            return send.forbidden(res, "Only the team manager can reassign a held or escalated ticket back.");
           }
           if (hadOpenMgrSla && (!reason || !reason.trim())) {
             return send.bad(res, "Add a comment on your review before reassigning the ticket back.");

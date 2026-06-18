@@ -575,7 +575,11 @@ export default function TicketDetail() {
     setReassigning(true);
     try {
       await ticketsApi.reassign(id, {
-        team_id: reassignTeamId ? parseInt(reassignTeamId) : null,
+        // Handing back stays on the current team — never send a null team_id (which
+        // the backend would read as a team change and reject).
+        team_id: reassignMode === "manager_back"
+          ? (ticket?.team_id ?? null)
+          : (reassignTeamId ? parseInt(reassignTeamId) : null),
         assignee_id: reassignAgentId ? parseInt(reassignAgentId) : null,
         reason: reassignReason.trim() || null,
       });
@@ -2872,7 +2876,9 @@ export default function TicketDetail() {
                 <div className="flex-1">
                   <label className="text-sm font-medium text-[var(--fg-primary)]">Assignee</label>
                   <p className="text-xs text-[var(--fg-muted)]">
-                    {reassignTeamId ? "Choose a team member" : "Select a team first"}
+                    {reassignMode === "manager_back"
+                      ? "Hand back to an engineer, or leave unassigned for the queue"
+                      : reassignTeamId ? "Choose a team member" : "Select a team first"}
                   </p>
                 </div>
               </div>
