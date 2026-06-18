@@ -1504,11 +1504,18 @@ export function makeTicketController(pool) {
 
       try {
         const [currentRows] = await pool.query(
-          "SELECT assignee_id, status_id FROM tickets WHERE id = ?",
+          "SELECT assignee_id, status_id, team_id FROM tickets WHERE id = ?",
           [ticketId]
         );
         if (currentRows.length === 0) return send.notFound(res);
         const current = currentRows[0];
+
+        // You can only pick up a ticket that's in your own team's queue (or you're
+        // an admin) — an agent can't grab a ticket routed to another team.
+        const isAdmin = (req.user.roles || []).includes("admin");
+        if (!isAdmin && !(await isTeamMember(pool, req.user.id, current.team_id))) {
+          return send.forbidden(res, "You can only pick up a ticket that's in your team's queue.");
+        }
 
         // Assign to current user
         await pool.query("UPDATE tickets SET assignee_id = ? WHERE id = ?", [req.user.id, ticketId]);
@@ -1537,7 +1544,7 @@ export function makeTicketController(pool) {
 
       try {
         const [currentRows] = await pool.query(
-          `SELECT t.priority_id, p.\`key\` AS priority_key
+          `SELECT t.priority_id, t.team_id, p.\`key\` AS priority_key
            FROM tickets t
            INNER JOIN ticket_priorities p ON p.id = t.priority_id
            WHERE t.id = ?`,
@@ -1545,6 +1552,13 @@ export function makeTicketController(pool) {
         );
         if (currentRows.length === 0) return send.notFound(res);
         const current = currentRows[0];
+
+        // Only the owning team (or an admin) can escalate a ticket's priority —
+        // once NOC routes it out of its queue it can no longer act on it.
+        const escIsAdmin = (req.user.roles || []).includes("admin");
+        if (!escIsAdmin && !(await isTeamMember(pool, req.user.id, current.team_id))) {
+          return send.forbidden(res, "You can only act on a ticket that's in your team's queue.");
+        }
 
         // Escalation order: low -> normal -> high -> urgent
         const escalationMap = { low: "normal", normal: "high", high: "urgent" };
@@ -1834,6 +1848,13 @@ export function makeTicketController(pool) {
         if (!current) return send.notFound(res);
         if (current.team_id === noc.id) return send.bad(res, "Ticket is already in the NOC queue");
 
+        // Only the owning team (or its assignee, or an admin) can flag a ticket
+        // back to NOC — not a cross-team agent reaching into another queue.
+        const flagIsAdmin = (req.user.roles || []).includes("admin");
+        if (!flagIsAdmin && current.assignee_id !== req.user.id && !(await isTeamMember(pool, req.user.id, current.team_id))) {
+          return send.forbidden(res, "You can only flag back a ticket that's in your team's queue.");
+        }
+
         await pool.query(`UPDATE tickets SET team_id = ?, assignee_id = NULL WHERE id = ?`, [noc.id, ticketId]);
         await pool.query(
           `INSERT INTO ticket_reassignments (ticket_id, from_team_id, to_team_id, from_assignee_id, to_assignee_id, reason, reassigned_by)
@@ -2049,6 +2070,13 @@ export function makeTicketController(pool) {
         }
         if (existing[0].status === "completed") {
           return send.bad(res, "Team has already marked their work as complete");
+        }
+
+        // Only a member of that team (or an admin) can mark its work complete —
+        // this can auto-resolve the whole ticket, so it must respect team scope.
+        const ctwIsAdmin = (req.user.roles || []).includes("admin");
+        if (!ctwIsAdmin && !(await isTeamMember(pool, req.user.id, teamId))) {
+          return send.forbidden(res, "You can only complete work for your own team.");
         }
 
         // Mark team's work as complete

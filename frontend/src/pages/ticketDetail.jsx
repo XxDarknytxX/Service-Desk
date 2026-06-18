@@ -174,6 +174,11 @@ export default function TicketDetail() {
   const loadTicketData = async () => {
     try {
       setLoading(true);
+      // Clear any prior CSAT so a reopened/transitioned ticket never shows a stale
+      // rating; it's reloaded below only when the ticket is solved/closed.
+      setCsatExisting(null);
+      setCsatRating(null);
+      setCsatComment("");
       const ticketRes = await api(`/tickets/${id}`);
       if (!ticketRes.ticket) {
         setTicket(null);
@@ -304,21 +309,6 @@ export default function TicketDetail() {
       toast.error(err.message || "Failed to assign ticket");
     }
     finally { setActionLoading(null); }
-  };
-
-  const handleEscalate = async () => {
-    setActionLoading("escalate");
-    try {
-      const result = await api(`/tickets/${id}/escalate`, { method: "POST" });
-      if (result.newPriority) {
-        await loadTicketData();
-      }
-    } catch (err) {
-      console.error("Escalate failed:", err);
-      toast.error(err.message || "Failed to escalate ticket");
-    } finally {
-      setActionLoading(null);
-    }
   };
 
   // Hand the ticket to the team manager to review and freeze the SLA if needed.
@@ -876,8 +866,6 @@ export default function TicketDetail() {
     );
   }
 
-  const canSendForApproval = !ticket.approval_status || ticket.approval_status === "not_required" || ticket.approval_status === "rejected";
-
   return (
     <div className="space-y-5">
       {/* ── Branded Ticket Header ── */}
@@ -1074,10 +1062,11 @@ export default function TicketDetail() {
                     <button
                       key={star}
                       type="button"
-                      onClick={() => setCsatRating(star)}
+                      disabled={csatSubmitting}
+                      onClick={() => !csatSubmitting && setCsatRating(star)}
                       onMouseEnter={() => setCsatHover(star)}
                       onMouseLeave={() => setCsatHover(0)}
-                      className="text-2xl transition-colors"
+                      className="text-2xl transition-colors disabled:cursor-not-allowed"
                     >
                       <span className={(csatHover || csatRating) >= star ? "text-amber-400" : "text-[var(--fg-muted)]"}>
                         {(csatHover || csatRating) >= star ? "★" : "☆"}
@@ -2303,7 +2292,7 @@ export default function TicketDetail() {
                   <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">Satisfaction Rating</h2>
                 </div>
                 <div className="p-4 space-y-3">
-                  {csatExisting && !isAgent ? (
+                  {csatExisting ? (
                     <div className="text-center">
                       <div className="flex justify-center gap-1 mb-1">
                         {[1, 2, 3, 4, 5].map((star) => (
@@ -2312,64 +2301,13 @@ export default function TicketDetail() {
                           </span>
                         ))}
                       </div>
-                      <p className="text-xs text-[var(--fg-muted)]">You rated {csatExisting.rating}/5</p>
+                      <p className="text-xs text-[var(--fg-muted)]">Rated {csatExisting.rating}/5{csatExisting.rated_by_name ? ` by ${csatExisting.rated_by_name}` : ""}</p>
                       {csatExisting.comment && (
                         <p className="text-xs text-[var(--fg-secondary)] mt-1 italic">"{csatExisting.comment}"</p>
                       )}
                     </div>
-                  ) : isAgent ? (
-                    csatExisting ? (
-                      <div className="text-center">
-                        <div className="flex justify-center gap-1 mb-1">
-                          {[1, 2, 3, 4, 5].map((star) => (
-                            <span key={star} className={`text-lg ${star <= csatExisting.rating ? "text-amber-400" : "text-[var(--fg-muted)]"}`}>
-                              {star <= csatExisting.rating ? "\u2605" : "\u2606"}
-                            </span>
-                          ))}
-                        </div>
-                        <p className="text-xs text-[var(--fg-muted)]">Rated {csatExisting.rating}/5 by {csatExisting.rated_by_name}</p>
-                        {csatExisting.comment && (
-                          <p className="text-xs text-[var(--fg-secondary)] mt-1 italic">"{csatExisting.comment}"</p>
-                        )}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-[var(--fg-muted)] text-center">Awaiting customer feedback</p>
-                    )
                   ) : (
-                    <>
-                      <div className="flex justify-center gap-1">
-                        {[1, 2, 3, 4, 5].map((star) => (
-                          <button
-                            key={star}
-                            type="button"
-                            onClick={() => setCsatRating(star)}
-                            onMouseEnter={() => setCsatHover(star)}
-                            onMouseLeave={() => setCsatHover(0)}
-                            className="text-2xl transition-colors"
-                          >
-                            <span className={(csatHover || csatRating) >= star ? "text-amber-400" : "text-[var(--fg-muted)]"}>
-                              {(csatHover || csatRating) >= star ? "\u2605" : "\u2606"}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                      <textarea
-                        value={csatComment}
-                        onChange={(e) => setCsatComment(e.target.value)}
-                        placeholder="Optional feedback..."
-                        rows={2}
-                        className="w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-base)] text-sm text-[var(--fg-primary)] p-2 resize-none focus:outline-none focus:border-[var(--accent)]"
-                      />
-                      <Button
-                        size="sm"
-                        onClick={handleSubmitCsat}
-                        loading={csatSubmitting}
-                        disabled={!csatRating}
-                        className="w-full"
-                      >
-                        Submit Rating
-                      </Button>
-                    </>
+                    <p className="text-xs text-[var(--fg-muted)] text-center">Awaiting customer feedback</p>
                   )}
                 </div>
               </div>
