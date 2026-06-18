@@ -1285,6 +1285,17 @@ export function makeTicketController(pool) {
             } catch (_) {}
           }
 
+          // While a ticket is held, only the manager (lead) or an admin controls
+          // it — they froze it, so they unfreeze it. A regular engineer gets it
+          // back via the manager's reassign, never by un-holding it themselves.
+          if (current.status_key === "on_hold" && newStatusKey !== "on_hold") {
+            const isAdmin = (req.user.roles || []).includes("admin");
+            const leadId = await getTeamLeadId(pool, current.team_id);
+            if (!isAdmin && req.user.id !== leadId) {
+              return send.forbidden(res, "Only the team manager can resume a held ticket. It will come back to you when the manager reassigns it.");
+            }
+          }
+
           // Handle leaving on_hold: resume SLA timer
           if (current.status_key === "on_hold" && newStatusKey !== "on_hold") {
             try {
@@ -1402,6 +1413,23 @@ export function makeTicketController(pool) {
         // If updating status, check for approval requirements
         if (updates.status_id) {
           const newStatusKey = await getStatusKey(pool, updates.status_id);
+
+          // Hold / resume carry a manager gate + per-ticket SLA pause/resume that
+          // the bulk path can't apply safely, so keep the freeze lifecycle out of
+          // bulk entirely: block holding here, and block touching any ticket that
+          // is currently held. Both must go through the ticket's detail page.
+          if (newStatusKey === "on_hold") {
+            return send.bad(res, "Put a ticket on hold from its detail page — bulk hold isn't supported.");
+          }
+          const [heldRows] = await pool.query(
+            `SELECT t.id FROM tickets t JOIN ticket_statuses s ON s.id = t.status_id
+             WHERE t.id IN (${ticketIds.map(() => "?").join(",")}) AND s.\`key\` = 'on_hold'`,
+            ticketIds
+          );
+          if (heldRows.length > 0) {
+            return send.bad(res, "Some selected tickets are on hold. Resume them from their detail page so the manager gate and SLA timer apply.");
+          }
+
           if (newStatusKey === 'solved' || newStatusKey === 'closed') {
             // Check if any tickets require approval
             const [ticketsWithApproval] = await pool.query(
@@ -1607,6 +1635,18 @@ export function makeTicketController(pool) {
           );
           if (!allowedTeams.some((t) => t.id === Number(team_id))) {
             return send.bad(res, "Tickets can only be reassigned to Cloud, Transmission, MTX, or Security Operations.");
+          }
+        }
+
+        // Reassigning a held ticket resumes its SLA (below), so it's part of the
+        // freeze lifecycle — gate it to the manager (lead) or an admin. This is the
+        // sanctioned "manager hands it back" path; a regular engineer can't use a
+        // reassign to quietly un-freeze a ticket.
+        if (current.status_key === "on_hold") {
+          const isAdmin = (req.user.roles || []).includes("admin");
+          const leadId = await getTeamLeadId(pool, current.team_id);
+          if (!isAdmin && req.user.id !== leadId) {
+            return send.forbidden(res, "Only the team manager can reassign a held ticket.");
           }
         }
 
@@ -2003,11 +2043,14 @@ export function makeTicketController(pool) {
         const allCompleted = allTeams.length > 0 && allTeams.every(t => t.status === "completed");
 
         if (allCompleted) {
-          // Auto-resolve the ticket since all teams have completed
+          // Auto-resolve the ticket since all teams have completed. This is a
+          // resolve (not a close), so stamp solved_at — that keeps the ticket
+          // eligible for the 3-day auto-close sweep and leaves closed_at for an
+          // actual close, matching the update() resolve path.
           const solvedId = await getLookupId(pool, "ticket_statuses", "solved");
           if (solvedId) {
             await pool.query(
-              `UPDATE tickets SET status_id = ?, closed_at = NOW() WHERE id = ?`,
+              `UPDATE tickets SET status_id = ?, solved_at = NOW() WHERE id = ?`,
               [solvedId, ticketId]
             );
 
@@ -2020,11 +2063,14 @@ export function makeTicketController(pool) {
               );
             } catch (_) {}
 
+            // The system resolves the ticket once all teams report done — the
+            // engineer only completed their own team's work — so attribute it to
+            // System (actorId null) and record who triggered it in the payload.
             await insertEvent(pool, {
               ticketId,
-              actorId: req.user.id,
+              actorId: null,
               type: "ticket.auto_resolved",
-              payload: { reason: "All teams completed their work" },
+              payload: { reason: "All teams completed their work", triggered_by: req.user.id },
             });
           }
 

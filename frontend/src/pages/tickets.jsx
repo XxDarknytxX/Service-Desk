@@ -270,17 +270,21 @@ export default function Tickets() {
 
   const handleBulkStatusChange = async (statusKey) => {
     if (!selectedTickets.length) return
+    // The backend whitelists status_id (not the key), so resolve it here — sending
+    // the raw key was silently rejected and updated nothing.
+    const status_id = meta?.statuses?.find((s) => s.key === statusKey)?.id
+    if (!status_id) return
     try {
       setBulkActionLoading(true)
       await api("/tickets/bulk", {
         method: "PATCH",
-        body: { ticketIds: selectedTickets, updates: { status: statusKey } }
+        body: { ticketIds: selectedTickets, updates: { status_id } }
       })
       setSelectedTickets([])
       fetchTickets()
     } catch (error) {
       console.error("Failed to update tickets:", error)
-      toast.error("Failed to update tickets. Please try again.")
+      toast.error(error.message || "Failed to update tickets. Please try again.")
     } finally {
       setBulkActionLoading(false)
     }
@@ -288,17 +292,19 @@ export default function Tickets() {
 
   const handleBulkPriorityChange = async (priorityKey) => {
     if (!selectedTickets.length) return
+    const priority_id = meta?.priorities?.find((p) => p.key === priorityKey)?.id
+    if (!priority_id) return
     try {
       setBulkActionLoading(true)
       await api("/tickets/bulk", {
         method: "PATCH",
-        body: { ticketIds: selectedTickets, updates: { priority: priorityKey } }
+        body: { ticketIds: selectedTickets, updates: { priority_id } }
       })
       setSelectedTickets([])
       fetchTickets()
     } catch (error) {
       console.error("Failed to update tickets:", error)
-      toast.error("Failed to update tickets. Please try again.")
+      toast.error(error.message || "Failed to update tickets. Please try again.")
     } finally {
       setBulkActionLoading(false)
     }

@@ -35,7 +35,10 @@ export async function autoCloseSolvedTickets(pool, days = 3) {
     if (rows.length === 0) return 0;
 
     const ids = rows.map((r) => r.id);
-    await pool.query(`UPDATE tickets SET status_id = ? WHERE id IN (?)`, [closedStatus.id, ids]);
+    // This sweep is the genuine close moment, so stamp closed_at here (solve only
+    // stamps solved_at). Resolution reporting keys off closed_at — without this,
+    // auto-closed tickets would drop out of MTTR / closed-volume metrics.
+    await pool.query(`UPDATE tickets SET status_id = ?, closed_at = NOW() WHERE id IN (?)`, [closedStatus.id, ids]);
 
     for (const t of rows) {
       await pool.query(
