@@ -1895,6 +1895,27 @@ export default function TicketDetail() {
                       </div>
                     );
                   })()}
+                  {/* NOC triage SLA — only for tickets that passed through the NOC queue */}
+                  {slaData.triage_present && (() => {
+                    const met = !!slaData.triage_met_at;
+                    const breached = !!slaData.triage_breached;
+                    const metLate = met && breached;
+                    const r = getSlaRemaining(slaData.triage_due_at, (!met && breached) ? null : slaData.triage_remaining_ms);
+                    return (
+                      <div className="flex items-center justify-between border-t border-[var(--border-default)] pt-2.5">
+                        <span className="text-xs text-[var(--fg-muted)]">Triage</span>
+                        {met ? (
+                          <span className={`text-xs font-medium ${metLate ? "text-amber-400" : "text-emerald-400"}`}>{metLate ? "Met late" : "✓ Met"}</span>
+                        ) : breached ? (
+                          <Badge tone="rose" className="text-xs">Breached</Badge>
+                        ) : r ? (
+                          <span className={`text-xs font-medium ${r.tone === "rose" ? "text-rose-400" : r.tone === "amber" ? "text-amber-400" : "text-emerald-400"}`}>{r.text}</span>
+                        ) : (
+                          <span className="text-xs font-medium text-emerald-400">Met</span>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             )}
