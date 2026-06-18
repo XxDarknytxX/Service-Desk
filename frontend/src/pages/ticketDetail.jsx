@@ -136,6 +136,8 @@ export default function TicketDetail() {
   const [csatExisting, setCsatExisting] = useState(null);
 
   const isAgent = user?.roles?.includes("admin") || user?.roles?.includes("agent");
+  // The ticket's manager (team lead) — or an admin — can freeze (hold) the SLA.
+  const isManager = !!(user?.roles?.includes("admin") || (ticket?.team_lead_id != null && Number(ticket.team_lead_id) === Number(user?.id)));
 
   useEffect(() => { loadTicketData(); }, [id]);
 
@@ -310,6 +312,20 @@ export default function TicketDetail() {
     } catch (err) {
       console.error("Escalate failed:", err);
       toast.error(err.message || "Failed to escalate ticket");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  // Hand the ticket to the team manager to review and freeze the SLA if needed.
+  const handleEscalateToManager = async () => {
+    setActionLoading("escalateManager");
+    try {
+      await api(`/tickets/${id}/escalate-to-manager`, { method: "POST" });
+      toast.success("Escalated to your manager");
+      await loadTicketData();
+    } catch (err) {
+      toast.error(err.message || "Failed to escalate to manager");
     } finally {
       setActionLoading(null);
     }
@@ -952,7 +968,9 @@ export default function TicketDetail() {
                 {["open", "pending", "in_progress", "on_hold"].includes(ticket.status_key) && ticket.team_name !== "NOC" && (
                   <>
                     <span className="w-px h-5 bg-[var(--border-default)] mx-1" />
-                    {["open", "pending", "in_progress"].includes(ticket.status_key) && (
+                    {/* Only the team manager (or admin) can freeze the SLA; an engineer
+                        escalates to the manager, who reviews and reassigns it back. */}
+                    {["open", "pending", "in_progress"].includes(ticket.status_key) && isManager && (
                       <ToolbarAction
                         icon="pause"
                         label="Hold"
@@ -960,7 +978,15 @@ export default function TicketDetail() {
                         loading={actionLoading === "on_hold"}
                       />
                     )}
-                    {ticket.status_key === "on_hold" && (
+                    {["open", "pending", "in_progress"].includes(ticket.status_key) && !isManager && ticket.team_lead_id && (
+                      <ToolbarAction
+                        icon="arrowUp"
+                        label="Escalate to Manager"
+                        onClick={handleEscalateToManager}
+                        loading={actionLoading === "escalateManager"}
+                      />
+                    )}
+                    {ticket.status_key === "on_hold" && isManager && (
                       <ToolbarAction
                         icon="play"
                         label="Resume"
@@ -968,13 +994,15 @@ export default function TicketDetail() {
                         loading={actionLoading === "in_progress"}
                       />
                     )}
-                    <ToolbarAction
-                      icon="checkCircle"
-                      label="Resolve"
-                      onClick={() => handleQuickStatus("solved")}
-                      loading={actionLoading === "solved"}
-                      tone="success"
-                    />
+                    {["open", "pending", "in_progress"].includes(ticket.status_key) && (
+                      <ToolbarAction
+                        icon="checkCircle"
+                        label="Resolve"
+                        onClick={() => handleQuickStatus("solved")}
+                        loading={actionLoading === "solved"}
+                        tone="success"
+                      />
+                    )}
                   </>
                 )}
                 {(ticket.status_key === "solved" || ticket.status_key === "closed") && (

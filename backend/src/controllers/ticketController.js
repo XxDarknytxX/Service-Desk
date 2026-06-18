@@ -177,6 +177,42 @@ async function getNocTeamId(pool) {
   return row?.id || null;
 }
 
+// The team's manager is its lead (team_members.is_lead). Only the manager (or an
+// admin) may freeze a ticket's SLA; regular engineers escalate to them instead.
+async function getTeamLeadId(pool, teamId) {
+  if (!teamId) return null;
+  const [[row]] = await pool.query(
+    "SELECT user_id FROM team_members WHERE team_id = ? AND is_lead = 1 LIMIT 1", [teamId]
+  );
+  return row?.user_id || null;
+}
+
+// Resume a paused (on-hold) SLA — recompute due dates from the stored remaining time.
+async function resumeTicketSla(pool, ticketId, actorId) {
+  try {
+    const [slas] = await pool.query(
+      `SELECT paused_at, response_remaining_ms, resolve_remaining_ms,
+              response_met_at, resolve_met_at, response_due_at, resolve_due_at
+       FROM ticket_slas WHERE ticket_id = ?`, [ticketId]
+    );
+    if (slas.length === 0 || !slas[0].paused_at) return false;
+    const sla = slas[0];
+    const now = new Date();
+    const newResponseDue = sla.response_remaining_ms && !sla.response_met_at
+      ? new Date(now.getTime() + Number(sla.response_remaining_ms)) : sla.response_due_at;
+    const newResolveDue = sla.resolve_remaining_ms && !sla.resolve_met_at
+      ? new Date(now.getTime() + Number(sla.resolve_remaining_ms)) : sla.resolve_due_at;
+    await pool.query(
+      `UPDATE ticket_slas SET paused_at = NULL, response_remaining_ms = NULL,
+         resolve_remaining_ms = NULL, response_due_at = ?, resolve_due_at = ?, updated_at = NOW()
+       WHERE ticket_id = ?`,
+      [newResponseDue, newResolveDue, ticketId]
+    );
+    await insertEvent(pool, { ticketId, actorId, type: "sla.resumed", payload: { new_response_due: newResponseDue, new_resolve_due: newResolveDue } });
+    return true;
+  } catch (e) { console.error("Resume SLA error:", e); return false; }
+}
+
 // Start (or restart) the triage clock when a ticket enters the NOC queue.
 async function startTriageSla(pool, ticketId, priorityId, actorId) {
   try {
@@ -559,6 +595,7 @@ export function makeTicketController(pool) {
             ass.full_name AS assignee_name, ass.email AS assignee_email,
             org.name AS organization_name,
             team.name AS team_name,
+            (SELECT tm.user_id FROM team_members tm WHERE tm.team_id = t.team_id AND tm.is_lead = 1 LIMIT 1) AS team_lead_id,
             sc.name AS service_category_name,
             tmpl.name AS template_name, tmpl.icon AS template_icon
           FROM tickets t
@@ -1199,6 +1236,16 @@ export function makeTicketController(pool) {
             req.body.closed_at = new Date();
           }
 
+          // Only the team's manager (lead) or an admin may freeze (hold) a ticket's
+          // SLA. A regular engineer must escalate to the manager instead.
+          if (newStatusKey === "on_hold" && current.status_key !== "on_hold") {
+            const isAdmin = (req.user.roles || []).includes("admin");
+            const leadId = await getTeamLeadId(pool, current.team_id);
+            if (!isAdmin && req.user.id !== leadId) {
+              return send.forbidden(res, "Only the team manager can hold a ticket. Escalate to your manager instead.");
+            }
+          }
+
           // Handle on_hold: pause SLA timer
           if (newStatusKey === "on_hold" && current.status_key !== "on_hold") {
             try {
@@ -1474,6 +1521,54 @@ export function makeTicketController(pool) {
       }
     },
 
+    // POST /api/tickets/:id/escalate-to-manager
+    // A support engineer hands the ticket to the team manager (lead) to review and,
+    // if needed, freeze the SLA — then the manager reassigns it back.
+    escalateToManager: async (req, res) => {
+      if (!isAgent(req.user)) return send.forbidden(res);
+      const ticketId = Number(req.params.id);
+      const { reason } = req.body;
+      try {
+        const [[t]] = await pool.query(
+          `SELECT team_id, ticket_number, subject, assignee_id FROM tickets WHERE id = ?`, [ticketId]
+        );
+        if (!t) return send.notFound(res, "Ticket not found");
+        const leadId = await getTeamLeadId(pool, t.team_id);
+        if (!leadId) return send.bad(res, "This ticket's team has no manager set to escalate to.");
+        if (leadId === req.user.id) return send.bad(res, "You are the team manager — you can hold this ticket directly.");
+
+        // Hand the ticket to the manager.
+        await pool.query("UPDATE tickets SET assignee_id = ? WHERE id = ?", [leadId, ticketId]);
+        await insertEvent(pool, {
+          ticketId, actorId: req.user.id, type: "ticket.escalated_to_manager",
+          payload: { manager_id: leadId, from_assignee: t.assignee_id, reason: reason || null },
+        });
+        if (reason && reason.trim()) {
+          const [cmt] = await pool.query(
+            `INSERT INTO ticket_comments (ticket_id, author_id, body, is_public) VALUES (?, ?, ?, 0)`,
+            [ticketId, req.user.id, reason.trim()]
+          );
+          await insertEvent(pool, {
+            ticketId, actorId: req.user.id, type: "ticket.commented",
+            payload: { commentId: cmt.insertId, isPublic: false, source: "escalate_to_manager" },
+          });
+        }
+        try {
+          const [[me]] = await pool.query("SELECT full_name FROM users WHERE id = ?", [req.user.id]);
+          await pool.query(
+            `INSERT INTO notifications (user_id, ticket_id, title, message, type) VALUES (?, ?, ?, ?, 'escalation')`,
+            [leadId, ticketId, `Escalated to you: ${t.ticket_number}`,
+             `${me?.full_name || "An engineer"} escalated "${t.subject}" for your review.${reason && reason.trim() ? ` — ${reason.trim()}` : ""}`]
+          );
+        } catch (_) {}
+
+        return send.ok(res, { ok: true, managerId: leadId });
+      } catch (e) {
+        console.error(e);
+        return send.serverErr(res);
+      }
+    },
+
     // POST /api/tickets/:id/reassign
     // Reassign ticket to different team/agent
     reassign: async (req, res) => {
@@ -1603,6 +1698,23 @@ export function makeTicketController(pool) {
             }
           }
           await assignSla(pool, ticketId, current.priority_id, team_id || null);
+        }
+
+        // Manager continuing a frozen ticket: reassigning a held ticket back resumes
+        // its SLA and returns it to a working state (in_progress if assigned, else the
+        // team queue → pending).
+        if (current.status_key === "on_hold") {
+          await resumeTicketSla(pool, ticketId, req.user.id);
+          const [[after]] = await pool.query("SELECT assignee_id FROM tickets WHERE id = ?", [ticketId]);
+          const targetKey = after?.assignee_id ? "in_progress" : "pending";
+          const targetId = await getLookupId(pool, "ticket_statuses", targetKey);
+          if (targetId) {
+            await pool.query("UPDATE tickets SET status_id = ? WHERE id = ?", [targetId, ticketId]);
+            await insertEvent(pool, {
+              ticketId, actorId: null, type: "ticket.updated",
+              payload: { changes: { status: { from: "on_hold", to: targetKey } }, auto: true },
+            });
+          }
         }
 
         // Notify the new queue when the team changes (e.g. an SDM re-routing a

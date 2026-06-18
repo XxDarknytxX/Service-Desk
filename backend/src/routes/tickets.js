@@ -28,6 +28,7 @@ export function makeTicketRouter(controller) {
   router.post("/tickets/:id/submit", requireAuth, controller.submitDraft);
   router.post("/tickets/:id/assign", requireAuth, controller.assignToMe);
   router.post("/tickets/:id/escalate", requireAuth, controller.escalate);
+  router.post("/tickets/:id/escalate-to-manager", requireAuth, controller.escalateToManager);
   router.post("/tickets/:id/reassign", requireAuth, controller.reassign);
   router.post("/tickets/:id/flag-to-noc", requireAuth, controller.flagToNoc);
 
