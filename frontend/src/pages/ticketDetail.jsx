@@ -31,7 +31,8 @@ function cn(...parts) {
 }
 
 const STATUS_COLORS = {
-  new: "blue", open: "indigo", pending: "amber", on_hold: "slate", solved: "emerald", closed: "slate",
+  draft: "slate", open: "blue", pending: "amber", in_progress: "indigo",
+  on_hold: "violet", solved: "emerald", closed: "slate",
 };
 const PRIORITY_COLORS = {
   urgent: "rose", high: "orange", normal: "blue", low: "slate",
@@ -948,9 +949,25 @@ export default function TicketDetail() {
                     onClick={() => setShowFlagModal(true)}
                   />
                 )}
-                {["new", "open", "pending", "on_hold"].includes(ticket.status_key) && ticket.team_name !== "NOC" && (
+                {["open", "pending", "in_progress", "on_hold"].includes(ticket.status_key) && ticket.team_name !== "NOC" && (
                   <>
                     <span className="w-px h-5 bg-[var(--border-default)] mx-1" />
+                    {["open", "pending", "in_progress"].includes(ticket.status_key) && (
+                      <ToolbarAction
+                        icon="pause"
+                        label="Hold"
+                        onClick={() => handleQuickStatus("on_hold")}
+                        loading={actionLoading === "on_hold"}
+                      />
+                    )}
+                    {ticket.status_key === "on_hold" && (
+                      <ToolbarAction
+                        icon="play"
+                        label="Resume"
+                        onClick={() => handleQuickStatus("in_progress")}
+                        loading={actionLoading === "in_progress"}
+                      />
+                    )}
                     <ToolbarAction
                       icon="checkCircle"
                       label="Resolve"
@@ -973,8 +990,8 @@ export default function TicketDetail() {
                     <ToolbarAction
                       icon="refresh"
                       label="Reopen"
-                      onClick={() => handleQuickStatus("open")}
-                      loading={actionLoading === "open"}
+                      onClick={() => handleQuickStatus("in_progress")}
+                      loading={actionLoading === "in_progress"}
                     />
                   </>
                 )}
@@ -1778,17 +1795,9 @@ export default function TicketDetail() {
               </div>
               <div className="py-1.5">
 
-              {/* Status */}
+              {/* Status — read-only; changes happen via action buttons + automation */}
               <DetailRow label="Status" icon="activity">
-                {isAgent ? (
-                  <DetailSelect
-                    value={ticket.status_id}
-                    onChange={(v) => handleUpdateField("status_id", parseInt(v))}
-                    options={statuses.map((s) => ({ value: s.id, label: s.label }))}
-                  />
-                ) : (
-                  <Badge tone={STATUS_COLORS[ticket.status_key]} className="text-xs">{ticket.status_label}</Badge>
-                )}
+                <Badge tone={STATUS_COLORS[ticket.status_key] || "slate"} className="text-xs">{ticket.status_label}</Badge>
               </DetailRow>
 
               {/* Priority */}
@@ -2161,13 +2170,13 @@ export default function TicketDetail() {
                 <div className="p-4 space-y-3">
                   <p className="text-xs text-[var(--fg-secondary)] leading-relaxed">
                     Your ticket was marked solved. Confirm to close it, or reopen if you still need help.
-                    It will close automatically in 3 days if you don't respond.
+                    It will close automatically in 3 days if you don't confirm or reopen.
                   </p>
                   <div className="flex gap-2">
                     <Button size="sm" onClick={() => handleQuickStatus("closed")} loading={actionLoading === "closed"} className="flex-1">
                       <Icon name="check" size={14} className="mr-1.5" /> Confirm &amp; close
                     </Button>
-                    <Button size="sm" variant="secondary" onClick={() => handleQuickStatus("open")} loading={actionLoading === "open"} className="flex-1">
+                    <Button size="sm" variant="secondary" onClick={() => handleQuickStatus("in_progress")} loading={actionLoading === "in_progress"} className="flex-1">
                       <Icon name="refresh" size={14} className="mr-1.5" /> Reopen
                     </Button>
                   </div>

@@ -336,9 +336,11 @@ export default function Tickets() {
   /* ---------- helpers ---------- */
   const getStatusColor = (statusKey) => {
     switch (statusKey) {
-      case "new": case "open": return "blue"
+      case "draft": return "slate"
+      case "open": return "blue"
       case "pending": return "amber"
-      case "on_hold": return "slate"
+      case "in_progress": return "indigo"
+      case "on_hold": return "violet"
       case "solved": return "emerald"
       case "closed": return "slate"
       default: return "slate"
