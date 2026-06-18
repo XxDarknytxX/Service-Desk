@@ -1888,8 +1888,8 @@ export default function TicketDetail() {
               </div>
             </div>
 
-            {/* SLA Panel */}
-            {slaData && (
+            {/* SLA Panels — one card per source: NOC triage first, then the handling team. */}
+            {slaData?.triage_present && (
               <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-card)] overflow-hidden animate-fade-up" style={{ animationDelay: "180ms" }}>
                 <div className="px-5 py-4 border-b border-[var(--border-default)] flex items-center justify-between gap-2">
                   <span className="flex items-center gap-2.5 min-w-0">
@@ -1898,10 +1898,45 @@ export default function TicketDetail() {
                     </span>
                     <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">SLA</h2>
                   </span>
-                  <span className="text-[11px] text-[var(--fg-muted)] truncate">{slaData.policy_name || (slaData.triage_present ? "NOC Triage" : "")}</span>
+                  <span className="text-[11px] text-[var(--fg-muted)] truncate">NOC</span>
                 </div>
                 <div className="p-4 space-y-2.5">
-                  {slaData.team_sla_present && (() => {
+                  {(() => {
+                    const met = !!slaData.triage_met_at;
+                    const breached = !!slaData.triage_breached;
+                    const metLate = met && breached;
+                    const r = getSlaRemaining(slaData.triage_due_at, (!met && breached) ? null : slaData.triage_remaining_ms);
+                    return (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-[var(--fg-muted)]">Triage</span>
+                        {met ? (
+                          <span className={`text-xs font-medium ${metLate ? "text-amber-400" : "text-emerald-400"}`}>{metLate ? "Met late" : "✓ Met"}</span>
+                        ) : breached ? (
+                          <Badge tone="rose" className="text-xs">Breached</Badge>
+                        ) : r ? (
+                          <span className={`text-xs font-medium ${r.tone === "rose" ? "text-rose-400" : r.tone === "amber" ? "text-amber-400" : "text-emerald-400"}`}>{r.text}</span>
+                        ) : (
+                          <span className="text-xs font-medium text-emerald-400">Met</span>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
+            {slaData?.team_sla_present && (
+              <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-card)] overflow-hidden animate-fade-up" style={{ animationDelay: "180ms" }}>
+                <div className="px-5 py-4 border-b border-[var(--border-default)] flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-2.5 min-w-0">
+                    <span className="h-8 w-8 rounded-lg bg-amber-500/10 text-amber-500 flex items-center justify-center shrink-0">
+                      <Icon name="sla" size={16} />
+                    </span>
+                    <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">SLA</h2>
+                  </span>
+                  <span className="text-[11px] text-[var(--fg-muted)] truncate">{ticket.team_name || slaData.policy_name}</span>
+                </div>
+                <div className="p-4 space-y-2.5">
+                  {(() => {
                     const r = getSlaRemaining(slaData.response_due_at, slaData.response_remaining_ms);
                     const met = !!slaData.response_met_at;
                     return (
@@ -1919,7 +1954,7 @@ export default function TicketDetail() {
                       </div>
                     );
                   })()}
-                  {slaData.team_sla_present && (() => {
+                  {(() => {
                     const r = getSlaRemaining(slaData.resolve_due_at, slaData.resolve_remaining_ms);
                     const met = !!slaData.resolve_met_at;
                     return (
@@ -1929,27 +1964,6 @@ export default function TicketDetail() {
                           <Badge tone="rose" className="text-xs">Breached</Badge>
                         ) : met ? (
                           <span className="text-xs font-medium text-emerald-400">✓ Met</span>
-                        ) : r ? (
-                          <span className={`text-xs font-medium ${r.tone === "rose" ? "text-rose-400" : r.tone === "amber" ? "text-amber-400" : "text-emerald-400"}`}>{r.text}</span>
-                        ) : (
-                          <span className="text-xs font-medium text-emerald-400">Met</span>
-                        )}
-                      </div>
-                    );
-                  })()}
-                  {/* NOC triage SLA — only for tickets that passed through the NOC queue */}
-                  {slaData.triage_present && (() => {
-                    const met = !!slaData.triage_met_at;
-                    const breached = !!slaData.triage_breached;
-                    const metLate = met && breached;
-                    const r = getSlaRemaining(slaData.triage_due_at, (!met && breached) ? null : slaData.triage_remaining_ms);
-                    return (
-                      <div className={cn("flex items-center justify-between", slaData.team_sla_present && "border-t border-[var(--border-default)] pt-2.5")}>
-                        <span className="text-xs text-[var(--fg-muted)]">Triage</span>
-                        {met ? (
-                          <span className={`text-xs font-medium ${metLate ? "text-amber-400" : "text-emerald-400"}`}>{metLate ? "Met late" : "✓ Met"}</span>
-                        ) : breached ? (
-                          <Badge tone="rose" className="text-xs">Breached</Badge>
                         ) : r ? (
                           <span className={`text-xs font-medium ${r.tone === "rose" ? "text-rose-400" : r.tone === "amber" ? "text-amber-400" : "text-emerald-400"}`}>{r.text}</span>
                         ) : (
