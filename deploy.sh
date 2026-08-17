@@ -1,172 +1,195 @@
 #!/bin/bash
-# Service Desk - Production Deployment Script
-# Usage: bash deploy.sh [setup|deploy|restart]
+# Service Desk — Ubuntu deployment script
+#
+#   bash deploy.sh setup     first-time: install Node/MySQL/NGINX/PM2, create dirs
+#   bash deploy.sh dbsetup   create the database schema + admin user (run once)
+#   bash deploy.sh deploy    build + (re)start the app  — also used for updates
+#   bash deploy.sh restart   restart API + NGINX
+#   bash deploy.sh status    show what's running
+#
+# Typical first run:  setup → configure MySQL → create backend/.env → dbsetup → deploy
 
-set -e
+set -euo pipefail
 
-# Configuration - CHANGE THESE
-APP_DIR="/var/www/servicedesk"
-REPO_URL="YOUR_GIT_REPO_URL"
-BRANCH="main"
-DOMAIN="yourdomain.com"
+# ─── Configuration ─────────────────────────────────────────────────────────
+APP_DIR="${APP_DIR:-/var/www/servicedesk}"
+REPO_URL="${REPO_URL:-https://github.com/XxDarknytxX/Service-Desk.git}"
+BRANCH="${BRANCH:-main}"
+NODE_MAJOR=20
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-
-log() { echo -e "${GREEN}[DEPLOY]${NC} $1"; }
-warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+log()   { echo -e "${GREEN}[DEPLOY]${NC} $1"; }
+warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
-# ─── FIRST-TIME SERVER SETUP ───
+# ─── FIRST-TIME SERVER SETUP ───────────────────────────────────────────────
 setup() {
-    log "Starting first-time server setup..."
-
-    # Update system
+    log "First-time server setup..."
     sudo apt update && sudo apt upgrade -y
+    sudo apt install -y git curl ca-certificates
 
-    # Install Node.js 20 LTS
     if ! command -v node &> /dev/null; then
-        log "Installing Node.js 20..."
-        curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+        log "Installing Node.js ${NODE_MAJOR}..."
+        curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | sudo -E bash -
         sudo apt install -y nodejs
     fi
-    log "Node.js version: $(node -v)"
+    log "Node.js: $(node -v), npm: $(npm -v)"
 
-    # Install PM2
-    if ! command -v pm2 &> /dev/null; then
-        log "Installing PM2..."
-        sudo npm install -g pm2
-    fi
+    command -v pm2   &> /dev/null || { log "Installing PM2...";   sudo npm install -g pm2; }
+    command -v nginx &> /dev/null || { log "Installing NGINX..."; sudo apt install -y nginx; }
 
-    # Install NGINX
-    if ! command -v nginx &> /dev/null; then
-        log "Installing NGINX..."
-        sudo apt install -y nginx
-    fi
-
-    # Install MySQL (if not using external DB)
     if ! command -v mysql &> /dev/null; then
         log "Installing MySQL..."
         sudo apt install -y mysql-server
-        sudo systemctl enable mysql
-        sudo systemctl start mysql
-        warn "Run 'sudo mysql_secure_installation' to secure MySQL"
+        sudo systemctl enable --now mysql
+        warn "Run 'sudo mysql_secure_installation' to set a root password and harden MySQL."
     fi
 
-    # Install Certbot for SSL
-    if ! command -v certbot &> /dev/null; then
-        log "Installing Certbot..."
-        sudo apt install -y certbot python3-certbot-nginx
-    fi
-
-    # Create app directory
+    # App directory, owned by the deploying user so git/npm don't need sudo.
     sudo mkdir -p "$APP_DIR"
-    sudo chown $USER:$USER "$APP_DIR"
+    sudo chown -R "$USER":"$USER" "$APP_DIR"
 
-    # Create logs directory
-    mkdir -p "$APP_DIR/logs"
+    # Clone if this is a bare first run.
+    if [ ! -d "$APP_DIR/.git" ]; then
+        log "Cloning $REPO_URL ..."
+        git clone -b "$BRANCH" "$REPO_URL" "$APP_DIR"
+    fi
 
-    # Setup MySQL database and user
-    log "Setting up MySQL database..."
-    echo "
-    Run these commands in MySQL (sudo mysql):
+    mkdir -p "$APP_DIR/backend/logs"
 
-    CREATE DATABASE IF NOT EXISTS servicedesk CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-    CREATE USER IF NOT EXISTS 'servicedesk_user'@'localhost' IDENTIFIED BY 'YOUR_STRONG_PASSWORD';
-    GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP ON servicedesk.* TO 'servicedesk_user'@'localhost';
-    FLUSH PRIVILEGES;
-    "
+    # NGINX (www-data) must be able to traverse into the build directory.
+    chmod o+rx "$APP_DIR" 2>/dev/null || true
 
-    log "Setup complete! Next steps:"
-    echo "  1. Configure MySQL (see above)"
-    echo "  2. Clone your repo to $APP_DIR"
-    echo "  3. Copy backend/.env.example to backend/.env and fill in values"
-    echo "  4. Run: bash deploy.sh deploy"
+    # Open the firewall for HTTP if ufw is active.
+    if command -v ufw &> /dev/null && sudo ufw status | grep -q "Status: active"; then
+        sudo ufw allow 'Nginx HTTP' || true
+    fi
+
+    cat <<EOF
+
+${GREEN}Setup complete.${NC} Next:
+
+  1) Create the database and a MySQL user — run 'sudo mysql' and paste:
+
+     CREATE DATABASE IF NOT EXISTS service_desk
+       CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+     CREATE USER IF NOT EXISTS 'servicedesk'@'localhost'
+       IDENTIFIED BY 'CHOOSE_A_STRONG_PASSWORD';
+     GRANT ALL PRIVILEGES ON service_desk.* TO 'servicedesk'@'localhost';
+     FLUSH PRIVILEGES;
+
+  2) Create the backend environment file:
+
+     cp $APP_DIR/backend/.env.example $APP_DIR/backend/.env
+     nano $APP_DIR/backend/.env
+
+     Set at minimum:
+       DATABASE_HOST=localhost
+       DATABASE_USER=servicedesk
+       DATABASE_PASSWORD=the password you chose above
+       DATABASE_NAME=service_desk
+       JWT_SECRET=$(openssl rand -hex 32 2>/dev/null || echo "run: openssl rand -hex 32")
+       NODE_ENV=production
+       PORT=5000
+
+  3) bash deploy.sh dbsetup      # creates all tables + the admin user
+  4) bash deploy.sh deploy       # builds the frontend and starts everything
+
+EOF
 }
 
-# ─── DEPLOY / UPDATE ───
-deploy() {
-    log "Starting deployment..."
-
-    cd "$APP_DIR"
-
-    # Pull latest code
-    if [ -d ".git" ]; then
-        log "Pulling latest changes..."
-        git pull origin "$BRANCH"
-    else
-        error "No git repo found at $APP_DIR. Clone it first."
-    fi
-
-    # Check backend .env exists
-    if [ ! -f "backend/.env" ]; then
-        error "backend/.env not found. Copy from backend/.env.example and configure."
-    fi
-
-    # Install backend dependencies
-    log "Installing backend dependencies..."
+# ─── DATABASE SCHEMA ───────────────────────────────────────────────────────
+# Idempotent: safe to re-run. Add --with-seed for demo teams/users/templates.
+dbsetup() {
+    [ -f "$APP_DIR/backend/.env" ] || error "backend/.env not found. Copy .env.example and configure it first."
+    log "Installing backend dependencies (needed by the bootstrap)..."
     cd "$APP_DIR/backend"
-    npm ci --production
+    npm ci --omit=dev
+    log "Creating schema + admin user..."
+    node src/config/bootstrap-fresh.js "$@"
+}
 
-    # Run database migrations
-    log "Running database migrations..."
-    node run-migration.js || warn "Migration may have already been applied"
-
-    # Build frontend
-    log "Building frontend..."
-    cd "$APP_DIR/frontend"
-    npm ci
-    npm run build
-
-    # Setup NGINX config
-    log "Configuring NGINX..."
-    # Update domain in nginx config
-    sed "s/yourdomain.com/$DOMAIN/g" "$APP_DIR/nginx.conf" | sudo tee /etc/nginx/sites-available/servicedesk > /dev/null
-
-    # Enable site
-    sudo ln -sf /etc/nginx/sites-available/servicedesk /etc/nginx/sites-enabled/
-    sudo rm -f /etc/nginx/sites-enabled/default
-
-    # Test NGINX config
-    sudo nginx -t || error "NGINX configuration test failed"
-
-    # Start/restart backend with PM2
-    log "Starting backend with PM2..."
+# ─── DEPLOY / UPDATE ───────────────────────────────────────────────────────
+deploy() {
+    log "Deploying..."
     cd "$APP_DIR"
+
+    [ -d ".git" ] || error "No git repo at $APP_DIR — run 'bash deploy.sh setup' first."
+    [ -f "backend/.env" ] || error "backend/.env not found. Copy backend/.env.example and configure it."
+
+    log "Pulling latest code ($BRANCH)..."
+    git pull origin "$BRANCH"
+
+    log "Installing backend dependencies..."
+    ( cd backend && npm ci --omit=dev )
+
+    # Migrations are idempotent, so this doubles as the upgrade path: a deploy
+    # that adds a new table/column applies it here automatically.
+    log "Applying database migrations..."
+    ( cd backend && node src/config/bootstrap-fresh.js ) \
+        || warn "Bootstrap reported an issue — check the output above."
+
+    log "Building frontend..."
+    ( cd frontend && npm ci && npm run build )
+    [ -d "frontend/build" ] || error "Frontend build missing — expected frontend/build."
+
+    log "Configuring NGINX..."
+    sudo cp "$APP_DIR/nginx.conf" /etc/nginx/sites-available/servicedesk
+    sudo ln -sf /etc/nginx/sites-available/servicedesk /etc/nginx/sites-enabled/servicedesk
+    sudo rm -f /etc/nginx/sites-enabled/default
+    sudo nginx -t || error "NGINX config test failed."
+
+    log "Starting API under PM2..."
+    mkdir -p "$APP_DIR/backend/logs"
     pm2 startOrRestart ecosystem.config.cjs --env production
     pm2 save
+    # Start PM2 on boot (prints a command to run if it needs sudo).
+    pm2 startup systemd -u "$USER" --hp "$HOME" 2>/dev/null || true
 
-    # Setup PM2 to start on boot
-    pm2 startup systemd -u $USER --hp $HOME 2>/dev/null || true
-    pm2 save
+    sudo systemctl reload nginx
 
-    # Restart NGINX
-    sudo systemctl restart nginx
+    sleep 2
+    log "Verifying..."
+    local api_code web_code
+    api_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://127.0.0.1:5000/api/auth/login \
+        -H "Content-Type: application/json" -d '{"email":"x","password":"y"}' || echo "000")
+    web_code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1/ || echo "000")
+    # 400/401 from the login probe means the API is up and validating input.
+    [[ "$api_code" =~ ^(400|401)$ ]] && log "API   OK (HTTP $api_code)" || warn "API   unexpected response: $api_code — check 'pm2 logs servicedesk-api'"
+    [ "$web_code" = "200" ]         && log "Web   OK (HTTP $web_code)" || warn "Web   unexpected response: $web_code — check 'sudo nginx -t' and the error log"
 
-    log "Deployment complete!"
-    echo ""
-    echo "  Backend:  PM2 (pm2 status / pm2 logs servicedesk-api)"
-    echo "  Frontend: NGINX serving from $APP_DIR/frontend/build"
-    echo "  Domain:   https://$DOMAIN"
-    echo ""
-    warn "If SSL is not set up yet, run: sudo certbot --nginx -d $DOMAIN"
+    local ip
+    ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    cat <<EOF
+
+${GREEN}Deployment complete.${NC}
+  App:   http://${ip:-<server-ip>}/         (and via the public IP)
+  API:   proxied at /api  ->  127.0.0.1:5000
+  Logs:  pm2 logs servicedesk-api   |   sudo tail -f /var/log/nginx/servicedesk.error.log
+
+EOF
 }
 
-# ─── RESTART ───
 restart() {
-    log "Restarting services..."
+    log "Restarting..."
     cd "$APP_DIR"
     pm2 restart ecosystem.config.cjs --env production
-    sudo systemctl restart nginx
-    log "Services restarted."
+    sudo systemctl reload nginx
+    log "Restarted."
 }
 
-# ─── MAIN ───
+status() {
+    echo "── PM2 ──"; pm2 status || true
+    echo; echo "── NGINX ──"; systemctl is-active nginx && sudo nginx -t 2>&1 | tail -2
+    echo; echo "── MySQL ──"; systemctl is-active mysql || true
+    echo; echo "── Ports ──"; sudo ss -lntp 2>/dev/null | grep -E ':80|:5000|:3306' || true
+}
+
 case "${1:-deploy}" in
     setup)   setup ;;
+    dbsetup) shift; dbsetup "$@" ;;
     deploy)  deploy ;;
     restart) restart ;;
-    *)       echo "Usage: bash deploy.sh [setup|deploy|restart]" ;;
+    status)  status ;;
+    *)       echo "Usage: bash deploy.sh [setup|dbsetup|deploy|restart|status]" ;;
 esac

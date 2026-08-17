@@ -114,6 +114,19 @@ CREATE TABLE IF NOT EXISTS team_members (
   CONSTRAINT fk_team_members_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Team Module Access (per-team access provisioning)
+-- Queried on every login (authController.getTeamContext) — a team member's login
+-- errors outright if this table is absent, so it belongs in the base schema.
+-- No rows for a team = unrestricted; rows = restricted to those module keys.
+CREATE TABLE IF NOT EXISTS team_module_access (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  team_id INT NOT NULL,
+  module_key VARCHAR(60) NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_team_module (team_id, module_key),
+  CONSTRAINT fk_tma_team FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- User Hierarchy (reporting structure)
 CREATE TABLE IF NOT EXISTS user_hierarchy (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
