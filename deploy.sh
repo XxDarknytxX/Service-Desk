@@ -16,6 +16,9 @@ APP_DIR="${APP_DIR:-/var/www/servicedesk}"
 REPO_URL="${REPO_URL:-https://github.com/XxDarknytxX/Service-Desk.git}"
 BRANCH="${BRANCH:-main}"
 NODE_MAJOR=20
+# Public address this server is reached on. Only used to put the right IP in the
+# self-signed certificate's SAN field, so browsers match it to the URL bar.
+PUBLIC_IP="${PUBLIC_IP:-27.123.188.86}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 log()   { echo -e "${GREEN}[DEPLOY]${NC} $1"; }
@@ -60,9 +63,9 @@ setup() {
     # NGINX (www-data) must be able to traverse into the build directory.
     chmod o+rx "$APP_DIR" 2>/dev/null || true
 
-    # Open the firewall for HTTP if ufw is active.
+    # Open the firewall for HTTP + HTTPS if ufw is active ("Full" covers 80+443).
     if command -v ufw &> /dev/null && sudo ufw status | grep -q "Status: active"; then
-        sudo ufw allow 'Nginx HTTP' || true
+        sudo ufw allow 'Nginx Full' || true
     fi
 
     cat <<EOF
@@ -133,6 +136,27 @@ deploy() {
     ( cd frontend && npm ci && npm run build )
     [ -d "frontend/build" ] || error "Frontend build missing — expected frontend/build."
 
+    # TLS certificate must exist before nginx reloads, or it refuses to start.
+    # Self-signed because a public CA can't issue for a bare IP — replace with
+    # certbot once a domain points here (see the notes in nginx.conf).
+    if [ ! -f /etc/nginx/ssl/servicedesk-selfsigned.crt ]; then
+        log "Generating self-signed TLS certificate..."
+        sudo mkdir -p /etc/nginx/ssl
+        local ips san
+        # Include every address the app is reached on in the SAN field; modern
+        # browsers ignore the legacy CN and validate against SAN only.
+        ips=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9.]+$' | sed 's/^/IP:/' | paste -sd, -)
+        san="DNS:localhost,IP:127.0.0.1${PUBLIC_IP:+,IP:$PUBLIC_IP}${ips:+,$ips}"
+        sudo openssl req -x509 -nodes -newkey rsa:2048 -days 825 \
+            -keyout /etc/nginx/ssl/servicedesk-selfsigned.key \
+            -out    /etc/nginx/ssl/servicedesk-selfsigned.crt \
+            -subj "/O=Service Desk/CN=${PUBLIC_IP:-servicedesk}" \
+            -addext "subjectAltName=${san}" 2>/dev/null \
+            || error "Failed to generate the self-signed certificate."
+        sudo chmod 600 /etc/nginx/ssl/servicedesk-selfsigned.key
+        log "Certificate created (SAN: ${san})"
+    fi
+
     log "Configuring NGINX..."
     sudo cp "$APP_DIR/nginx.conf" /etc/nginx/sites-available/servicedesk
     sudo ln -sf /etc/nginx/sites-available/servicedesk /etc/nginx/sites-enabled/servicedesk
@@ -150,22 +174,26 @@ deploy() {
 
     sleep 2
     log "Verifying..."
-    local api_code web_code
+    local api_code web_code tls_code
     api_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://127.0.0.1:5000/api/auth/login \
         -H "Content-Type: application/json" -d '{"email":"x","password":"y"}' || echo "000")
     web_code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1/ || echo "000")
+    # -k because the certificate is self-signed; we're testing the listener, not trust.
+    tls_code=$(curl -sk -o /dev/null -w "%{http_code}" https://127.0.0.1/ || echo "000")
     # 400/401 from the login probe means the API is up and validating input.
-    [[ "$api_code" =~ ^(400|401)$ ]] && log "API   OK (HTTP $api_code)" || warn "API   unexpected response: $api_code — check 'pm2 logs servicedesk-api'"
-    [ "$web_code" = "200" ]         && log "Web   OK (HTTP $web_code)" || warn "Web   unexpected response: $web_code — check 'sudo nginx -t' and the error log"
+    [[ "$api_code" =~ ^(400|401)$ ]] && log "API    OK (HTTP $api_code)" || warn "API    unexpected response: $api_code — check 'pm2 logs servicedesk-api'"
+    [ "$web_code" = "200" ]         && log "HTTP   OK (HTTP $web_code)" || warn "HTTP   unexpected response: $web_code — check 'sudo nginx -t' and the error log"
+    [ "$tls_code" = "200" ]         && log "HTTPS  OK (HTTP $tls_code)" || warn "HTTPS  unexpected response: $tls_code — check the certificate and 'sudo nginx -t'"
 
     local ip
     ip=$(hostname -I 2>/dev/null | awk '{print $1}')
     cat <<EOF
 
 Deployment complete.
-  App:   http://${ip:-<server-ip>}/         (and via the public IP)
-  API:   proxied at /api  ->  127.0.0.1:5000
-  Logs:  pm2 logs servicedesk-api   |   sudo tail -f /var/log/nginx/servicedesk.error.log
+  Internal:  http://${ip:-<server-ip>}/
+  Public:    https://${PUBLIC_IP}/          (self-signed cert — expect a browser warning)
+  API:       proxied at /api  ->  127.0.0.1:5000
+  Logs:      pm2 logs servicedesk-api   |   sudo tail -f /var/log/nginx/servicedesk.error.log
 
 EOF
 }
