@@ -121,7 +121,20 @@ deploy() {
     [ -f "backend/.env" ] || error "backend/.env not found. Copy backend/.env.example and configure it."
 
     log "Pulling latest code ($BRANCH)..."
+    local before_hash after_hash
+    before_hash=$(sha256sum "$APP_DIR/deploy.sh" | awk '{print $1}')
     git pull origin "$BRANCH"
+    after_hash=$(sha256sum "$APP_DIR/deploy.sh" | awk '{print $1}')
+
+    # If the pull updated THIS script, the running bash process is still executing
+    # the version it parsed at startup, while every other file on disk (nginx.conf,
+    # migrations) is already the new one. That mismatch silently skips new steps —
+    # it's how a deploy once installed a TLS-enabled nginx.conf without running the
+    # certificate generation that shipped alongside it. Re-exec so both halves match.
+    if [ "$before_hash" != "$after_hash" ] && [ -z "${SD_REEXECED:-}" ]; then
+        log "deploy.sh changed in this pull — restarting with the updated script..."
+        SD_REEXECED=1 exec bash "$APP_DIR/deploy.sh" deploy
+    fi
 
     log "Installing backend dependencies..."
     ( cd backend && npm ci --omit=dev )
@@ -145,7 +158,10 @@ deploy() {
         local ips san
         # Include every address the app is reached on in the SAN field; modern
         # browsers ignore the legacy CN and validate against SAN only.
-        ips=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9.]+$' | sed 's/^/IP:/' | paste -sd, -)
+        # `|| true`: with `set -euo pipefail`, grep matching nothing would fail the
+        # pipeline and abort the deploy. An empty list is fine — the SAN below
+        # still covers localhost and the public IP.
+        ips=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9.]+$' | sed 's/^/IP:/' | paste -sd, - || true)
         san="DNS:localhost,IP:127.0.0.1${PUBLIC_IP:+,IP:$PUBLIC_IP}${ips:+,$ips}"
         sudo openssl req -x509 -nodes -newkey rsa:2048 -days 825 \
             -keyout /etc/nginx/ssl/servicedesk-selfsigned.key \
