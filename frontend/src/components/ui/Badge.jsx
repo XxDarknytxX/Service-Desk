@@ -107,9 +107,11 @@ export function StatusBadge({ status, size = "md", className }) {
     low: { tone: "emerald", label: "Low", dot: true },
 
     // Generic statuses
+    // NB: no `draft` here — it's defined above as a ticket status (with a dot,
+    // like its sibling statuses). A second `draft` key silently overrode that
+    // one and dropped the dot from Draft ticket badges.
     active: { tone: "emerald", label: "Active", dot: true },
     inactive: { tone: "slate", label: "Inactive", dot: false },
-    draft: { tone: "slate", label: "Draft", dot: false },
     published: { tone: "emerald", label: "Published", dot: true },
     archived: { tone: "slate", label: "Archived", dot: false },
 

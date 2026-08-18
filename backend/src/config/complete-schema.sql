@@ -88,9 +88,24 @@ CREATE TABLE IF NOT EXISTS departments (
   INDEX idx_head_user (head_user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Add department FK to users
-ALTER TABLE users ADD CONSTRAINT fk_users_department
-  FOREIGN KEY (department_id) REFERENCES departments(id) ON DELETE SET NULL;
+-- Add department FK to users.
+-- MySQL has no "ADD CONSTRAINT IF NOT EXISTS", and this file is re-applied on
+-- every deploy (bootstrap-fresh.js doubles as the upgrade path), so guard it —
+-- a bare ALTER fails with "Duplicate foreign key constraint name" on the second
+-- run and aborts the rest of the install.
+SET @fk_exists := (
+  SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS
+  WHERE CONSTRAINT_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'users'
+    AND CONSTRAINT_NAME = 'fk_users_department'
+);
+SET @add_fk := IF(@fk_exists = 0,
+  'ALTER TABLE users ADD CONSTRAINT fk_users_department FOREIGN KEY (department_id) REFERENCES departments(id) ON DELETE SET NULL',
+  'DO 0'
+);
+PREPARE stmt FROM @add_fk;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 -- Teams
 CREATE TABLE IF NOT EXISTS teams (

@@ -114,14 +114,32 @@ async function main() {
   const conn = await mysql.createConnection({ ...BASE, database: DB_NAME });
 
   // 2. Base schema + lookup data (roles, statuses, priorities, types, channels).
+  // On an existing install this is a no-op re-apply. Errors that just mean
+  // "this already exists" must NOT abort the run, otherwise a redeploy would
+  // skip the feature migrations below and silently miss new schema changes.
+  const ALREADY_EXISTS = new Set([
+    "ER_TABLE_EXISTS_ERROR",  // 1050
+    "ER_DUP_FIELDNAME",       // 1060
+    "ER_DUP_KEYNAME",         // 1061
+    "ER_DUP_ENTRY",           // 1062 (lookup seed rows)
+    "ER_FK_DUP_NAME",         // 1826 duplicate foreign key constraint name
+  ]);
   const schemaPath = path.join(__dirname, "complete-schema.sql");
   const sql = fs.readFileSync(schemaPath, "utf8");
-  await conn.query(sql);
-  const [[{ n: baseTables }]] = await conn.query(
-    "SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = ?",
-    [DB_NAME]
-  );
-  console.log(`${c.g("✓")} base schema applied ${c.dim(`(${baseTables} tables)`)}`);
+  try {
+    await conn.query(sql);
+    const [[{ n: baseTables }]] = await conn.query(
+      "SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = ?",
+      [DB_NAME]
+    );
+    console.log(`${c.g("✓")} base schema applied ${c.dim(`(${baseTables} tables)`)}`);
+  } catch (e) {
+    if (ALREADY_EXISTS.has(e.code)) {
+      console.log(`${c.y("–")} base schema already present ${c.dim(`(${e.code})`)}`);
+    } else {
+      throw e;
+    }
+  }
 
   // 3. Admin user — created BEFORE the migrations because some of them seed rows
   // that carry a created_by foreign key into users (template-migration.js), which

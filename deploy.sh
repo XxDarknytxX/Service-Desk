@@ -67,7 +67,7 @@ setup() {
 
     cat <<EOF
 
-${GREEN}Setup complete.${NC} Next:
+Setup complete. Next:
 
   1) Create the database and a MySQL user — run 'sudo mysql' and paste:
 
@@ -162,7 +162,7 @@ deploy() {
     ip=$(hostname -I 2>/dev/null | awk '{print $1}')
     cat <<EOF
 
-${GREEN}Deployment complete.${NC}
+Deployment complete.
   App:   http://${ip:-<server-ip>}/         (and via the public IP)
   API:   proxied at /api  ->  127.0.0.1:5000
   Logs:  pm2 logs servicedesk-api   |   sudo tail -f /var/log/nginx/servicedesk.error.log

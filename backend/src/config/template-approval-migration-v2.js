@@ -47,18 +47,31 @@ async function migrate() {
     } else throw e;
   }
 
-  // 3. Migrate existing approver_user_id data into approver_user_ids
-  const [existing] = await conn.query(
-    "SELECT id, approver_user_id FROM template_approval_steps WHERE approver_user_id IS NOT NULL AND (approver_user_ids IS NULL OR approver_user_ids = 'null')"
+  // 3. Migrate existing approver_user_id data into approver_user_ids.
+  // Guarded on the old column still existing: step 4 below drops it, so on a
+  // re-run (this script is re-applied on every deploy) the SELECT would fail
+  // with "Unknown column 'approver_user_id' in 'field list'".
+  const [[oldCol]] = await conn.query(
+    `SELECT COUNT(*) AS n FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'template_approval_steps'
+        AND COLUMN_NAME = 'approver_user_id'`
   );
-  for (const row of existing) {
-    await conn.query(
-      "UPDATE template_approval_steps SET approver_user_ids = ? WHERE id = ?",
-      [JSON.stringify([row.approver_user_id]), row.id]
+  if (oldCol.n === 0) {
+    console.log("⊘ approver_user_id column already migrated away — skipping data backfill");
+  } else {
+    const [existing] = await conn.query(
+      "SELECT id, approver_user_id FROM template_approval_steps WHERE approver_user_id IS NOT NULL AND (approver_user_ids IS NULL OR approver_user_ids = 'null')"
     );
-  }
-  if (existing.length > 0) {
-    console.log(`✓ Migrated ${existing.length} existing approver_user_id → approver_user_ids`);
+    for (const row of existing) {
+      await conn.query(
+        "UPDATE template_approval_steps SET approver_user_ids = ? WHERE id = ?",
+        [JSON.stringify([row.approver_user_id]), row.id]
+      );
+    }
+    if (existing.length > 0) {
+      console.log(`✓ Migrated ${existing.length} existing approver_user_id → approver_user_ids`);
+    }
   }
 
   // 4. Drop FK constraint on approver_user_id, then drop the column
