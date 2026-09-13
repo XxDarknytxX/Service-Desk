@@ -19,6 +19,7 @@ import SlaManagement from "./pages/sla";
 import Reports from "./pages/reports";
 import Approvals from "./pages/approvals";
 import ApprovalRules from "./pages/approvalRules";
+import EmailSettings from "./pages/emailSettings";
 import TemplateBuilder from "./pages/templateBuilder";
 import Organizations from "./pages/organizations";
 import Departments from "./pages/departments";
@@ -157,6 +158,20 @@ export default function App() {
                           <ApprovalRules />
                         </AppLayout>
                       </ModuleRoute>
+                    </RoleRoute>
+                  </ProtectedRoute>
+                }
+              />
+              {/* No ModuleRoute: admins bypass team module gating anyway, and
+                  RoleRoute already limits this page to admins. */}
+              <Route
+                path="/email-settings"
+                element={
+                  <ProtectedRoute>
+                    <RoleRoute roles={["admin"]}>
+                      <AppLayout>
+                        <EmailSettings />
+                      </AppLayout>
                     </RoleRoute>
                   </ProtectedRoute>
                 }

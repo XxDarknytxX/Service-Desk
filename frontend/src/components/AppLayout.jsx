@@ -50,6 +50,7 @@ const navSections = [
       { to: "/forms", label: "Customer Forms", icon: "send", roles: ["admin", "agent"], moduleKey: "forms" },
       { to: "/knowledge-base", label: "Knowledge Base", icon: "knowledgeBase", moduleKey: "knowledge-base" },
       { to: "/reports", label: "Reports", icon: "reports", roles: ["admin", "agent"], moduleKey: "reports" },
+      { to: "/email-settings", label: "Email Settings", icon: "mail", roles: ["admin"] },
     ],
   },
 ];

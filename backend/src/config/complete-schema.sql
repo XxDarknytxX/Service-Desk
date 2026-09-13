@@ -732,6 +732,29 @@ CREATE TABLE IF NOT EXISTS saved_filters (
   KEY idx_saved_filters_user (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- System-wide outbound SMTP configuration. Exactly one row, pinned to id = 1
+-- and edited by admins under Settings -> Email. Distinct from email_accounts
+-- below, which models per-mailbox IMAP polling and is not wired up.
+-- Seeded (and kept in sync) by src/config/smtp-settings-migration.js.
+CREATE TABLE IF NOT EXISTS smtp_settings (
+  id INT UNSIGNED NOT NULL PRIMARY KEY,
+  host VARCHAR(255) NOT NULL,
+  port INT NOT NULL DEFAULT 25,
+  security ENUM('none','tls','starttls') NOT NULL DEFAULT 'none',
+  auth_required TINYINT(1) NOT NULL DEFAULT 0,
+  username VARCHAR(255) NULL,
+  password VARCHAR(512) NULL,
+  from_email VARCHAR(255) NOT NULL,
+  from_name VARCHAR(255) NULL,
+  enabled TINYINT(1) NOT NULL DEFAULT 1,
+  last_tested_at DATETIME NULL,
+  last_test_ok TINYINT(1) NULL,
+  last_test_error TEXT NULL,
+  updated_by INT NULL,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Email Integration (optional)
 CREATE TABLE IF NOT EXISTS email_accounts (
   id INT AUTO_INCREMENT PRIMARY KEY,

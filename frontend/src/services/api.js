@@ -288,6 +288,15 @@ export const auditApi = {
   getTicketAudit: (ticketId) => request(`/tickets/${ticketId}/audit`),
 };
 
+// Outbound email / SMTP settings (admin only)
+export const smtpApi = {
+  get: () => request("/settings/smtp"),
+  update: (data) => request("/settings/smtp", { method: "PUT", body: JSON.stringify(data) }),
+  // Handshake only — tests the SAVED config, so the page saves before testing.
+  test: () => request("/settings/smtp/test", { method: "POST" }),
+  sendTest: (to) => request("/settings/smtp/send-test", { method: "POST", body: JSON.stringify({ to }) }),
+};
+
 // Approvals API
 export const approvalsApi = {
   // Approval Rules (admin)

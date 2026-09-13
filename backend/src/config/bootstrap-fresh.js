@@ -64,6 +64,7 @@ const MIGRATIONS = [
   "triage-sla-migration.js",          // ticket_triage_slas (NOC clock)
   "solved-at-migration.js",           // tickets.solved_at
   "manager-sla-migration.js",         // ticket_manager_slas (manager review clock)
+  "smtp-settings-migration.js",       // smtp_settings (outbound mail config)
 ];
 
 // Optional demo data — teams, staff/customer users, ticket templates.
