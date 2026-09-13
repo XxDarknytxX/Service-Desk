@@ -157,8 +157,20 @@ deploy() {
     # TLS certificate must exist before nginx reloads, or it refuses to start.
     # The real wildcard cert is uploaded out of band (it must never live in git);
     # if it isn't there yet we drop in a self-signed pair at the SAME paths so a
-    # fresh server can still boot. NOTE the guard: this only ever runs when the
-    # files are ABSENT, so it can never clobber the real certificate.
+    # fresh server can still boot.
+    #
+    # Refuse to act on a HALF-uploaded pair. `openssl req -keyout` truncates its
+    # output file unconditionally, so a guard that tested only the certificate
+    # would regenerate over an existing private key the moment the cert was
+    # missing — which is exactly the state you're in midway through a manual
+    # upload. That key is the only copy of the *.vodafone.com.fj key outside the
+    # vendor .pfx, and losing it means a reissue.
+    if [ -f "$SSL_CERT" ] && [ ! -f "$SSL_KEY" ]; then
+        error "Found $SSL_CERT but no $SSL_KEY. Refusing to continue — upload the key rather than letting this regenerate over it."
+    fi
+    if [ ! -f "$SSL_CERT" ] && [ -f "$SSL_KEY" ]; then
+        error "Found $SSL_KEY but no $SSL_CERT. Refusing to generate a placeholder, which would OVERWRITE that private key. Upload the chain file, or move the key aside first."
+    fi
     if [ ! -f "$SSL_CERT" ]; then
         warn "No certificate at $SSL_CERT — generating a self-signed placeholder."
         warn "Browsers will show a trust warning until the real cert is uploaded."

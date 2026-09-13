@@ -75,6 +75,18 @@ if (isProd) {
 app.use(helmet({
   contentSecurityPolicy: false, // let NGINX handle CSP if needed
   crossOriginEmbedderPolicy: false,
+  // HSTS is set EXPLICITLY — helmet's default is max-age=31536000 with
+  // includeSubDomains, which is a one-year, irrevocable commitment. That was
+  // harmless while the app was on a self-signed cert and a bare IP (browsers
+  // ignore HSTS from an untrusted connection, and never apply it to an IP), but
+  // it goes live the moment we serve a publicly trusted cert on a real hostname.
+  // This certificate is renewed BY HAND and expires 2027-03-23; if a renewal is
+  // missed, a cached year-long HSTS entry turns that into a hard lockout with no
+  // click-through, for this host and every subdomain of it.
+  // Short max-age keeps the protection meaningful without the lockout risk. Ramp
+  // it (300 -> 86400 -> 31536000) once certificate renewal is an owned, reliable
+  // process — see the HSTS notes in nginx.conf.
+  strictTransportSecurity: { maxAge: 300, includeSubDomains: false },
 }));
 
 // Gzip compression
