@@ -32,3 +32,12 @@ temptoken.json
 # Accidental artifacts from botched C:\temp\ redirects (Windows)
 C:temp
 C:temp*
+
+# TLS / certificate material — must NEVER be committed.
+# The wildcard *.vodafone.com.fj key lives only on the server in /etc/nginx/ssl.
+*.pem
+*.pfx
+*.p12
+*.key
+*.crt
+star_vodafone_com_fj*

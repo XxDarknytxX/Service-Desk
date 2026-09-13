@@ -17,8 +17,13 @@ REPO_URL="${REPO_URL:-https://github.com/XxDarknytxX/Service-Desk.git}"
 BRANCH="${BRANCH:-main}"
 NODE_MAJOR=20
 # Public address this server is reached on. Only used to put the right IP in the
-# self-signed certificate's SAN field, so browsers match it to the URL bar.
+# self-signed fallback certificate's SAN field, so browsers match it to the URL bar.
 PUBLIC_IP="${PUBLIC_IP:-27.123.188.86}"
+# Public hostname (must match the certificate and the DNS A record).
+SERVER_NAME="${SERVER_NAME:-servicehub.vodafone.com.fj}"
+# TLS material. Uploaded out of band — never stored in git.
+SSL_CERT="${SSL_CERT:-/etc/nginx/ssl/servicehub.fullchain.pem}"
+SSL_KEY="${SSL_KEY:-/etc/nginx/ssl/servicehub.privkey.pem}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 log()   { echo -e "${GREEN}[DEPLOY]${NC} $1"; }
@@ -150,10 +155,13 @@ deploy() {
     [ -d "frontend/build" ] || error "Frontend build missing — expected frontend/build."
 
     # TLS certificate must exist before nginx reloads, or it refuses to start.
-    # Self-signed because a public CA can't issue for a bare IP — replace with
-    # certbot once a domain points here (see the notes in nginx.conf).
-    if [ ! -f /etc/nginx/ssl/servicedesk-selfsigned.crt ]; then
-        log "Generating self-signed TLS certificate..."
+    # The real wildcard cert is uploaded out of band (it must never live in git);
+    # if it isn't there yet we drop in a self-signed pair at the SAME paths so a
+    # fresh server can still boot. NOTE the guard: this only ever runs when the
+    # files are ABSENT, so it can never clobber the real certificate.
+    if [ ! -f "$SSL_CERT" ]; then
+        warn "No certificate at $SSL_CERT — generating a self-signed placeholder."
+        warn "Browsers will show a trust warning until the real cert is uploaded."
         sudo mkdir -p /etc/nginx/ssl
         local ips san
         # Include every address the app is reached on in the SAN field; modern
@@ -162,15 +170,31 @@ deploy() {
         # pipeline and abort the deploy. An empty list is fine — the SAN below
         # still covers localhost and the public IP.
         ips=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9.]+$' | sed 's/^/IP:/' | paste -sd, - || true)
-        san="DNS:localhost,IP:127.0.0.1${PUBLIC_IP:+,IP:$PUBLIC_IP}${ips:+,$ips}"
+        san="DNS:localhost,DNS:${SERVER_NAME},IP:127.0.0.1${PUBLIC_IP:+,IP:$PUBLIC_IP}${ips:+,$ips}"
         sudo openssl req -x509 -nodes -newkey rsa:2048 -days 825 \
-            -keyout /etc/nginx/ssl/servicedesk-selfsigned.key \
-            -out    /etc/nginx/ssl/servicedesk-selfsigned.crt \
-            -subj "/O=Service Desk/CN=${PUBLIC_IP:-servicedesk}" \
+            -keyout "$SSL_KEY" -out "$SSL_CERT" \
+            -subj "/O=Service Desk/CN=${SERVER_NAME}" \
             -addext "subjectAltName=${san}" 2>/dev/null \
             || error "Failed to generate the self-signed certificate."
-        sudo chmod 600 /etc/nginx/ssl/servicedesk-selfsigned.key
-        log "Certificate created (SAN: ${san})"
+        sudo chmod 600 "$SSL_KEY"
+        log "Placeholder certificate created (SAN: ${san})"
+    else
+        # Report what's actually installed, and fail loudly on a mismatched pair —
+        # nginx would otherwise start and then reject every TLS handshake.
+        local c_sub c_end c_md k_md
+        c_sub=$(sudo openssl x509 -in "$SSL_CERT" -noout -subject 2>/dev/null | sed 's/^subject=//')
+        c_end=$(sudo openssl x509 -in "$SSL_CERT" -noout -enddate 2>/dev/null | sed 's/^notAfter=//')
+        c_md=$(sudo openssl x509 -in "$SSL_CERT" -noout -modulus 2>/dev/null | openssl md5)
+        k_md=$(sudo openssl rsa  -in "$SSL_KEY"  -noout -modulus 2>/dev/null | openssl md5)
+        [ "$c_md" = "$k_md" ] || error "Certificate and private key do not match ($SSL_CERT / $SSL_KEY)."
+        log "TLS certificate: ${c_sub}"
+        log "  expires: ${c_end}   chain certs: $(sudo grep -c 'BEGIN CERTIFICATE' "$SSL_CERT" 2>/dev/null || echo '?')"
+        # A single cert means the intermediate is missing — clients that haven't
+        # cached it will fail to build a trust path.
+        if [ "$(sudo grep -c 'BEGIN CERTIFICATE' "$SSL_CERT" 2>/dev/null || echo 1)" -lt 2 ]; then
+            warn "  Only ONE certificate in the chain file — the intermediate is missing."
+            warn "  Some clients will report 'unable to get local issuer certificate'."
+        fi
     fi
 
     log "Configuring NGINX..."
@@ -195,7 +219,11 @@ deploy() {
         -H "Content-Type: application/json" -d '{"email":"x","password":"y"}' || echo "000")
     web_code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1/ || echo "000")
     # -k because the certificate is self-signed; we're testing the listener, not trust.
-    tls_code=$(curl -sk -o /dev/null -w "%{http_code}" https://127.0.0.1/ || echo "000")
+    # Resolve the hostname to loopback so this exercises the real SNI/vhost path
+    # without depending on the request leaving the box. -k because we're testing
+    # that the listener serves, not that this cert is trusted for 127.0.0.1.
+    tls_code=$(curl -sk -o /dev/null -w "%{http_code}" --resolve "${SERVER_NAME}:443:127.0.0.1" \
+        "https://${SERVER_NAME}/" || echo "000")
     # 400/401 from the login probe means the API is up and validating input.
     [[ "$api_code" =~ ^(400|401)$ ]] && log "API    OK (HTTP $api_code)" || warn "API    unexpected response: $api_code — check 'pm2 logs servicedesk-api'"
     [ "$web_code" = "200" ]         && log "HTTP   OK (HTTP $web_code)" || warn "HTTP   unexpected response: $web_code — check 'sudo nginx -t' and the error log"
@@ -206,8 +234,8 @@ deploy() {
     cat <<EOF
 
 Deployment complete.
-  Internal:  http://${ip:-<server-ip>}/
-  Public:    https://${PUBLIC_IP}/          (self-signed cert — expect a browser warning)
+  Public:    https://${SERVER_NAME}/
+  Internal:  http://${ip:-<server-ip>}/     (plain HTTP by IP — not redirected)
   API:       proxied at /api  ->  127.0.0.1:5000
   Logs:      pm2 logs servicedesk-api   |   sudo tail -f /var/log/nginx/servicedesk.error.log
 
