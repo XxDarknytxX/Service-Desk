@@ -150,7 +150,7 @@ export function makeUserController(pool) {
         const passwordChanged = !!(req.body.password && req.body.password.trim());
         if (passwordChanged) {
           const passwordHash = await bcrypt.hash(req.body.password, 10);
-          updates.push(`password_hash = ?`, `password_changed_at = NOW()`);
+          updates.push(`password_hash = ?`, `password_changed_at = NOW()`, `must_set_password = 0`);
           values.push(passwordHash);
         }
 

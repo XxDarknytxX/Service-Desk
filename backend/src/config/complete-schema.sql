@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash VARCHAR(255) NOT NULL,
   -- JWTs issued before this are rejected (see middleware/auth.js)
   password_changed_at DATETIME NULL,
+  -- 1 until an onboarded user sets their own password (corporate-people-migration.js)
+  must_set_password TINYINT(1) NOT NULL DEFAULT 0,
   full_name VARCHAR(200) NULL,
   title VARCHAR(120) NULL,
   department_id INT UNSIGNED NULL,
@@ -769,7 +771,7 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
   id INT AUTO_INCREMENT PRIMARY KEY,
   user_id INT NOT NULL,
   token_hash CHAR(64) NOT NULL,
-  purpose ENUM('admin_reset','self_service') NOT NULL,
+  purpose ENUM('admin_reset','self_service','onboarding') NOT NULL,
   requested_by INT NULL,
   request_ip VARCHAR(45) NULL,
   expires_at DATETIME NOT NULL,

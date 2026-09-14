@@ -1,4 +1,5 @@
 // src/controllers/hierarchyController.js
+import { setDirectManager, isInStaffDirectory } from "../services/hierarchyService.js";
 const send = {
   ok: (res, data = {}) => res.json(data),
   bad: (res, msg = "Bad request") => res.status(400).json({ error: msg }),
@@ -81,6 +82,13 @@ export function makeHierarchyController(pool) {
         );
         if (custRows.length) return send.bad(res, "Corporate customers can't be placed in the org hierarchy.");
 
+        // Each app's hierarchy is self-contained: this is the INTERNAL chart, so
+        // both people must be internal staff. Corporate reporting lines are set
+        // from the Corporate app (they double as escalation layers there).
+        if (!(await isInStaffDirectory(pool, user_id, "internal")) || !(await isInStaffDirectory(pool, manager_id, "internal"))) {
+          return send.bad(res, "Both people must be internal staff. Corporate reporting lines are managed in the Corporate app.");
+        }
+
         // Check for circular reference - walk up the proposed manager's chain
         // to see if user_id appears anywhere (would create a loop)
         const circularCheck = await checkCircularReference(pool, user_id, manager_id);
@@ -88,11 +96,10 @@ export function makeHierarchyController(pool) {
           return send.bad(res, `Circular reference detected: ${circularCheck.message}`);
         }
 
-        // Delete existing hierarchy for this user
-        await pool.query('DELETE FROM user_hierarchy WHERE user_id = ?', [user_id]);
-
-        // Build new hierarchy chain
-        await buildHierarchyChain(pool, user_id, manager_id);
+        // Re-point the user and rebuild the cached chain for them AND everyone who
+        // reports to them (the old code rebuilt only the user, leaving their
+        // reports' level-2+ rows — which approvals read — pointing at the old chain).
+        await setDirectManager(pool, user_id, manager_id);
 
         return send.ok(res, { success: true, message: "Manager set successfully" });
       } catch (e) {
@@ -106,7 +113,8 @@ export function makeHierarchyController(pool) {
       const userId = Number(req.params.id);
 
       try {
-        await pool.query('DELETE FROM user_hierarchy WHERE user_id = ?', [userId]);
+        // Clearing a manager also shortens the chain of everyone below them.
+        await setDirectManager(pool, userId, null);
         return send.ok(res, { success: true });
       } catch (e) {
         console.error(e);
@@ -129,8 +137,15 @@ export function makeHierarchyController(pool) {
           LEFT JOIN team_members tm ON tm.user_id = u.id
           LEFT JOIN teams t ON t.id = tm.team_id
           WHERE u.is_active = 1
+            AND NOT EXISTS (SELECT 1 FROM team_members tmc JOIN teams tc ON tc.id = tmc.team_id
+                             WHERE tmc.user_id = u.id AND tc.workspace = 'corporate')
+            AND NOT EXISTS (SELECT 1 FROM user_roles urc JOIN roles rc ON rc.id = urc.role_id
+                             WHERE urc.user_id = u.id AND rc.name = 'corporate_customer')
           ORDER BY d.name, u.full_name
         `);
+        // Internal chart only: corporate staff have their own chart in the
+        // Corporate app, and links into it are dropped so internal people whose
+        // manager is corporate (none today) would simply appear as roots.
 
         // Get all hierarchy relationships
         const [hierarchy] = await pool.query(`
@@ -162,13 +177,20 @@ export function makeHierarchyController(pool) {
           }
         });
 
+        const internalIds = new Set(users.map((u) => u.id));
+        const internalHierarchy = hierarchy.filter((h) => internalIds.has(h.user_id) && internalIds.has(h.manager_id));
+        for (const k of Object.keys(reportCounts)) delete reportCounts[k];
+        internalHierarchy.forEach((h) => {
+          if (h.level === 1) reportCounts[h.manager_id] = (reportCounts[h.manager_id] || 0) + 1;
+        });
+
         // Add report counts and roles to users
         users.forEach(u => {
           u.report_count = reportCounts[u.id] || 0;
           u.roles = rolesMap[u.id] || [];
         });
 
-        return send.ok(res, { users, hierarchy });
+        return send.ok(res, { users, hierarchy: internalHierarchy });
       } catch (e) {
         console.error(e);
         return send.serverErr(res);
@@ -239,33 +261,4 @@ async function checkCircularReference(pool, userId, proposedManagerId) {
   }
 
   return { isCircular: false };
-}
-
-// Helper function to build hierarchy chain recursively
-async function buildHierarchyChain(pool, userId, managerId, level = 1, visited = new Set()) {
-  // Prevent infinite loops
-  if (visited.has(managerId) || level > 10) {
-    return;
-  }
-
-  visited.add(managerId);
-
-  // Insert direct manager relationship
-  await pool.query(
-    `INSERT INTO user_hierarchy (user_id, manager_id, level, is_active)
-     VALUES (?, ?, ?, 1)`,
-    [userId, managerId, level]
-  );
-
-  // Get manager's manager and continue building chain
-  const [managerChain] = await pool.query(
-    `SELECT manager_id FROM user_hierarchy
-     WHERE user_id = ? AND level = 1 AND is_active = 1
-     LIMIT 1`,
-    [managerId]
-  );
-
-  if (managerChain.length > 0 && managerChain[0].manager_id) {
-    await buildHierarchyChain(pool, userId, managerChain[0].manager_id, level + 1, visited);
-  }
 }

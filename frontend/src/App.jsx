@@ -29,6 +29,8 @@ import Forms from "./pages/forms";
 import FormPreview from "./pages/formPreview";
 import PublicForm from "./pages/publicForm";
 import { ForgotPassword, ResetPassword } from "./pages/passwordReset";
+import CorporatePeople from "./pages/corporatePeople";
+import CorporateHierarchy from "./pages/corporateHierarchy";
 import { useEffect } from "react";
 
 function ProtectedRoute({ children }) {
@@ -159,7 +161,12 @@ export default function App() {
               <Route path="/corporate/tickets" element={page(<Keyed><Tickets /></Keyed>, C)} />
               <Route path="/corporate/tickets/new" element={<NewTicketRedirect base="/corporate" />} />
               <Route path="/corporate/tickets/:id" element={page(<Keyed><TicketDetail /></Keyed>, C)} />
-              <Route path="/corporate/customers" element={page(<Keyed><Users /></Keyed>, { ...C, roles: ["admin", "agent"] })} />
+              {/* Corporate people follow the corporate model (customers + delivery
+                  staff, positions from teams, onboarding emails) — not the
+                  internal Users page. */}
+              <Route path="/corporate/people" element={page(<CorporatePeople />, { ...C, roles: ["admin", "agent"] })} />
+              <Route path="/corporate/customers" element={<Navigate to="/corporate/people" replace />} />
+              <Route path="/corporate/hierarchy" element={page(<CorporateHierarchy />, { ...C, roles: ["admin", "agent"] })} />
               <Route path="/corporate/teams" element={page(<Keyed><Teams /></Keyed>, { ...C, roles: ["admin"] })} />
               <Route path="/corporate/reports" element={page(<Keyed><Reports /></Keyed>, { ...C, roles: ["admin", "agent"] })} />
               <Route path="/corporate/knowledge-base" element={page(<Keyed><KnowledgeBase /></Keyed>, C)} />

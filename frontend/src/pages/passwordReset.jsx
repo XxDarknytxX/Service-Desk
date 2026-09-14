@@ -26,7 +26,7 @@ function cn(...parts) {
 const MIN_LENGTH = 8;
 
 /** Mirrors the login page's canvas so the reset flow reads as the same place. */
-function AuthShell({ children }) {
+function AuthShell({ children, onboarding = false }) {
   const { theme } = useTheme();
   const dark = theme === "dark";
 
@@ -58,13 +58,14 @@ function AuthShell({ children }) {
             <Icon name="key" size={22} className="text-white/85" />
           </span>
           <h1 className="text-4xl xl:text-[44px] font-semibold tracking-tight leading-[1.08] text-white">
-            Get back into
+            {onboarding ? "Welcome to the" : "Get back into"}
             <br />
-            your account.
+            {onboarding ? "Service Desk." : "your account."}
           </h1>
           <p className="mt-5 text-[15px] leading-relaxed text-white/55">
-            Reset links are sent to the email address on your Service Desk account. Each link
-            works once and expires automatically.
+            {onboarding
+              ? "Your account has been set up. Choose a password to activate it — this link works once and expires automatically."
+              : "Reset links are sent to the email address on your Service Desk account. Each link works once and expires automatically."}
           </p>
         </div>
         <p className="text-[11px] text-white/25">Internal system · Authorized Vodafone Fiji personnel only</p>
@@ -273,6 +274,10 @@ export function ResetPassword() {
   const [token] = useState(readTokenFromFragment);
   const [status, setStatus] = useState(token ? "checking" : "invalid"); // checking | ready | invalid | done
   const [email, setEmail] = useState("");
+  // An onboarding link sets a NEW account's first password — greet the person
+  // rather than talk about resetting a password they never had.
+  const [onboarding, setOnboarding] = useState(false);
+  const [fullName, setFullName] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [show, setShow] = useState(false);
@@ -290,6 +295,8 @@ export function ResetPassword() {
         if (cancelled) return;
         if (data.valid) {
           setEmail(data.email || "");
+          setOnboarding(data.purpose === "onboarding");
+          setFullName(data.name || "");
           setStatus("ready");
         } else {
           setStatus("invalid");
@@ -329,7 +336,7 @@ export function ResetPassword() {
   }
 
   return (
-    <AuthShell>
+    <AuthShell onboarding={onboarding}>
       {({ dark }) => {
         const inputCls = inputClsFor(dark);
 
@@ -361,10 +368,11 @@ export function ResetPassword() {
         if (status === "done") {
           return (
             <>
-              <Heading dark={dark} title="Password updated" />
+              <Heading dark={dark} title={onboarding ? "Account activated" : "Password updated"} />
               <Notice dark={dark} tone="success" icon="checkCircle" title="You're all set">
-                Your password has been changed and any other signed-in sessions were signed out. We've emailed you a
-                confirmation.
+                {onboarding
+                  ? "Your password is set and your account is ready. Sign in with your email and the password you just chose."
+                  : "Your password has been changed and any other signed-in sessions were signed out. We've emailed you a confirmation."}
               </Notice>
               <Button size="lg" className="w-full mt-6" onClick={() => navigate("/login", { replace: true })}>
                 Sign in
@@ -377,8 +385,14 @@ export function ResetPassword() {
           <>
             <Heading
               dark={dark}
-              title="Set a new password"
-              subtitle={email ? <>For <strong className={dark ? "text-white/80" : "text-black/70"}>{email}</strong></> : null}
+              title={onboarding ? `Welcome${fullName ? `, ${fullName.split(" ")[0]}` : ""}` : "Set a new password"}
+              subtitle={
+                email
+                  ? onboarding
+                    ? <>Choose a password to activate <strong className={dark ? "text-white/80" : "text-black/70"}>{email}</strong></>
+                    : <>For <strong className={dark ? "text-white/80" : "text-black/70"}>{email}</strong></>
+                  : null
+              }
             />
             <form onSubmit={handleSubmit} className="mt-8 space-y-5" noValidate>
               {/* Lets password managers associate the new password with the account. */}
@@ -464,7 +478,9 @@ export function ResetPassword() {
               {error && <p className="text-sm text-red-500">{error}</p>}
 
               <Button type="submit" size="lg" loading={loading} disabled={!allOk || !matches} className="w-full">
-                {loading ? "Updating..." : "Update password"}
+                {onboarding
+                  ? (loading ? "Activating..." : "Activate account")
+                  : (loading ? "Updating..." : "Update password")}
               </Button>
             </form>
             <BackToLogin dark={dark} />

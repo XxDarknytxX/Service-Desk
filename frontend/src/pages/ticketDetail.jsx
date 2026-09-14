@@ -65,6 +65,10 @@ export default function TicketDetail() {
   const [auditTrail, setAuditTrail] = useState([]);
   const [tags, setTags] = useState([]);
   const [slaData, setSlaData] = useState(null);
+  // Escalation ladder from the reporting hierarchy (staff only): who holds the
+  // request now, the layers it passed through, who's next, and whether the
+  // viewer may escalate / act as the current approver.
+  const [escalation, setEscalation] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("comments");
   const [actionLoading, setActionLoading] = useState(null);
@@ -243,6 +247,7 @@ export default function TicketDetail() {
       setAuditTrail(auditRes.status === "fulfilled" ? auditRes.value.items || [] : []);
       setTags(tagsRes.status === "fulfilled" ? tagsRes.value.items || [] : []);
       setSlaData(slaRes.status === "fulfilled" && slaRes.value.sla ? slaRes.value.sla : null);
+      setEscalation(slaRes.status === "fulfilled" ? slaRes.value.escalation || null : null);
       setApprovalData(approvalsRes.status === "fulfilled" && approvalsRes.value ? approvalsRes.value.approvals || [] : []);
       setTicketTeams(teamsRes.status === "fulfilled" ? teamsRes.value.teams || [] : []);
       setTemplateResponse(
@@ -348,8 +353,8 @@ export default function TicketDetail() {
   const handleEscalateToManager = async () => {
     setActionLoading("escalateManager");
     try {
-      await api(`/tickets/${id}/escalate-to-manager`, { method: "POST" });
-      toast.success("Escalated to your manager");
+      const res = await api(`/tickets/${id}/escalate-to-manager`, { method: "POST" });
+      toast.success(res.managerName ? `Escalated to ${res.managerName} (layer ${res.layer})` : "Escalated to your manager");
       await loadTicketData();
     } catch (err) {
       toast.error(err.message || "Failed to escalate to manager");
@@ -1007,13 +1012,22 @@ export default function TicketDetail() {
                     NOC triage queue. */}
                 {canWork && !inTriageQueue && ["open", "pending", "in_progress", "on_hold"].includes(ticket.status_key) && (
                   withManager ? (
-                    /* With the manager: only the manager (or admin) acts — hand it
-                       back to an engineer (with a comment) or resolve it. */
-                    isManager && (
+                    /* Escalated: only the manager holding the CURRENT layer (or an
+                       admin) acts — hand it back to an engineer (with a comment),
+                       resolve it, or pass it up to the next layer. */
+                    (escalation?.viewer_is_approver || user?.roles?.includes("admin")) && (
                       <>
+                        {escalation?.next_for_viewer && (
+                          <ToolbarAction
+                            icon="arrowUp"
+                            label={`Escalate to ${escalation.next_for_viewer.full_name.split(" ")[0]}`}
+                            onClick={handleEscalateToManager}
+                            loading={actionLoading === "escalateManager"}
+                          />
+                        )}
                         <ToolbarAction
                           icon="users"
-                          label="Reassign back"
+                          label="Hand back"
                           onClick={handleOpenManagerReassign}
                         />
                         <ToolbarAction
@@ -1065,10 +1079,13 @@ export default function TicketDetail() {
                           loading={actionLoading === "on_hold"}
                         />
                       )}
-                      {["open", "pending", "in_progress"].includes(ticket.status_key) && !isManager && ticket.team_lead_id && (
+                      {/* Escalate up the reporting hierarchy: the button names who
+                          it goes to (L1 = the viewer's manager, or the team manager
+                          if no reporting line is set). Hidden for the top of the chain. */}
+                      {["open", "pending", "in_progress"].includes(ticket.status_key) && escalation?.viewer_can_escalate && escalation.next_for_viewer && (
                         <ToolbarAction
                           icon="arrowUp"
-                          label="Escalate to Manager"
+                          label={`Escalate to ${escalation.next_for_viewer.full_name.split(" ")[0]}`}
                           onClick={handleEscalateToManager}
                           loading={actionLoading === "escalateManager"}
                         />
@@ -2181,7 +2198,9 @@ export default function TicketDetail() {
                     </span>
                     <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">Manager SLA</h2>
                   </span>
-                  <span className="text-[11px] text-[var(--fg-muted)] truncate">{slaData.manager_name || "Manager"}</span>
+                  <span className="text-[11px] text-[var(--fg-muted)] truncate">
+                    {slaData.manager_layer ? `L${slaData.manager_layer} · ` : ""}{slaData.manager_name || "Manager"}
+                  </span>
                 </div>
                 <div className="p-4 space-y-2.5">
                   {(() => {
@@ -2189,7 +2208,7 @@ export default function TicketDetail() {
                     const breached = !!slaData.manager_breached;
                     const metLate = met && breached;
                     const r = getSlaRemaining(slaData.manager_due_at, (!met && breached) ? null : slaData.manager_remaining_ms);
-                    const outcomeLabel = slaData.manager_outcome === "resolved" ? "Resolved" : slaData.manager_outcome === "reassigned_back" ? "Handed back" : null;
+                    const outcomeLabel = slaData.manager_outcome === "resolved" ? "Resolved" : slaData.manager_outcome === "reassigned_back" ? "Handed back" : slaData.manager_outcome === "escalated" ? "Escalated up" : null;
                     return (
                       <div className="flex items-center justify-between">
                         <span className="text-xs text-[var(--fg-muted)]">{met && outcomeLabel ? outcomeLabel : "Review"}</span>
@@ -2206,6 +2225,50 @@ export default function TicketDetail() {
                     );
                   })()}
                 </div>
+              </div>
+            )}
+
+            {/* Escalation chain — the approval layers from the reporting
+                hierarchy: layers already passed, who holds it now, who's next. */}
+            {isAgent && escalation && (escalation.layers.length > 0 || escalation.upcoming.length > 0) && (
+              <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-card)] overflow-hidden animate-fade-up" style={{ animationDelay: "195ms" }}>
+                <div className="px-5 py-4 border-b border-[var(--border-default)] flex items-center gap-2.5">
+                  <span className="h-8 w-8 rounded-lg bg-blue-500/10 text-blue-500 flex items-center justify-center shrink-0">
+                    <Icon name="sitemap" size={16} />
+                  </span>
+                  <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">Escalation chain</h2>
+                </div>
+                <ol className="p-4 space-y-2">
+                  {[
+                    ...escalation.layers.map((l) => ({ ...l, id: l.user_id })),
+                    ...escalation.upcoming.map((u) => ({ ...u, state: "upcoming" })),
+                  ].map((step, i) => {
+                    const meta = {
+                      current: { tone: "violet", label: "Reviewing now" },
+                      passed: { tone: "slate", label: "Escalated up" },
+                      reassigned_back: { tone: "emerald", label: "Handed back" },
+                      resolved: { tone: "emerald", label: "Resolved" },
+                      upcoming: { tone: "slate", label: "Next approver" },
+                    }[step.state] || { tone: "slate", label: step.state };
+                    return (
+                      <li key={`${step.layer}-${step.id}-${i}`} className="flex items-center gap-3">
+                        <span className={`h-7 w-7 shrink-0 rounded-full flex items-center justify-center text-[11px] font-semibold ${step.state === "current" ? "bg-violet-500 text-white" : "bg-[var(--bg-surface)] text-[var(--fg-secondary)] border border-[var(--border-default)]"}`}>
+                          L{step.layer}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className={`text-sm truncate ${step.state === "upcoming" ? "text-[var(--fg-secondary)]" : "font-medium text-[var(--fg-primary)]"}`}>{step.full_name}</p>
+                          {step.title && <p className="text-[11px] text-[var(--fg-muted)] truncate">{step.title}</p>}
+                        </div>
+                        <Badge tone={meta.tone} size="sm">{meta.label}</Badge>
+                      </li>
+                    );
+                  })}
+                </ol>
+                {escalation.outside && (
+                  <p className="px-5 pb-4 -mt-1 text-[11px] text-[var(--fg-muted)]">
+                    The chain ends here — the next manager ({escalation.outside.full_name}) is outside the {ticketIsCorporate ? "corporate" : "internal"} desk.
+                  </p>
+                )}
               </div>
             )}
 

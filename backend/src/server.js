@@ -48,6 +48,8 @@ import { makeNotificationController } from "./controllers/notificationController
 import { makeNotificationRouter } from "./routes/notifications.js";
 import { makeSmtpController } from "./controllers/smtpController.js";
 import { makeSmtpRouter } from "./routes/smtp.js";
+import { makeCorporatePeopleController } from "./controllers/corporatePeopleController.js";
+import { makeCorporatePeopleRouter } from "./routes/corporatePeople.js";
 import { makeSlaService } from "./services/slaService.js";
 import { processAutoApprovals } from "./services/approvalWorkflow.js";
 import { autoCloseSolvedTickets } from "./services/autoCloseService.js";
@@ -194,6 +196,7 @@ const templateApprovalCtrl = makeTemplateApprovalController(pool);
 const formsCtrl = makeFormController(pool);
 const notifications = makeNotificationController(pool);
 const smtp = makeSmtpController(pool);
+const corporatePeople = makeCorporatePeopleController(pool);
 
 // Routes
 app.use("/api", makeAuthRouter(auth));
@@ -217,6 +220,7 @@ app.use("/api", makeTemplateRouter(templateCtrl));
 app.use("/api", makeFormsRouter(formsCtrl));
 app.use("/api", makeNotificationRouter(notifications));
 app.use("/api", makeSmtpRouter(smtp));
+app.use("/api", makeCorporatePeopleRouter(corporatePeople));
 
 // Health check
 app.get("/health", async (_req, res) => {

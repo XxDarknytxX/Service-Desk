@@ -23,7 +23,7 @@ const send = {
 
 async function findUserByEmail(pool, email) {
   const [rows] = await pool.query(
-    `SELECT id, email, password_hash, full_name, is_active
+    `SELECT id, email, password_hash, full_name, is_active, must_set_password
      FROM users WHERE email = ?`,
     [email]
   );
@@ -80,7 +80,14 @@ export function makeAuthController(pool) {
         if (!user.is_active) return send.unauthorized(res, "User disabled");
 
         const ok = await bcrypt.compare(password, user.password_hash);
-        if (!ok) return send.bad(res, "Invalid credentials");
+        if (!ok) {
+          // An invited account has a random password nobody knows — tell them how to
+          // get in rather than letting them retry a password that can never work.
+          if (user.must_set_password) {
+            return send.bad(res, "Your account isn't activated yet. Use the link in your welcome email to set your password, or choose \"Forgot password?\".");
+          }
+          return send.bad(res, "Invalid credentials");
+        }
 
         const roles = await getUserRoles(pool, user.id);
         const teamInfo = await fetchTeamModules(pool, user.id);

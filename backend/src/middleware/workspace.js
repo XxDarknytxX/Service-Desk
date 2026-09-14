@@ -180,6 +180,16 @@ export async function getCorporateQueueTeamIds(pool) {
   return rows.map((r) => r.id);
 }
 
+/** Is this user a member of a Service Delivery team (SDM / SDE)? */
+export async function isServiceDeliveryMember(pool, userId) {
+  const [[row]] = await pool.query(
+    `SELECT 1 AS ok FROM team_members tm JOIN teams t ON t.id = tm.team_id
+      WHERE t.corporate_role = 'service_delivery' AND tm.user_id = ? LIMIT 1`,
+    [userId]
+  );
+  return !!row;
+}
+
 /** Active members of Service Delivery teams (replaces title = 'Service Delivery Manager'). */
 export async function getServiceDeliveryUserIds(pool, excludeUserId = null) {
   const [rows] = await pool.query(

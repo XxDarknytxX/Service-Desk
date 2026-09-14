@@ -9,6 +9,7 @@ import {
   getCorporateQueueTeamIds,
   getServiceDeliveryUserIds,
 } from "../middleware/workspace.js";
+import { getEscalationChain } from "../services/hierarchyService.js";
 
 const send = {
   ok: (res, data = {}) => res.json(data),
@@ -322,39 +323,60 @@ async function meetTriageSla(pool, ticketId, actorId) {
   }
 }
 
-// Start (or restart) the manager review clock when a ticket is escalated to its
-// team manager. Upserted on ticket_id so a re-escalation restarts it.
-async function startManagerSla(pool, ticketId, priorityId, managerId) {
+// ── Layered escalation ──────────────────────────────────────────────────────
+// Escalation walks the reporting hierarchy: engineer → L1 manager → L2 → L3…
+// Each layer gets its own review clock (one ticket_manager_slas row per layer).
+// At most ONE row per ticket is open (met_at IS NULL): the layer currently
+// holding the request. It closes as 'escalated' (passed up), 'reassigned_back'
+// (handed back to the engineer, team SLA resumes) or 'resolved'.
+
+/** The open manager-review row — the layer currently holding the ticket — or null. */
+async function getOpenManagerSla(pool, ticketId) {
+  const [[row]] = await pool.query(
+    `SELECT m.id, m.manager_id, m.layer, m.from_user_id, m.due_at, u.full_name AS manager_name
+       FROM ticket_manager_slas m LEFT JOIN users u ON u.id = m.manager_id
+      WHERE m.ticket_id = ? AND m.met_at IS NULL
+      ORDER BY m.id DESC LIMIT 1`,
+    [ticketId]
+  );
+  return row || null;
+}
+
+// Start a manager review clock for one escalation layer.
+async function startManagerSla(pool, ticketId, priorityId, managerId, { layer = 1, fromUserId = null } = {}) {
   try {
     const minutes = MANAGER_SLA_MINUTES[priorityId] || DEFAULT_MANAGER_MINUTES;
     const dueAt = new Date(Date.now() + minutes * 60000);
     await pool.query(
-      `INSERT INTO ticket_manager_slas (ticket_id, manager_id, priority_id, target_minutes, due_at, started_at, met_at, breached, outcome)
-       VALUES (?, ?, ?, ?, ?, NOW(), NULL, 0, 'pending')
-       ON DUPLICATE KEY UPDATE manager_id = VALUES(manager_id), priority_id = VALUES(priority_id),
-         target_minutes = VALUES(target_minutes), due_at = VALUES(due_at), started_at = NOW(),
-         met_at = NULL, breached = 0, outcome = 'pending', updated_at = NOW()`,
-      [ticketId, managerId || null, priorityId || null, minutes, dueAt]
+      `INSERT INTO ticket_manager_slas
+         (ticket_id, manager_id, layer, from_user_id, priority_id, target_minutes, due_at, started_at, met_at, breached, outcome)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NULL, 0, 'pending')`,
+      [ticketId, managerId || null, layer, fromUserId, priorityId || null, minutes, dueAt]
     );
-    await insertEvent(pool, { ticketId, actorId: null, type: "manager_sla.started", payload: { target_minutes: minutes, due_at: dueAt, manager_id: managerId || null } });
+    await insertEvent(pool, {
+      ticketId, actorId: null, type: "manager_sla.started",
+      payload: { target_minutes: minutes, due_at: dueAt, manager_id: managerId || null, layer },
+    });
   } catch (e) {
     console.error("Manager SLA start error:", e);
   }
 }
 
-// Mark the manager clock met when the manager acts (reassigns back / resolves).
-// outcome ∈ {reassigned_back, resolved}. No-op if there's no open manager SLA.
+// Close the open layer's clock. outcome ∈ {reassigned_back, resolved, escalated}.
+// No-op if there's no open manager SLA.
 async function meetManagerSla(pool, ticketId, outcome, actorId) {
   try {
+    const open = await getOpenManagerSla(pool, ticketId);
+    if (!open) return false;
     const [res] = await pool.query(
       `UPDATE ticket_manager_slas SET met_at = NOW(), outcome = ?, updated_at = NOW()
-       WHERE ticket_id = ? AND met_at IS NULL`,
-      [outcome, ticketId]
+        WHERE id = ? AND met_at IS NULL`,
+      [outcome, open.id]
     );
     if (res.affectedRows > 0) {
-      const [[row]] = await pool.query(`SELECT due_at, breached FROM ticket_manager_slas WHERE ticket_id = ?`, [ticketId]);
+      const [[row]] = await pool.query(`SELECT due_at, breached FROM ticket_manager_slas WHERE id = ?`, [open.id]);
       const onTime = row ? (!row.breached && new Date() <= new Date(row.due_at)) : null;
-      await insertEvent(pool, { ticketId, actorId, type: "manager_sla.met", payload: { outcome, on_time: onTime } });
+      await insertEvent(pool, { ticketId, actorId, type: "manager_sla.met", payload: { outcome, on_time: onTime, layer: open.layer } });
       return true;
     }
     return false;
@@ -362,6 +384,26 @@ async function meetManagerSla(pool, ticketId, outcome, actorId) {
     console.error("Manager SLA meet error:", e);
     return false;
   }
+}
+
+/**
+ * Who a ticket escalates to next, from a given person, inside the ticket's app.
+ * The reporting hierarchy decides; when someone has no manager set in their
+ * app yet, the ticket's team manager (lead) is the fallback so escalation keeps
+ * working before reporting lines are filled in.
+ * Returns { next: {id, full_name, title} | null, outside: {...} | null }.
+ */
+async function resolveNextApprover(pool, fromUserId, teamId, workspace, { allowTeamLeadFallback = true } = {}) {
+  const { chain, outside } = await getEscalationChain(pool, fromUserId, workspace);
+  if (chain.length) return { next: chain[0], outside };
+  if (allowTeamLeadFallback) {
+    const leadId = await getTeamLeadId(pool, teamId);
+    if (leadId && leadId !== Number(fromUserId)) {
+      const [[lead]] = await pool.query("SELECT id, full_name, title FROM users WHERE id = ? AND is_active = 1", [leadId]);
+      if (lead) return { next: lead, outside };
+    }
+  }
+  return { next: null, outside };
 }
 
 // Is there an open (unmet) manager SLA for this ticket? (i.e. it's with the manager)
@@ -770,7 +812,7 @@ export function makeTicketController(pool) {
       try {
         // First check permission - user must be agent or requester of this ticket
         const [ticketRows] = await pool.query(
-          `SELECT requester_id FROM tickets WHERE id = ?`,
+          `SELECT requester_id, assignee_id, team_id, workspace FROM tickets WHERE id = ?`,
           [ticketId]
         );
         const ticket = ticketRows[0];
@@ -799,16 +841,67 @@ export function makeTicketController(pool) {
 
         // Manager review SLA — its own clock, started when the ticket is escalated
         // to the team manager and met when they reassign back / resolve.
+        // One row per escalation layer; show the layer holding it now, else the
+        // most recent one.
         const [managerRows] = await pool.query(
-          `SELECT m.target_minutes, m.due_at, m.met_at, m.breached, m.started_at, m.outcome, m.manager_id, u.full_name AS manager_name
+          `SELECT m.id, m.layer, m.target_minutes, m.due_at, m.met_at, m.breached, m.started_at, m.outcome,
+                  m.manager_id, m.from_user_id, u.full_name AS manager_name, u.title AS manager_title
            FROM ticket_manager_slas m LEFT JOIN users u ON u.id = m.manager_id
-           WHERE m.ticket_id = ?`,
+           WHERE m.ticket_id = ?
+           ORDER BY m.id ASC`,
           [ticketId]
         );
-        const manager = managerRows[0] || null;
+        const openManagerRow = managerRows.find((m) => !m.met_at) || null;
+        const manager = openManagerRow || managerRows[managerRows.length - 1] || null;
+
+        // Escalation chain — staff only (a customer never sees internal reporting
+        // lines). The current episode is every layer since the latest escalation
+        // began at layer 1; "upcoming" is the rest of the hierarchy above whoever
+        // holds it now; `next_for_viewer` powers the Escalate button.
+        let escalation = null;
+        if (isAgent(req.user)) {
+          const lastStart = managerRows.map((m) => m.layer).lastIndexOf(1);
+          const episode = lastStart >= 0 ? managerRows.slice(lastStart) : [];
+          const episodeOpen = episode.some((m) => !m.met_at);
+          const stateOf = (m) => (!m.met_at ? "current" : m.outcome === "escalated" ? "passed" : m.outcome);
+          const anchor = episodeOpen ? openManagerRow.manager_id : ticket.assignee_id;
+          const upcoming = anchor ? await getEscalationChain(pool, anchor, ticket.workspace) : { chain: [], outside: null };
+          const baseLayer = episodeOpen ? openManagerRow.layer : 0;
+
+          const viewerIsAdmin = (req.user.roles || []).includes("admin");
+          let nextForViewer = null;
+          let viewerCanEscalate = false;
+          if (openManagerRow) {
+            viewerCanEscalate = viewerIsAdmin || openManagerRow.manager_id === req.user.id;
+            if (viewerCanEscalate) {
+              const { next } = await resolveNextApprover(pool, openManagerRow.manager_id, ticket.team_id, ticket.workspace, { allowTeamLeadFallback: false });
+              nextForViewer = next ? { ...next, layer: openManagerRow.layer + 1 } : null;
+            }
+          } else {
+            const base = viewerIsAdmin && ticket.assignee_id ? ticket.assignee_id : req.user.id;
+            const { next } = await resolveNextApprover(pool, base, ticket.team_id, ticket.workspace);
+            nextForViewer = next && next.id !== req.user.id ? { ...next, layer: 1 } : null;
+            viewerCanEscalate = !!nextForViewer;
+          }
+
+          escalation = {
+            open: !!openManagerRow,
+            current_layer: openManagerRow ? openManagerRow.layer : null,
+            current_approver_id: openManagerRow ? openManagerRow.manager_id : null,
+            layers: episode.map((m) => ({
+              layer: m.layer, user_id: m.manager_id, full_name: m.manager_name, title: m.manager_title,
+              state: stateOf(m), started_at: m.started_at, met_at: m.met_at,
+            })),
+            upcoming: upcoming.chain.map((c, i) => ({ ...c, layer: baseLayer + i + 1 })),
+            outside: upcoming.outside ? { full_name: upcoming.outside.full_name, title: upcoming.outside.title } : null,
+            next_for_viewer: nextForViewer,
+            viewer_can_escalate: viewerCanEscalate,
+            viewer_is_approver: !!openManagerRow && openManagerRow.manager_id === req.user.id,
+          };
+        }
 
         // Nothing to show only if there is no team SLA, no triage SLA, and no manager SLA.
-        if (rows.length === 0 && !triage && !manager) return send.ok(res, { sla: null });
+        if (rows.length === 0 && !triage && !manager) return send.ok(res, { sla: null, escalation });
 
         const sla = rows[0] || null;
         const now = new Date();
@@ -873,6 +966,8 @@ export function makeTicketController(pool) {
             manager_started_at: manager ? manager.started_at : null,
             manager_outcome: manager ? manager.outcome : null,
             manager_name: manager ? manager.manager_name : null,
+            manager_id: manager ? manager.manager_id : null,
+            manager_layer: manager ? manager.layer : null,
             manager_remaining_ms: managerRemainingMs,
             manager_open: !!manager && !manager.met_at,
             manager_status: manager
@@ -880,7 +975,8 @@ export function makeTicketController(pool) {
                  : (manager.breached || managerRemainingMs === 0) ? "breached"
                  : (managerRemainingMs !== null && managerRemainingMs < 600000) ? "at_risk" : "on_track")
               : null,
-          }
+          },
+          escalation,
         });
       } catch (e) {
         console.error(e);
@@ -1529,14 +1625,12 @@ export function makeTicketController(pool) {
             if (!isAdmin && !isAssignee && !(await isTeamMember(pool, req.user.id, current.team_id))) {
               return send.forbidden(res, "You can only resolve or close a ticket that's in your team's queue.");
             }
-            // While the ticket is with the manager (escalated), only the manager
-            // (lead) or an admin may resolve it — not a different engineer who
-            // happens to be on the team. Mirrors the reassign-back gate.
-            if (!isAdmin && await hasOpenManagerSla(pool, ticketId)) {
-              const leadId = await getTeamLeadId(pool, current.team_id);
-              if (req.user.id !== leadId) {
-                return send.forbidden(res, "This ticket is with the manager — only they can resolve it.");
-              }
+            // While the ticket is escalated, only the manager at the CURRENT layer
+            // (or an admin) may resolve it — not an engineer on the team, and not
+            // a lower layer that already passed it up. Mirrors the hand-back gate.
+            const openReview = !isAdmin ? await getOpenManagerSla(pool, ticketId) : null;
+            if (openReview && req.user.id !== openReview.manager_id) {
+              return send.forbidden(res, `This ticket is with ${openReview.manager_name || "the manager"} — only they can resolve it.`);
             }
           }
 
@@ -1955,15 +2049,23 @@ export function makeTicketController(pool) {
     },
 
     // POST /api/tickets/:id/escalate-to-manager
-    // A support engineer hands the ticket to the team manager (lead) to review and,
-    // if needed, freeze the SLA — then the manager reassigns it back.
+    // POST /api/tickets/:id/escalate-to-manager
+    // Escalation walks the reporting hierarchy, one layer at a time:
+    //  • From the team (no open review): the engineer — or, for an admin, the
+    //    current assignee — hands it to THEIR direct manager (L1). The team SLA
+    //    freezes and the L1 review clock starts.
+    //  • From a manager (an open review): only the manager currently holding it
+    //    may pass it to THEIR manager (L2, L3…). Their clock closes as
+    //    'escalated' and the next layer's clock starts; the team SLA stays frozen.
+    // Layers never leave the ticket's app: the chain stops at the corporate /
+    // internal boundary. With no reporting line set, the team manager is L1.
     escalateToManager: async (req, res) => {
       if (!isAgent(req.user)) return send.forbidden(res);
       const ticketId = Number(req.params.id);
       const { reason } = req.body;
       try {
         const [[t]] = await pool.query(
-          `SELECT t.team_id, t.priority_id, t.ticket_number, t.subject, t.assignee_id, s.\`key\` AS status_key
+          `SELECT t.team_id, t.priority_id, t.ticket_number, t.subject, t.assignee_id, t.workspace, s.\`key\` AS status_key
            FROM tickets t JOIN ticket_statuses s ON s.id = t.status_id WHERE t.id = ?`, [ticketId]
         );
         if (!t) return send.notFound(res, "Ticket not found");
@@ -1974,29 +2076,61 @@ export function makeTicketController(pool) {
           return send.bad(res, "Only an open ticket can be escalated to the manager.");
         }
 
-        // You can only escalate a ticket that's in your own team's queue — e.g. NOC
-        // can't escalate a ticket it already routed to another team.
         const escIsAdmin = (req.user.roles || []).includes("admin");
-        if (!escIsAdmin && !(await isTeamMember(pool, req.user.id, t.team_id))) {
-          return send.forbidden(res, "You can only act on a ticket that's in your team's queue.");
+        const desk = t.workspace === "corporate" ? "Corporate" : "Internal";
+        const open = await getOpenManagerSla(pool, ticketId);
+        let fromUserId;
+        let layer;
+        let next;
+        let outside;
+
+        if (open) {
+          // Passing it further up — the current layer's call.
+          if (!escIsAdmin && open.manager_id !== req.user.id) {
+            return send.forbidden(res, `This request is with ${open.manager_name || "a manager"} — only they can escalate it further.`);
+          }
+          fromUserId = open.manager_id;
+          ({ next, outside } = await resolveNextApprover(pool, fromUserId, t.team_id, t.workspace, { allowTeamLeadFallback: false }));
+          if (!next) {
+            const holder = open.manager_name || "This manager";
+            return send.bad(res, outside
+              ? `${holder} is the top of the ${desk} escalation chain (they report to ${outside.full_name}, outside the ${desk} desk). Resolve it or hand it back.`
+              : `${holder} is the top of the ${desk} escalation chain. Resolve it or hand it back.`);
+          }
+          layer = (open.layer || 1) + 1;
+        } else {
+          // You can only escalate a ticket that's in your own team's queue — e.g. NOC
+          // can't escalate a ticket it already routed to another team.
+          if (!escIsAdmin && !(await isTeamMember(pool, req.user.id, t.team_id))) {
+            return send.forbidden(res, "You can only act on a ticket that's in your team's queue.");
+          }
+          fromUserId = escIsAdmin && t.assignee_id ? t.assignee_id : req.user.id;
+          ({ next, outside } = await resolveNextApprover(pool, fromUserId, t.team_id, t.workspace));
+          if (!next) {
+            return send.bad(res, fromUserId === req.user.id
+              ? `There's no one above you in the ${desk} hierarchy — you can hold or resolve this ticket directly.`
+              : `No manager to escalate to — set a reporting line in the ${desk} hierarchy or a team manager.`);
+          }
+          layer = 1;
+        }
+        if (next.id === req.user.id && !escIsAdmin) {
+          return send.bad(res, "You're the next approver on this ticket — act on it directly.");
         }
 
-        const leadId = await getTeamLeadId(pool, t.team_id);
-        if (!leadId) return send.bad(res, "This ticket's team has no manager set to escalate to.");
-        if (leadId === req.user.id) return send.bad(res, "You are the team manager — you can hold this ticket directly.");
+        if (open) {
+          await meetManagerSla(pool, ticketId, "escalated", req.user.id);
+        } else {
+          // Freeze the engineer's (team) SLA while the manager chain reviews.
+          await pauseTicketSla(pool, ticketId, null);
+        }
 
-        // Hand the ticket to the manager.
-        await pool.query("UPDATE tickets SET assignee_id = ? WHERE id = ?", [leadId, ticketId]);
+        await pool.query("UPDATE tickets SET assignee_id = ? WHERE id = ?", [next.id, ticketId]);
         await insertEvent(pool, {
           ticketId, actorId: req.user.id, type: "ticket.escalated_to_manager",
-          payload: { manager_id: leadId, from_assignee: t.assignee_id, reason: reason || null },
+          payload: { manager_id: next.id, from_assignee: t.assignee_id, from_user_id: fromUserId, layer, reason: reason || null },
         });
+        await startManagerSla(pool, ticketId, t.priority_id, next.id, { layer, fromUserId });
 
-        // Freeze the engineer's (team) SLA while the manager reviews, and start the
-        // manager's own review clock. The manager closes it by reassigning back
-        // (which resumes the team SLA) or resolving.
-        await pauseTicketSla(pool, ticketId, null);
-        await startManagerSla(pool, ticketId, t.priority_id, leadId);
         if (reason && reason.trim()) {
           const [cmt] = await pool.query(
             `INSERT INTO ticket_comments (ticket_id, author_id, body, is_public) VALUES (?, ?, ?, 0)`,
@@ -2011,12 +2145,12 @@ export function makeTicketController(pool) {
           const [[me]] = await pool.query("SELECT full_name FROM users WHERE id = ?", [req.user.id]);
           await pool.query(
             `INSERT INTO notifications (user_id, ticket_id, title, message, type) VALUES (?, ?, ?, ?, 'escalation')`,
-            [leadId, ticketId, `Escalated to you: ${t.ticket_number}`,
+            [next.id, ticketId, `Escalated to you (layer ${layer}): ${t.ticket_number}`,
              `${me?.full_name || "An engineer"} escalated "${t.subject}" for your review.${reason && reason.trim() ? ` — ${reason.trim()}` : ""}`]
           );
         } catch (_) {}
 
-        return send.ok(res, { ok: true, managerId: leadId });
+        return send.ok(res, { ok: true, managerId: next.id, managerName: next.full_name, layer });
       } catch (e) {
         console.error(e);
         return send.serverErr(res);
@@ -2073,12 +2207,17 @@ export function makeTicketController(pool) {
         // manager SLA) — can only be reassigned back by the manager (lead) or an
         // admin; that's the sanctioned "manager hands it back" path and it resumes
         // the frozen team SLA below. The manager must also leave a comment.
-        const hadOpenMgrSla = await hasOpenManagerSla(pool, ticketId);
+        const openReview = await getOpenManagerSla(pool, ticketId);
+        const hadOpenMgrSla = !!openReview;
         if (current.status_key === "on_hold" || hadOpenMgrSla) {
           const isAdmin = (req.user.roles || []).includes("admin");
-          const leadId = await getTeamLeadId(pool, current.team_id);
-          if (!isAdmin && req.user.id !== leadId) {
-            return send.forbidden(res, "Only the team manager can reassign a held or escalated ticket back.");
+          // Escalated → the manager holding the current layer hands it back.
+          // Held (frozen, not escalated) → the team manager who froze it.
+          const allowedId = hadOpenMgrSla ? openReview.manager_id : await getTeamLeadId(pool, current.team_id);
+          if (!isAdmin && req.user.id !== allowedId) {
+            return send.forbidden(res, hadOpenMgrSla
+              ? `This ticket is with ${openReview.manager_name || "the manager"} — only they can hand it back.`
+              : "Only the team manager can reassign a held ticket back.");
           }
           if (hadOpenMgrSla && (!reason || !reason.trim())) {
             return send.bad(res, "Add a comment on your review before reassigning the ticket back.");

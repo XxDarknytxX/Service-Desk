@@ -31,6 +31,9 @@ export const RESET_TTL_MINUTES = {
   // to use it, so it's kept short.
   admin_reset: 24 * 60,
   self_service: 60,
+  // A new account's first link: people often don't open a welcome email the
+  // same day, and a resend is always available.
+  onboarding: 72 * 60,
 };
 
 export const MIN_PASSWORD_LENGTH = 8;
@@ -204,6 +207,50 @@ function resetEmail({ name, link, ttlMinutes, purpose }) {
   };
 }
 
+function onboardingEmail({ name, email, link, ttlMinutes, isCustomer, company }) {
+  const greeting = name ? `Hi ${name},` : "Hi,";
+  const ttl = describeTtl(ttlMinutes);
+  const intro = isCustomer
+    ? `An account has been created for you on the Vodafone Fiji Business Service Desk${company ? ` for ${company}` : ""}. You can use it to raise and track service requests with our delivery teams.`
+    : "An account has been created for you on the Vodafone Fiji Corporate Service Desk, where you'll triage and action corporate customers' requests.";
+
+  const text = [
+    greeting,
+    "",
+    intro,
+    "",
+    `Your sign-in email is: ${email}`,
+    "",
+    "Set your password to activate your account:",
+    link,
+    "",
+    `This link can be used once and expires in ${ttl}. If it expires, ask your Vodafone contact to resend your invitation.`,
+    "",
+    "— Vodafone Fiji Service Desk",
+  ].join("\n");
+
+  const bodyHtml = `
+    <p style="margin:0 0 14px;font-size:15px;line-height:1.6">${escapeHtml(greeting)}</p>
+    <p style="margin:0 0 14px;font-size:15px;line-height:1.6">${escapeHtml(intro)}</p>
+    <p style="margin:0 0 24px;font-size:14px;line-height:1.6;color:#52525b">Your sign-in email is <strong style="color:#18181b">${escapeHtml(email)}</strong>.</p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 24px">
+      <tr><td style="border-radius:8px;background:#e60000">
+        <a href="${escapeHtml(link)}" style="display:inline-block;padding:13px 26px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:8px">Set your password</a>
+      </td></tr>
+    </table>
+    <p style="margin:0 0 20px;font-size:13px;line-height:1.6;color:#52525b">
+      This link can be used once and expires in <strong>${escapeHtml(ttl)}</strong>. If it expires, ask your Vodafone contact to resend your invitation.
+    </p>
+    <p style="margin:0 0 6px;font-size:12px;color:#71717a">Button not working? Paste this address into your browser:</p>
+    <p style="margin:0;font-size:12px;line-height:1.5;word-break:break-all"><a href="${escapeHtml(link)}" style="color:#e60000">${escapeHtml(link)}</a></p>`;
+
+  return {
+    subject: isCustomer ? "Your Vodafone Business Service Desk account" : "Welcome to the Vodafone Corporate Service Desk",
+    text,
+    html: layout({ heading: "Activate your account", bodyHtml, preheader: "Set your password to start using the Service Desk." }),
+  };
+}
+
 function changedEmail({ name, email }) {
   const greeting = name ? `Hi ${name},` : "Hi,";
   const when = new Date().toLocaleString("en-FJ", { timeZone: "Pacific/Fiji", dateStyle: "medium", timeStyle: "short" });
@@ -243,23 +290,47 @@ function changedEmail({ name, email }) {
  * Returns { ok: true, email, ttlMinutes } or { ok: false, status, error }.
  */
 export async function sendAdminReset(pool, { userId, adminId, requestIp }) {
+  return sendAccountEmail(pool, { userId, actorId: adminId, requestIp, purpose: "admin_reset" });
+}
+
+/**
+ * Onboarding invitation for a newly created account (or a resend). Only valid
+ * while the account is still waiting for its first password — an activated
+ * account gets a password reset instead.
+ */
+export async function sendOnboarding(pool, { userId, actorId, requestIp }) {
+  return sendAccountEmail(pool, { userId, actorId, requestIp, purpose: "onboarding" });
+}
+
+async function sendAccountEmail(pool, { userId, actorId, requestIp, purpose }) {
   const [[user]] = await pool.query(
-    "SELECT id, email, full_name, is_active FROM users WHERE id = ?",
+    `SELECT u.id, u.email, u.full_name, u.company, u.is_active, u.must_set_password,
+            EXISTS(SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+                    WHERE ur.user_id = u.id AND r.name = 'corporate_customer') AS is_customer
+       FROM users u WHERE u.id = ?`,
     [userId]
   );
   if (!user) return { ok: false, status: 404, error: "User not found" };
   if (!user.is_active) {
-    return { ok: false, status: 400, error: "This account is deactivated. Activate it before sending a password reset." };
+    return {
+      ok: false, status: 400,
+      error: `This account is deactivated. Activate it before sending ${purpose === "onboarding" ? "an onboarding email" : "a password reset"}.`,
+    };
+  }
+  if (purpose === "onboarding" && !user.must_set_password) {
+    return { ok: false, status: 400, error: "This account is already activated — send a password reset instead." };
   }
 
   const { tokenId, link, ttlMinutes } = await issueToken(pool, {
     userId: user.id,
-    purpose: "admin_reset",
-    requestedBy: adminId,
+    purpose,
+    requestedBy: actorId,
     requestIp,
   });
 
-  const mail = resetEmail({ name: user.full_name, link, ttlMinutes, purpose: "admin_reset" });
+  const mail = purpose === "onboarding"
+    ? onboardingEmail({ name: user.full_name, email: user.email, link, ttlMinutes, isCustomer: !!user.is_customer, company: user.company })
+    : resetEmail({ name: user.full_name, link, ttlMinutes, purpose: "admin_reset" });
   const result = await sendMail(pool, { to: user.email, ...mail });
 
   if (!result.sent) {
@@ -327,14 +398,16 @@ export async function inspectToken(pool, rawToken) {
     return { valid: false };
   }
   const [[row]] = await pool.query(
-    `SELECT u.email
+    `SELECT u.email, u.full_name, prt.purpose
        FROM password_reset_tokens prt
        JOIN users u ON u.id = prt.user_id
       WHERE prt.token_hash = ? AND prt.used_at IS NULL
         AND prt.expires_at > NOW() AND u.is_active = 1`,
     [hashToken(rawToken)]
   );
-  return row ? { valid: true, email: row.email } : { valid: false };
+  // `purpose` lets the page greet a new user ("Set your password") rather than
+  // talk about resetting a password they never had.
+  return row ? { valid: true, email: row.email, name: row.full_name, purpose: row.purpose } : { valid: false };
 }
 
 /**
@@ -360,7 +433,7 @@ export async function completeReset(pool, { rawToken, password }) {
     await conn.beginTransaction();
 
     const [[row]] = await conn.query(
-      `SELECT prt.id, prt.user_id, u.email, u.full_name
+      `SELECT prt.id, prt.user_id, prt.purpose, u.email, u.full_name
          FROM password_reset_tokens prt
          JOIN users u ON u.id = prt.user_id
         WHERE prt.token_hash = ? AND prt.used_at IS NULL
@@ -385,7 +458,7 @@ export async function completeReset(pool, { rawToken, password }) {
     }
 
     await conn.query(
-      "UPDATE users SET password_hash = ?, password_changed_at = NOW() WHERE id = ?",
+      "UPDATE users SET password_hash = ?, password_changed_at = NOW(), must_set_password = 0 WHERE id = ?",
       [passwordHash, row.user_id]
     );
     // Retire any other outstanding links for this account.
@@ -405,10 +478,12 @@ export async function completeReset(pool, { rawToken, password }) {
 
   // Security notice. Fire-and-forget: the password is already changed, and a
   // mail hiccup must not turn a successful reset into an error for the user.
-  sendMail(pool, { to: user.email, ...changedEmail({ name: user.full_name, email: user.email }) })
+  // Skipped for onboarding: the person just chose their first password and
+  // was expecting it — "your password was changed" would read as an alarm.
+  if (user.purpose !== "onboarding") sendMail(pool, { to: user.email, ...changedEmail({ name: user.full_name, email: user.email }) })
     .then((r) => {
       if (!r.sent) console.error(`[PasswordReset] change notice to user ${user.user_id} not sent:`, r.error || r.skipped);
     });
 
-  return { ok: true, userId: user.user_id };
+  return { ok: true, userId: user.user_id, purpose: user.purpose };
 }

@@ -72,8 +72,9 @@ const CORPORATE_NAV = [
   {
     title: "Accounts",
     items: [
-      { to: "/corporate/customers", label: "Customers", icon: "building", roles: ["admin", "agent"] },
+      { to: "/corporate/people", label: "People", icon: "users", roles: ["admin", "agent"] },
       { to: "/corporate/teams", label: "Delivery Teams", icon: "teams", roles: ["admin"] },
+      { to: "/corporate/hierarchy", label: "Hierarchy", icon: "sitemap", roles: ["admin", "agent"] },
     ],
   },
   {
@@ -89,10 +90,10 @@ const CORPORATE_NAV = [
 // else lands on the other app's dashboard. A ticket belongs to one app only, so
 // a ticket page maps to the other app's list.
 const SWITCH_MAP = {
-  internal: { "/users": "/customers" },
-  corporate: { "/customers": "/users" },
+  internal: { "/users": "/people" },
+  corporate: { "/people": "/users", "/customers": "/users" },
 };
-const SHARED_PAGES = ["/dashboard", "/tickets", "/reports", "/knowledge-base", "/teams", "/profile"];
+const SHARED_PAGES = ["/dashboard", "/tickets", "/reports", "/knowledge-base", "/teams", "/hierarchy", "/profile"];
 
 function switchTarget(pathname, fromWs, toWs) {
   const bare = stripWorkspace(pathname);

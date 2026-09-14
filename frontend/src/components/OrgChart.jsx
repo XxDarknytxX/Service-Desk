@@ -158,9 +158,14 @@ function EmployeeNode({ employee, onEdit, hasReports, isExpanded, dimmed, highli
             </Badge>
           )}
 
-          <Badge tone={role.tone} size="sm">
-            {role.label}
+          {/* Corporate chart passes the person's position (e.g. "Delivery
+              Manager") and org level instead of an access role. */}
+          <Badge tone={employee.position_tone || role.tone} size="sm">
+            {employee.position_label || role.label}
           </Badge>
+          {employee.org_level != null && (
+            <Badge tone="slate" size="sm">L{employee.org_level}</Badge>
+          )}
 
           {hasReports && (
             <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-medium text-[var(--fg-secondary)] tabular-nums">
@@ -421,12 +426,22 @@ export default function OrgChart({ users, hierarchy, onEditUser, query = "" }) {
           <Icon name="chevron-up" size={14} /> Collapse all
         </button>
 
-        {/* Legend */}
-        <div className="hidden lg:flex items-center gap-3 text-[11px] text-[var(--fg-muted)] mx-2">
-          <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-violet-500" /> Admin</span>
-          <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-blue-500" /> Agent</span>
-          <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-slate-400" /> Requester</span>
-        </div>
+        {/* Legend — access roles on the internal chart; the corporate chart
+            labels each card with its position instead, so it has none. */}
+        {!users.some((u) => u.position_label) ? (
+          <div className="hidden lg:flex items-center gap-3 text-[11px] text-[var(--fg-muted)] mx-2">
+            <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-violet-500" /> Admin</span>
+            <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-blue-500" /> Agent</span>
+            <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-slate-400" /> Requester</span>
+          </div>
+        ) : (
+          <div className="hidden lg:flex items-center gap-3 text-[11px] text-[var(--fg-muted)] mx-2">
+            <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-blue-500" /> Delivery</span>
+            <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-amber-500" /> Triage (NOC)</span>
+            <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-violet-500" /> Service Delivery</span>
+            <span className="inline-flex items-center gap-1.5"><span className="font-semibold">L#</span> level in the chain</span>
+          </div>
+        )}
 
         {/* Zoom + view controls */}
         <div className="ml-auto flex items-center gap-2">
