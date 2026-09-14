@@ -2,9 +2,11 @@
 import { Router } from "express";
 import { body } from "express-validator";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireWorkspace } from "../middleware/workspace.js";
 
 export function makeOrganizationRouter(controller) {
   const router = Router();
+  router.use("/organizations", requireAuth, requireWorkspace("internal"));
 
   router.get("/organizations", requireAuth, requireRole("admin", "agent"), controller.list);
 

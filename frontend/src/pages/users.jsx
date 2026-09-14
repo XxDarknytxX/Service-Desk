@@ -23,6 +23,7 @@ import { SkeletonTable } from "../components/ui/Skeleton";
 import useConfirm from "../components/ui/useConfirm";
 import { useAuth } from "../contexts/auth";
 import { useToast } from "../contexts/toast";
+import { useWorkspace } from "../contexts/workspace";
 
 function cn(...parts) {
   return parts.filter(Boolean).join(" ");
@@ -54,8 +55,11 @@ export default function Users() {
   const [editingUser, setEditingUser] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState("");
-  // Team Members (org directory) vs Corporate Customers; agents only ever see customers.
-  const [userTab, setUserTab] = useState(user?.roles?.includes("admin") ? "team" : "customers");
+  // One page, two apps. Internal: the staff directory only. Corporate: the
+  // customers (and, for admins, the delivery staff who serve them). The server
+  // returns only the directory of the app on screen.
+  const { isCorporate: inCorporateApp } = useWorkspace();
+  const [userTab, setUserTab] = useState(inCorporateApp ? "customers" : "team");
   const [statusFilter, setStatusFilter] = useState("active"); // active | inactive | all
   const [customerMode, setCustomerMode] = useState(false); // create/edit a corporate customer
   const [showImportModal, setShowImportModal] = useState(false);
@@ -409,7 +413,9 @@ export default function Users() {
   }
 
   // Agents may only ever see the corporate-customer list, never the org directory.
-  const effectiveTab = isAdmin ? userTab : "customers";
+  // Internal desk → staff only. Corporate desk → admins pick customers or staff;
+  // corporate agents only ever see the (read-only) customer list.
+  const effectiveTab = !inCorporateApp ? "team" : isAdmin ? userTab : "customers";
 
   const filteredUsers = useMemo(() => users.filter((u) => {
     const matchesSearch =
@@ -517,11 +523,13 @@ export default function Users() {
         {/* Header */}
         <PageHeader
           icon={effectiveTab === "customers" ? "building" : "users"}
-          title={effectiveTab === "customers" ? "Corporate Customers" : "Users"}
+          title={effectiveTab === "customers" ? "Corporate Customers" : inCorporateApp ? "Delivery Staff" : "Users"}
           subtitle={
             effectiveTab === "customers"
               ? `${customerCount} ${customerCount === 1 ? "customer" : "customers"}`
-              : `${teamCount} ${teamCount === 1 ? "member" : "members"} in the directory`
+              : inCorporateApp
+                ? `${teamCount} ${teamCount === 1 ? "person" : "people"} working corporate requests`
+                : `${teamCount} ${teamCount === 1 ? "member" : "members"} in the directory`
           }
           actions={
             isAdmin &&
@@ -531,13 +539,15 @@ export default function Users() {
               </Button>
             ) : (
               <>
-                <Button
-                  variant="secondary"
-                  onClick={() => { setShowImportModal(true); setImportFile(null); setImportResults(null); }}
-                  icon={<Icon name="upload" size={16} />}
-                >
-                  Import
-                </Button>
+                {!inCorporateApp && (
+                  <Button
+                    variant="secondary"
+                    onClick={() => { setShowImportModal(true); setImportFile(null); setImportResults(null); }}
+                    icon={<Icon name="upload" size={16} />}
+                  >
+                    Import
+                  </Button>
+                )}
                 <Button onClick={openCreateModal} icon={<Icon name="plus" size={16} />}>
                   Add User
                 </Button>
@@ -548,11 +558,11 @@ export default function Users() {
 
         {/* Sub-tabs (admins) + status filter */}
         <div className="flex flex-wrap items-center gap-3">
-          {isAdmin && (
+          {isAdmin && inCorporateApp && (
             <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-default)]">
               {[
-                { key: "team", label: "Team Members", icon: "users", count: teamCount },
-                { key: "customers", label: "Corporate Customers", icon: "building", count: customerCount },
+                { key: "customers", label: "Customers", icon: "building", count: customerCount },
+                { key: "team", label: "Delivery Staff", icon: "users", count: teamCount },
               ].map((t) => {
                 const active = userTab === t.key;
                 return (

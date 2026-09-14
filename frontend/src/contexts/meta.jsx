@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { api } from "../services/api";
 import { useAuth } from "./auth";
+import { workspaceFromPath } from "./workspace";
 
 const MetaContext = createContext(null);
 
@@ -16,8 +18,12 @@ export function MetaProvider({ children }) {
     agents: [],
     organizations: [],
     departments: [],
+    serviceCategories: [],
   });
   const [loading, setLoading] = useState(true);
+  // Lookups (teams, agents, categories) differ per app, so reload when an
+  // admin switches between the corporate and internal views.
+  const workspace = workspaceFromPath(useLocation().pathname);
 
   useEffect(() => {
     let active = true;
@@ -28,7 +34,7 @@ export function MetaProvider({ children }) {
       }
       setLoading(true);
       try {
-        const data = await api("/meta");
+        const data = await api(`/meta?workspace=${workspace}`);
         if (active) setMeta(data);
       } catch {
         if (active) setMeta((prev) => ({ ...prev }));
@@ -40,7 +46,7 @@ export function MetaProvider({ children }) {
     return () => {
       active = false;
     };
-  }, [user]);
+  }, [user, workspace]);
 
   const value = useMemo(() => ({ meta, loading }), [meta, loading]);
 

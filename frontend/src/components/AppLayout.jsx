@@ -12,8 +12,9 @@
  * - Mobile responsive with slide-out menu
  */
 
-import { NavLink, useNavigate, useLocation } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import { useAuth } from "../contexts/auth";
+import { useWorkspace, useWsNavigate, stripWorkspace, toWorkspacePath } from "../contexts/workspace";
 import { api } from "../services/api";
 import Icon from "./ui/Icon";
 import VodafoneLogo from "./ui/VodafoneLogo";
@@ -21,7 +22,8 @@ import FloatingBlobs from "./ui/FloatingBlobs";
 import FaqChatBar from "./FaqChatBar";
 import { useState, useEffect, useRef } from "react";
 
-const navSections = [
+// ── Internal service desk ────────────────────────────────────────────────
+const INTERNAL_NAV = [
   {
     title: "Main",
     items: [
@@ -55,6 +57,52 @@ const navSections = [
   },
 ];
 
+// ── Corporate service desk ───────────────────────────────────────────────
+// Customers raise requests by category; NOC triages; delivery queues action
+// them. None of the internal tooling (approvals, templates, assets, forms,
+// departments, hierarchy) exists here.
+const CORPORATE_NAV = [
+  {
+    title: "Service",
+    items: [
+      { to: "/corporate/dashboard", label: "Dashboard", icon: "dashboard" },
+      { to: "/corporate/tickets", label: "Requests", icon: "tickets" },
+    ],
+  },
+  {
+    title: "Accounts",
+    items: [
+      { to: "/corporate/customers", label: "Customers", icon: "building", roles: ["admin", "agent"] },
+      { to: "/corporate/teams", label: "Delivery Teams", icon: "teams", roles: ["admin"] },
+    ],
+  },
+  {
+    title: "Insights",
+    items: [
+      { to: "/corporate/reports", label: "Reports", icon: "reports", roles: ["admin", "agent"] },
+      { to: "/corporate/knowledge-base", label: "Knowledge Base", icon: "knowledgeBase" },
+    ],
+  },
+];
+
+// Pages that exist in both apps map across when an admin switches; anything
+// else lands on the other app's dashboard. A ticket belongs to one app only, so
+// a ticket page maps to the other app's list.
+const SWITCH_MAP = {
+  internal: { "/users": "/customers" },
+  corporate: { "/customers": "/users" },
+};
+const SHARED_PAGES = ["/dashboard", "/tickets", "/reports", "/knowledge-base", "/teams", "/profile"];
+
+function switchTarget(pathname, fromWs, toWs) {
+  const bare = stripWorkspace(pathname);
+  const mapped = SWITCH_MAP[fromWs][bare];
+  if (mapped) return toWorkspacePath(mapped, toWs);
+  if (bare.startsWith("/tickets/")) return toWorkspacePath("/tickets", toWs);
+  if (SHARED_PAGES.includes(bare)) return toWorkspacePath(bare, toWs);
+  return toWorkspacePath("/dashboard", toWs);
+}
+
 const SIDEBAR_EXPANDED = 260;
 const SIDEBAR_COLLAPSED = 72;
 
@@ -63,9 +111,11 @@ function cn(...parts) {
 }
 
 export default function AppLayout({ children }) {
-  const navigate = useNavigate();
+  const navigate = useWsNavigate();
   const location = useLocation();
   const { user, logout } = useAuth();
+  const { workspace, isCorporate, canSwitch } = useWorkspace();
+  const navSections = isCorporate ? CORPORATE_NAV : INTERNAL_NAV;
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem("sd-sidebar-collapsed") === "1"
@@ -187,7 +237,14 @@ export default function AppLayout({ children }) {
       setNotifications((list) => list.map((x) => (x.id === n.id ? { ...x, is_read: 1 } : x)));
       api(`/notifications/${n.id}/read`, { method: "POST" }).catch(() => {});
     }
-    if (n.ticket_id) navigate(`/tickets/${n.ticket_id}`);
+    // Open the ticket in the app it belongs to (an admin may get notified about
+    // either desk's tickets).
+    if (n.ticket_id) navigate(`/tickets/${n.ticket_id}`, { workspace: n.ticket_workspace || workspace });
+  }
+
+  function switchWorkspace(toWs) {
+    if (toWs === workspace) return;
+    navigate(switchTarget(location.pathname, workspace, toWs), { workspace: toWs });
   }
 
   function markAllRead() {
@@ -289,9 +346,11 @@ export default function AppLayout({ children }) {
 
           <div className={labelCls("min-w-0 flex-1")} aria-hidden={!expanded}>
             <h1 className="text-sm font-semibold text-[var(--fg-primary)] tracking-tight leading-tight truncate">
-              Service Desk
+              {isCorporate ? "Corporate Services" : "Service Desk"}
             </h1>
-            <p className="text-[10px] text-[var(--fg-muted)] truncate">Vodafone Fiji</p>
+            <p className="text-[10px] text-[var(--fg-muted)] truncate">
+              {isCorporate ? "Vodafone Fiji · Business" : "Vodafone Fiji"}
+            </p>
           </div>
 
           {/* Mobile close */}
@@ -336,7 +395,7 @@ export default function AppLayout({ children }) {
                     <NavLink
                       key={item.to}
                       to={item.to}
-                      end={item.to === "/dashboard"}
+                      end={item.to.endsWith("/dashboard")}
                       title={!expanded ? item.label : undefined}
                       className={({ isActive }) =>
                         cn(
@@ -373,7 +432,7 @@ export default function AppLayout({ children }) {
                             className={labelCls("text-sm font-medium")}
                             aria-hidden={!expanded}
                           >
-                            {item.to === "/users" && !userRoles.includes("admin") ? "Customers" : item.label}
+                            {item.label}
                           </span>
                         </>
                       )}
@@ -454,6 +513,40 @@ export default function AppLayout({ children }) {
               >
                 <Icon name="menu" size={18} />
               </button>
+
+              {/* App switcher — admins only (everyone else works in one app) */}
+              {canSwitch && (
+                <div
+                  role="tablist"
+                  aria-label="Switch service desk"
+                  className="flex items-center p-1 rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)] shrink-0"
+                >
+                  {[
+                    { ws: "internal", label: "Internal", icon: "organization" },
+                    { ws: "corporate", label: "Corporate", icon: "building" },
+                  ].map((opt) => {
+                    const active = workspace === opt.ws;
+                    return (
+                      <button
+                        key={opt.ws}
+                        role="tab"
+                        aria-selected={active}
+                        onClick={() => switchWorkspace(opt.ws)}
+                        className={cn(
+                          "flex items-center gap-1.5 h-8 px-3 rounded-md text-[13px] font-medium transition-all duration-150",
+                          active
+                            ? "bg-[var(--accent)] text-white shadow-[0_2px_8px_rgba(230,0,0,0.25)]"
+                            : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)]"
+                        )}
+                        title={`${opt.label} service desk`}
+                      >
+                        <Icon name={opt.icon} size={14} />
+                        <span className="hidden sm:inline">{opt.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Search */}
               <div className="flex-1 max-w-md hidden sm:block">

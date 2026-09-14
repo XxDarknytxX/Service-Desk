@@ -622,7 +622,9 @@ export default function Hierarchy() {
             </label>
             <p className="text-xs text-[var(--fg-secondary)] mb-3">Select one or more roles for this user</p>
             <div className="flex gap-2 flex-wrap">
-              {["admin", "agent", "requester", "corporate_customer"].map((role) => (
+              {/* No corporate_customer: customers aren't part of the org chart and
+                  are managed in the Corporate app (the server rejects it too). */}
+              {["admin", "agent", "requester"].map((role) => (
                 <button
                   key={role}
                   type="button"

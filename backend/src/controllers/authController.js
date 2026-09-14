@@ -2,8 +2,9 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { validationResult } from "express-validator";
-import { getUserRoles, setUserRoles } from "../utils/roles.js";
+import { getUserRoles } from "../utils/roles.js";
 import { forgetSession } from "../middleware/auth.js";
+import { computeWorkspaceAccess } from "../middleware/workspace.js";
 import {
   sendSelfServiceReset,
   inspectToken,
@@ -38,15 +39,6 @@ async function findUserById(pool, id) {
   return rows[0] || null;
 }
 
-async function createUser(pool, { email, passwordHash, fullName }) {
-  const [res] = await pool.query(
-    `INSERT INTO users (email, password_hash, full_name)
-     VALUES (?, ?, ?)`,
-    [email, passwordHash, fullName || null]
-  );
-  return res.insertId;
-}
-
 // Fetch team membership + provisioned modules for a user
 async function fetchTeamModules(pool, userId) {
   const [rows] = await pool.query(
@@ -76,27 +68,6 @@ async function fetchTeamModules(pool, userId) {
 
 export function makeAuthController(pool) {
   return {
-    // POST /api/auth/register
-    register: async (req, res) => {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) return send.bad(res, errors.array()[0].msg);
-
-      const { email, password, fullName } = req.body;
-      try {
-        const existing = await findUserByEmail(pool, email);
-        if (existing) return send.bad(res, "Email already registered");
-
-        const passwordHash = await bcrypt.hash(password, 10);
-        const userId = await createUser(pool, { email, passwordHash, fullName });
-        await setUserRoles(pool, userId, ["requester"]);
-
-        return send.created(res, { id: userId, email, fullName });
-      } catch (e) {
-        console.error(e);
-        return send.serverErr(res);
-      }
-    },
-
     // POST /api/auth/login
     login: async (req, res) => {
       const errors = validationResult(req);
@@ -113,6 +84,7 @@ export function makeAuthController(pool) {
 
         const roles = await getUserRoles(pool, user.id);
         const teamInfo = await fetchTeamModules(pool, user.id);
+        const access = await computeWorkspaceAccess(pool, user.id, roles);
         await pool.query("UPDATE users SET last_login_at = NOW() WHERE id = ?", [user.id]);
 
         const token = jwt.sign(
@@ -125,6 +97,8 @@ export function makeAuthController(pool) {
           user: {
             id: user.id, email: user.email, fullName: user.full_name, roles,
             ...teamInfo,
+            workspaces: access.workspaces,
+            homeWorkspace: access.home,
           },
         });
       } catch (e) {
@@ -185,6 +159,7 @@ export function makeAuthController(pool) {
         if (!user) return send.unauthorized(res, "User not found");
         const roles = await getUserRoles(pool, req.user.id);
         const teamInfo = await fetchTeamModules(pool, req.user.id);
+        const access = await computeWorkspaceAccess(pool, req.user.id, roles);
         return send.ok(res, {
           user: {
             id: user.id,
@@ -194,6 +169,8 @@ export function makeAuthController(pool) {
             createdAt: user.created_at,
             roles,
             ...teamInfo,
+            workspaces: access.workspaces,
+            homeWorkspace: access.home,
           },
         });
       } catch (e) {

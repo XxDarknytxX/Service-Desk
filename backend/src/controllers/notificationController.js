@@ -8,7 +8,7 @@ export function makeNotificationController(pool) {
       try {
         const [rows] = await pool.query(
           `SELECT n.id, n.title, n.message, n.type, n.is_read, n.created_at,
-                  n.ticket_id, t.ticket_number
+                  n.ticket_id, t.ticket_number, t.workspace AS ticket_workspace
            FROM notifications n
            LEFT JOIN tickets t ON t.id = n.ticket_id
            WHERE n.user_id = ?

@@ -2,9 +2,16 @@
 import { Router } from "express";
 import { body } from "express-validator";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireWorkspace } from "../middleware/workspace.js";
+
+// Approvals are an internal service-desk feature. Path-scoped (never a bare
+// router.use): every router is mounted at /api, so an unscoped guard would run
+// on requests meant for other routers too.
+const INTERNAL_PATHS = ["/approval-rules", "/approvals", "/approvers", "/tickets/:id/approvals", "/tickets/:id/send-for-approval"];
 
 export function makeApprovalRouter(controller) {
   const router = Router();
+  router.use(INTERNAL_PATHS, requireAuth, requireWorkspace("internal"));
 
   // Approval Rules Management (admin only)
   router.get("/approval-rules", requireAuth, requireRole("admin"), controller.listRules);

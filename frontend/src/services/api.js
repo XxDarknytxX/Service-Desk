@@ -1,10 +1,18 @@
 // src/services/api.js
 const API_URL = import.meta.env.VITE_API_URL || "/api";
 
+// Which app is on screen. Sent with every call so the backend scopes lists,
+// lookups and reports to it; the server still checks the user may use it.
+function currentWorkspace() {
+  const p = window.location.pathname;
+  return p === "/corporate" || p.startsWith("/corporate/") ? "corporate" : "internal";
+}
+
 function getHeaders() {
   const token = localStorage.getItem("token");
   return {
     "Content-Type": "application/json",
+    "X-Workspace": currentWorkspace(),
     ...(token && { Authorization: `Bearer ${token}` }),
   };
 }

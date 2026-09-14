@@ -1,10 +1,17 @@
 // src/routes/assets.js
 import express from "express";
 import { verifyToken } from "../middleware/auth.js";
+import { requireStaff, requireWorkspace } from "../middleware/workspace.js";
 
 export function makeAssetRouter(controller) {
   const router = express.Router();
   const t = verifyToken;
+
+  // Asset management is internal; only staff change anything (previously any
+  // login could create or delete assets and categories).
+  router.use("/assets", verifyToken, requireWorkspace("internal"), (req, res, next) =>
+    req.method === "GET" ? next() : requireStaff(req, res, next)
+  );
 
   // Stats
   router.get("/assets/stats",                t, controller.getAssetStats);

@@ -12,7 +12,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useWsNavigate, useWorkspace } from "../contexts/workspace";
 import {
   PieChart,
   Pie,
@@ -66,7 +66,7 @@ const ACTIVITY_META = {
 };
 
 export default function Dashboard() {
-  const navigate = useNavigate();
+  const navigate = useWsNavigate();
   const { user } = useAuth();
   const { meta } = useMeta();
   const toast = useToast();
@@ -75,6 +75,7 @@ export default function Dashboard() {
   const [showCreateModal, setShowCreateModal] = useState(false);
 
   const isAgent = user?.roles?.includes("admin") || user?.roles?.includes("agent");
+  const { isCorporate } = useWorkspace();
 
   useEffect(() => {
     fetchDashboardData();
@@ -230,9 +231,10 @@ export default function Dashboard() {
 
   // ── Quick actions ──────────────────────────────────────────────
   const quickActions = [
-    { label: "New ticket", desc: "Log a request", icon: "plus", cls: "bg-[var(--accent)]/10 text-[var(--accent)]", onClick: () => setShowCreateModal(true) },
-    { label: "All tickets", desc: "Browse the queue", icon: "tickets", cls: "bg-blue-500/10 text-blue-500", onClick: () => navigate("/tickets") },
-    { label: "Approvals", desc: "Review requests", icon: "checkCircle", cls: "bg-violet-500/10 text-violet-500", onClick: () => navigate("/approvals") },
+    { label: isCorporate ? "New request" : "New ticket", desc: isCorporate ? "Raise a service request" : "Log a request", icon: "plus", cls: "bg-[var(--accent)]/10 text-[var(--accent)]", onClick: () => setShowCreateModal(true) },
+    { label: isCorporate ? "All requests" : "All tickets", desc: "Browse the queue", icon: "tickets", cls: "bg-blue-500/10 text-blue-500", onClick: () => navigate("/tickets") },
+    // Approvals are an internal-desk feature.
+    ...(isCorporate ? [] : [{ label: "Approvals", desc: "Review requests", icon: "checkCircle", cls: "bg-violet-500/10 text-violet-500", onClick: () => navigate("/approvals") }]),
     ...(isAgent
       ? [{ label: "Reports", desc: "View analytics", icon: "reports", cls: "bg-emerald-500/10 text-emerald-500", onClick: () => navigate("/reports") }]
       : [{ label: "Knowledge base", desc: "Find answers", icon: "knowledgeBase", cls: "bg-amber-500/10 text-amber-500", onClick: () => navigate("/knowledge-base") }]),
@@ -294,7 +296,7 @@ export default function Dashboard() {
               onClick={() => setShowCreateModal(true)}
               icon={<Icon name="plus" size={16} />}
             >
-              New Ticket
+              {isCorporate ? "New Request" : "New Ticket"}
             </Button>
           </div>
         </div>
@@ -407,7 +409,7 @@ export default function Dashboard() {
               description="Create your first ticket to get things moving."
               action={
                 <Button size="sm" onClick={() => setShowCreateModal(true)} icon={<Icon name="plus" size={14} />}>
-                  New Ticket
+                  {isCorporate ? "New Request" : "New Ticket"}
                 </Button>
               }
             />

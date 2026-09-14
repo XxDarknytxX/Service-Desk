@@ -1,9 +1,16 @@
 // src/routes/kb.js
 import express from "express";
 import { verifyToken } from "../middleware/auth.js";
+import { requireStaff } from "../middleware/workspace.js";
 
 export function makeKbRouter(controller) {
   const router = express.Router();
+
+  // Knowledge base is readable from both apps (customers included), but only
+  // staff may write — previously any login could create or delete articles.
+  router.use("/kb", verifyToken, (req, res, next) =>
+    req.method === "GET" ? next() : requireStaff(req, res, next)
+  );
 
   // Categories
   router.get("/kb/categories", verifyToken, controller.getCategories);

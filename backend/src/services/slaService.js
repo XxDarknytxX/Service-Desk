@@ -80,7 +80,7 @@ export function makeSlaService(pool) {
            WHERE tts.breached = 0
              AND tts.met_at IS NULL
              AND tts.due_at < NOW()
-             AND tm.name = 'NOC'
+             AND tm.corporate_role = 'triage'
              AND s.is_closed = 0`
         );
         if (due.length === 0) return 0;

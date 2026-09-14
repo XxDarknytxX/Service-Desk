@@ -12,7 +12,8 @@
  */
 
 import { useEffect, useState, useRef } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams } from "react-router-dom";
+import { useWsNavigate, useWorkspace } from "../contexts/workspace";
 import { api, approvalsApi, ticketsApi, templatesApi, slaApi, csatApi, formsApi } from "../services/api";
 import { useMeta } from "../contexts/meta";
 import { useAuth } from "../contexts/auth";
@@ -40,19 +41,26 @@ const PRIORITY_COLORS = {
 
 export default function TicketDetail() {
   const { id } = useParams();
-  const navigate = useNavigate();
+  const navigate = useWsNavigate();
   const { user } = useAuth();
   const { meta } = useMeta();
   const toast = useToast();
   const statuses = meta?.statuses || [];
   const priorities = meta?.priorities || [];
   const teams = meta?.teams || [];
-  // Reassign/triage targets: exactly the 4 corporate-flow teams, for everyone
-  // (NOC members + admins). NOC/Corporate/EXCO/ICT/IT are intentionally excluded.
-  const REASSIGN_TEAMS = ["Cloud", "Transmission", "MTX", "Security Operations"];
-  const reassignTeams = teams.filter((t) => REASSIGN_TEAMS.includes(t.name));
+  const { workspace } = useWorkspace();
 
   const [ticket, setTicket] = useState(null);
+  // Which desk this ticket belongs to drives the whole workflow: corporate
+  // requests are triaged by NOC and routed between delivery queues; internal
+  // tickets use the normal agent flow (reassign, priority, approvals).
+  const ticketIsCorporate = ticket?.workspace === "corporate";
+  const inTriageQueue = ticket?.team_corporate_role === "triage";
+  // Reassign targets: corporate → the delivery queues (never back into NOC, never
+  // an internal team); internal → the internal teams. Matches the server rules.
+  const reassignTeams = ticketIsCorporate
+    ? teams.filter((t) => t.corporate_role === "queue")
+    : teams.filter((t) => t.workspace === "internal");
   const [comments, setComments] = useState([]);
   const [auditTrail, setAuditTrail] = useState([]);
   const [tags, setTags] = useState([]);
@@ -145,9 +153,18 @@ export default function TicketDetail() {
   // admin — can work it (resolve / escalate / hold). Once NOC routes a ticket out
   // of its queue, NOC is no longer on the team and loses these actions.
   const canWork = !!(user?.roles?.includes("admin") || ticket?.viewer_is_team_member || (ticket?.assignee_id != null && Number(ticket.assignee_id) === Number(user?.id)));
-  // Priority (urgency) is NOC's call and only while the ticket is in the triage
-  // queue; admins can always change it. Everyone else sees priority read-only.
-  const canSetPriority = !!(user?.roles?.includes("admin") || (isNocMember && ticket?.team_name === "NOC"));
+  // Corporate: priority (urgency) is NOC's call and only while the request is in
+  // the triage queue. Internal: agents working the ticket set it as normal.
+  // Admins can always change it.
+  const canSetPriority = !!(
+    user?.roles?.includes("admin") ||
+    (ticketIsCorporate ? isNocMember && inTriageQueue : canWork)
+  );
+  // Who may move the ticket to another team (see the same rule server-side).
+  const canReassign = !!(
+    user?.roles?.includes("admin") ||
+    (ticketIsCorporate ? isNocMember && inTriageQueue : canWork)
+  );
   // The ticket is currently "with the manager" — escalated, team SLA frozen,
   // manager review clock running — until the manager reassigns back or resolves.
   const withManager = !!slaData?.manager_open;
@@ -165,7 +182,8 @@ export default function TicketDetail() {
       api(`/teams?userId=${user.id}`)
         .then((d) => {
           const teams = d.teams || d.items || [];
-          setIsNocMember(teams.some((t) => (t.name || "").toUpperCase() === "NOC"));
+          // The triage team is identified by its role, not its name.
+          setIsNocMember(teams.some((t) => t.corporate_role === "triage"));
         })
         .catch(() => {});
     }
@@ -193,25 +211,31 @@ export default function TicketDetail() {
         setTicket(null);
         return;
       }
+      // A ticket belongs to exactly one desk. If it was opened under the other
+      // app's URL (an admin following a link), show it in the right one.
+      if (ticketRes.ticket.workspace && ticketRes.ticket.workspace !== workspace) {
+        navigate(`/tickets/${id}`, { workspace: ticketRes.ticket.workspace, replace: true });
+        return;
+      }
       setTicket(ticketRes.ticket);
+      const isCorp = ticketRes.ticket.workspace === "corporate";
 
       if (ticketRes.ticket.team_id) {
         loadTeamMembers(ticketRes.ticket.team_id);
       }
 
+      // Approvals and templates are internal-desk features; the server refuses
+      // them for corporate tickets, so don't ask.
+      const none = Promise.resolve(null);
       const requests = [
         api(`/tickets/${id}/comments`),
         api(`/tickets/${id}/audit`),
         api(`/tickets/${id}/tags`),
         api(`/tickets/${id}/sla`),
-        approvalsApi.getTicketApprovals(id),
+        isCorp ? none : approvalsApi.getTicketApprovals(id),
         ticketsApi.getTeams(id),
+        !isCorp && ticketRes.ticket.template_id ? templatesApi.getTicketResponse(id) : none,
       ];
-
-      // Fetch template response if ticket was created from a template
-      if (ticketRes.ticket.template_id) {
-        requests.push(templatesApi.getTicketResponse(id));
-      }
 
       const [commentsRes, auditRes, tagsRes, slaRes, approvalsRes, teamsRes, templateRes] = await Promise.allSettled(requests);
 
@@ -219,7 +243,7 @@ export default function TicketDetail() {
       setAuditTrail(auditRes.status === "fulfilled" ? auditRes.value.items || [] : []);
       setTags(tagsRes.status === "fulfilled" ? tagsRes.value.items || [] : []);
       setSlaData(slaRes.status === "fulfilled" && slaRes.value.sla ? slaRes.value.sla : null);
-      setApprovalData(approvalsRes.status === "fulfilled" ? approvalsRes.value.approvals || [] : []);
+      setApprovalData(approvalsRes.status === "fulfilled" && approvalsRes.value ? approvalsRes.value.approvals || [] : []);
       setTicketTeams(teamsRes.status === "fulfilled" ? teamsRes.value.teams || [] : []);
       setTemplateResponse(
         templateRes?.status === "fulfilled" && templateRes.value?.response
@@ -227,8 +251,8 @@ export default function TicketDetail() {
           : null
       );
 
-      // Load customer forms linked to this ticket (agent view only)
-      if (user?.roles?.includes("admin") || user?.roles?.includes("agent")) {
+      // Load customer forms linked to this ticket (internal agent view only)
+      if (!isCorp && (user?.roles?.includes("admin") || user?.roles?.includes("agent"))) {
         formsApi
           .ticketInvites(id)
           .then((d) => setTicketForms(d.invites || []))
@@ -561,10 +585,11 @@ export default function TicketDetail() {
   };
 
   const handleReassign = async () => {
-    // The requirements note is mandatory on a team change (triage hand-off) and on
-    // a manager handing an escalated ticket back — matching the backend.
+    // The requirements note is mandatory on a corporate team change (triage
+    // hand-off) and on a manager handing an escalated ticket back — matching the
+    // backend. Internal reassignments may add one but don't have to.
     const teamChanging = (reassignTeamId ? parseInt(reassignTeamId) : null) !== (ticket?.team_id ?? null);
-    if (teamChanging && !reassignReason.trim()) {
+    if (ticketIsCorporate && teamChanging && !reassignReason.trim()) {
       toast.error("A requirements note is required when reassigning to another team.");
       return;
     }
@@ -968,19 +993,19 @@ export default function TicketDetail() {
                 {/* Triage: NOC routes incoming tickets while they sit in its queue;
                     admins can always re-route. Once routed out, only the owning team
                     works the ticket. */}
-                {(user?.roles?.includes("admin") || (isNocMember && ticket.team_name === "NOC")) && (
+                {canReassign && (
                   <ToolbarAction
                     icon="users"
-                    label={isNocMember && ticket.team_name === "NOC" ? "Triage" : "Reassign"}
+                    label={isNocMember && inTriageQueue ? "Triage" : "Reassign"}
                     onClick={handleOpenReassignModal}
-                    tone={isNocMember && ticket.team_name === "NOC" ? "accent" : undefined}
+                    tone={isNocMember && inTriageQueue ? "accent" : undefined}
                   />
                 )}
 
                 {/* Work-the-ticket actions — only the agent who owns this ticket (on
                     its current team, assigned, or admin) and only after it's left the
                     NOC triage queue. */}
-                {canWork && ticket.team_name !== "NOC" && ["open", "pending", "in_progress", "on_hold"].includes(ticket.status_key) && (
+                {canWork && !inTriageQueue && ["open", "pending", "in_progress", "on_hold"].includes(ticket.status_key) && (
                   withManager ? (
                     /* With the manager: only the manager (or admin) acts — hand it
                        back to an engineer (with a comment) or resolve it. */
@@ -1010,12 +1035,21 @@ export default function TicketDetail() {
                           loading={actionLoading === "assign"}
                         />
                       )}
-                      {/* Sent to the wrong queue? Hand it back to NOC to re-triage. */}
-                      {!user?.roles?.includes("admin") && ["open", "pending", "in_progress"].includes(ticket.status_key) && (
+                      {/* Corporate: sent to the wrong queue? Hand it back to NOC to re-triage. */}
+                      {ticketIsCorporate && !user?.roles?.includes("admin") && ["open", "pending", "in_progress"].includes(ticket.status_key) && (
                         <ToolbarAction
                           icon="inbox"
                           label="Reassign to NOC"
                           onClick={() => setShowFlagModal(true)}
+                        />
+                      )}
+                      {/* Internal: approvals are part of the normal desk flow. */}
+                      {!ticketIsCorporate && ["open", "pending", "in_progress"].includes(ticket.status_key) &&
+                        ticket.approval_status !== "pending" && ticket.approval_status !== "approved" && (
+                        <ToolbarAction
+                          icon="shield"
+                          label="Send for Approval"
+                          onClick={handleOpenApprovalModal}
                         />
                       )}
                       {["open", "pending", "in_progress"].includes(ticket.status_key) && (
@@ -2773,14 +2807,14 @@ export default function TicketDetail() {
       <Modal
         open={showReassignModal}
         onClose={() => setShowReassignModal(false)}
-        title={reassignMode === "manager_back" ? "Reassign back to engineer" : isNocMember ? "Triage Ticket" : "Reassign Ticket"}
+        title={reassignMode === "manager_back" ? "Reassign back to engineer" : isNocMember && inTriageQueue ? "Triage Ticket" : "Reassign Ticket"}
         size="sm"
         actions={
           <>
             <Button variant="secondary" onClick={() => setShowReassignModal(false)}>Cancel</Button>
             <Button onClick={handleReassign} loading={reassigning}>
               <Icon name="arrowRight" size={14} className="mr-1.5" />
-              {reassignMode === "manager_back" ? "Reassign back" : isNocMember ? "Triage Ticket" : "Reassign Ticket"}
+              {reassignMode === "manager_back" ? "Reassign back" : isNocMember && inTriageQueue ? "Triage Ticket" : "Reassign Ticket"}
             </Button>
           </>
         }

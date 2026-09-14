@@ -15,7 +15,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { reportsApi, API_URL, api } from "../services/api";
-import { useNavigate } from "react-router-dom";
+import { useWsNavigate } from "../contexts/workspace";
 import SlaInsights from "../components/reports/SlaInsights";
 import { useToast } from "../contexts/toast";
 import Badge from "../components/ui/Badge";
@@ -144,7 +144,7 @@ function Gauge({ pct, color, width = 150, height = 92 }) {
 
 export default function Reports() {
   const toast = useToast();
-  const navigate = useNavigate();
+  const navigate = useWsNavigate();
   const [tab, setTab] = useState("overview");
   const [dateRange, setDateRange] = useState("30");
   const [loading, setLoading] = useState(true);

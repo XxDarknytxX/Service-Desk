@@ -12,6 +12,7 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import { api, templatesApi, formsApi } from "../../services/api";
 import { useToast } from "../../contexts/toast";
+import { useWorkspace } from "../../contexts/workspace";
 import Button from "../ui/Button";
 import Modal from "../ui/Modal";
 import Input, { Textarea, Select } from "../ui/Input";
@@ -144,8 +145,16 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
   const organizations = useMemo(() => meta?.organizations || [], [meta]);
   const serviceCategories = useMemo(() => meta?.serviceCategories || [], [meta]);
   const isAgent = user?.roles?.includes("admin") || user?.roles?.includes("agent");
-  // Corporate customers raise requests only, via the category picker.
-  const isCorporate = !isAgent && user?.roles?.includes("corporate_customer");
+  // In the corporate app EVERY request is raised through the service-category
+  // flow — by the customer, or by staff on a customer's behalf. The internal
+  // app never offers it (no templates/approvals exist on the corporate side).
+  const { isCorporate: inCorporateApp } = useWorkspace();
+  const isCorporate = inCorporateApp;
+  const raisingForCustomer = inCorporateApp && isAgent;
+  const customers = useMemo(
+    () => users.filter((u) => (u.roles || []).includes("corporate_customer") && u.is_active !== 0),
+    [users]
+  );
 
   // Find default organization (try configured name first, then fall back to first available)
   const defaultOrgId = useMemo(() => {
@@ -228,7 +237,9 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
 
   // Load users list for user_lookup fields
   useEffect(() => {
-    if (open && users.length === 0) {
+    // Staff only — the directory isn't available to customers. Scoped to the
+    // app on screen, so the corporate picker only ever lists customers.
+    if (open && isAgent && users.length === 0) {
       api("/users").then((d) => setUsers(d.items || d.users || [])).catch(() => {});
     }
   }, [open]);
@@ -340,6 +351,7 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
     // Corporate requests: category, subject and description are all required.
     if (mode === "corporate") {
       if (!form.serviceCategoryKey) { toast.error("Please choose a category for your request"); return; }
+      if (raisingForCustomer && !form.requesterId) { toast.error("Choose the customer this request is for"); return; }
       if (!form.subject.trim()) { toast.error("Please add a subject for your request"); return; }
       if (!form.description.trim()) { toast.error("Please describe your request so the team can help"); return; }
     }
@@ -474,6 +486,97 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
     } finally {
       setLoading(false);
     }
+  }
+
+  // ─── Corporate: staff raising a request FOR a customer (required) ─────────
+  function renderCustomerPicker() {
+    const q = requesterSearch.toLowerCase();
+    const matches = customers.filter(
+      (u) => !q || (u.full_name || "").toLowerCase().includes(q) || (u.email || "").toLowerCase().includes(q) || (u.company || "").toLowerCase().includes(q)
+    );
+    const selected = customers.find((u) => String(u.id) === String(form.requesterId));
+
+    return (
+      <div className="space-y-2">
+        <SectionHeading icon="building" tone="accent" title="Customer" hint="Corporate requests are always raised for a customer." />
+        <div ref={requesterRef} className="relative">
+          <div
+            className={cn(
+              "flex items-center gap-2.5 px-3.5 py-2.5 rounded-lg cursor-text",
+              "bg-[var(--bg-elevated)] border",
+              requesterOpen ? "border-[var(--accent)] ring-2 ring-[var(--accent)]/20" : "border-[var(--border-default)] hover:border-[var(--border-hover)]",
+              "transition-all duration-150"
+            )}
+            onClick={() => setRequesterOpen(true)}
+          >
+            <Icon name="building" size={15} className="text-[var(--fg-muted)] flex-shrink-0" />
+            {selected ? (
+              <span className="flex-1 min-w-0 text-sm">
+                <span className="font-medium text-[var(--fg-primary)]">{selected.full_name || selected.email}</span>
+                {selected.company && <span className="text-[var(--fg-muted)]"> · {selected.company}</span>}
+              </span>
+            ) : (
+              <input
+                type="text"
+                placeholder="Search customers by name, email or company..."
+                value={requesterSearch}
+                onChange={(e) => { setRequesterSearch(e.target.value); setRequesterOpen(true); }}
+                onFocus={() => setRequesterOpen(true)}
+                className="flex-1 bg-transparent text-sm text-[var(--fg-primary)] placeholder:text-[var(--fg-muted)] outline-none"
+              />
+            )}
+            {selected ? (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); updateField("requesterId", ""); setRequesterSearch(""); }}
+                className="text-[var(--fg-muted)] hover:text-[var(--fg-primary)] transition-colors"
+                title="Change customer"
+              >
+                <Icon name="close" size={14} />
+              </button>
+            ) : (
+              <Icon name="chevronDown" size={14} className="text-[var(--fg-muted)] flex-shrink-0" />
+            )}
+          </div>
+
+          {requesterOpen && !selected && (
+            <div className={cn(
+              "absolute z-50 left-0 right-0 mt-1.5 max-h-52 overflow-y-auto p-1",
+              "bg-[var(--bg-elevated)] border border-[var(--border-default)]",
+              "rounded-xl shadow-[var(--shadow-elevated)] animate-slide-down"
+            )}>
+              {matches.length === 0 ? (
+                <p className="px-3 py-2.5 text-sm text-[var(--fg-muted)]">
+                  {customers.length === 0 ? "No corporate customers yet — add one under Customers." : "No matching customers"}
+                </p>
+              ) : (
+                matches.slice(0, 20).map((u) => (
+                  <button
+                    key={u.id}
+                    type="button"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      updateField("requesterId", String(u.id));
+                      setRequesterSearch("");
+                      setRequesterOpen(false);
+                    }}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 text-left rounded-lg hover:bg-[var(--bg-surface-hover)] transition-colors"
+                  >
+                    <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 bg-[var(--accent)]/10 text-[var(--accent)] text-xs font-semibold">
+                      {(u.full_name || u.email || "C")[0].toUpperCase()}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-[var(--fg-primary)] truncate">{u.full_name || u.email}</p>
+                      <p className="text-xs text-[var(--fg-muted)] truncate">{[u.company, u.email].filter(Boolean).join(" · ")}</p>
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
   }
 
   // ─── "Create on behalf" requester picker (shared by manual + template forms) ──
@@ -980,6 +1083,7 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
             <button type="button" onClick={() => setCorpStep(1)} className="text-[11px] font-medium text-[var(--accent)] hover:underline shrink-0">Change</button>
           </div>
         )}
+        {raisingForCustomer && renderCustomerPicker()}
         <SectionHeading icon="pencil" tone="violet" title="Tell us more" hint="A short summary and any useful detail." />
         <Input
           label="Subject"

@@ -2,13 +2,16 @@
 import { Router } from "express";
 import { body } from "express-validator";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireStaff } from "../middleware/workspace.js";
 
 export function makeTeamRouter(controller) {
   const router = Router();
 
   router.get("/teams/modules", requireAuth, requireRole("admin"), controller.getModuleRegistry);
-  router.get("/teams", requireAuth, controller.list);
-  router.get("/teams/:id/members", requireAuth, controller.getMembers);
+  // Staff only (customers could previously list every team and its members'
+  // emails, titles and managers); further scoped to the caller's app.
+  router.get("/teams", requireAuth, requireStaff, controller.list);
+  router.get("/teams/:id/members", requireAuth, requireStaff, controller.getMembers);
   router.get("/teams/:id/access", requireAuth, requireRole("admin"), controller.getTeamAccess);
   router.put("/teams/:id/access", requireAuth, requireRole("admin"), controller.setTeamAccess);
 

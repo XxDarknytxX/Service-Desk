@@ -2,6 +2,13 @@
 import { validationResult } from "express-validator";
 import { processTicketApproval, processTemplateApprovalFlow } from "../services/approvalWorkflow.js";
 import { makeApprovalSlaService } from "../services/approvalSlaService.js";
+import {
+  resolveRequestWorkspace,
+  getTriageTeamId,
+  isTriageMember,
+  getCorporateQueueTeamIds,
+  getServiceDeliveryUserIds,
+} from "../middleware/workspace.js";
 
 const send = {
   ok: (res, data = {}) => res.json(data),
@@ -16,15 +23,23 @@ function isAgent(user) {
   return (user.roles || []).includes("admin") || (user.roles || []).includes("agent");
 }
 
-// The NOC team is the triage queue — only its members (and admins) may move a
-// ticket from one team to another. Everyone else flags it back to NOC instead.
+// The NOC team is the corporate triage queue — only its members (and admins) may
+// move a corporate ticket from one team to another. Everyone else flags it back
+// to NOC instead. Identified by teams.corporate_role = 'triage', not by its name,
+// so renaming the team no longer silently switches triage off.
 async function isNocMember(pool, userId) {
-  const [rows] = await pool.query(
-    `SELECT 1 FROM team_members tm JOIN teams t ON t.id = tm.team_id
-     WHERE t.name = 'NOC' AND tm.user_id = ? LIMIT 1`,
-    [userId]
-  );
-  return rows.length > 0;
+  return isTriageMember(pool, userId);
+}
+
+// Which app a team belongs to ('internal' | 'corporate'), or null if no team.
+async function getTeamWorkspace(pool, teamId) {
+  if (!teamId) return null;
+  const [[row]] = await pool.query("SELECT workspace FROM teams WHERE id = ?", [teamId]);
+  return row?.workspace || null;
+}
+
+function sendWorkspaceError(res, err) {
+  return res.status(err.status || 403).json({ error: err.message || "Forbidden" });
 }
 
 const ALLOWED_LOOKUP_TABLES = ["ticket_statuses", "ticket_priorities", "ticket_types", "ticket_channels"];
@@ -179,8 +194,7 @@ const MANAGER_SLA_MINUTES = { 1: 240, 2: 120, 3: 60, 4: 30 }; // low / normal / 
 const DEFAULT_MANAGER_MINUTES = 120;
 
 async function getNocTeamId(pool) {
-  const [[row]] = await pool.query(`SELECT id FROM teams WHERE name = 'NOC' LIMIT 1`);
-  return row?.id || null;
+  return getTriageTeamId(pool);
 }
 
 // The team's manager is its lead (team_members.is_lead). Only the manager (or an
@@ -557,6 +571,17 @@ export function makeTicketController(pool) {
         const where = [];
         const params = [];
 
+        // Every list is scoped to ONE app. Corporate and internal tickets never
+        // appear in each other's queues; admins pick which via ?workspace=.
+        let workspace;
+        try {
+          ({ workspace } = await resolveRequestWorkspace(req));
+        } catch (err) {
+          return sendWorkspaceError(res, err);
+        }
+        where.push("t.workspace = ?");
+        params.push(workspace);
+
         if (!isAgent(req.user)) {
           where.push("t.requester_id = ?");
           params.push(req.user.id);
@@ -706,6 +731,7 @@ export function makeTicketController(pool) {
             ass.full_name AS assignee_name, ass.email AS assignee_email,
             org.name AS organization_name,
             team.name AS team_name,
+            team.corporate_role AS team_corporate_role,
             (SELECT tm.user_id FROM team_members tm WHERE tm.team_id = t.team_id AND tm.is_lead = 1 LIMIT 1) AS team_lead_id,
             EXISTS(SELECT 1 FROM team_members tmv WHERE tmv.team_id = t.team_id AND tmv.user_id = ?) AS viewer_is_team_member,
             sc.name AS service_category_name,
@@ -886,34 +912,115 @@ export function makeTicketController(pool) {
           templateResponses,
         } = req.body;
 
-        const requester = isAgent(req.user) && requesterId ? requesterId : req.user.id;
-        if (!isAgent(req.user) && requesterId && requesterId !== req.user.id) {
+        // Which app this ticket is raised in. Customers and corporate staff can
+        // only ever raise corporate tickets; internal staff only internal ones;
+        // admins choose (the frontend passes the view they're in).
+        let workspace;
+        try {
+          ({ workspace } = await resolveRequestWorkspace(req));
+        } catch (err) {
+          return sendWorkspaceError(res, err);
+        }
+        const staff = isAgent(req.user);
+        const isCorporate = workspace === "corporate";
+
+        if (!staff && requesterId && Number(requesterId) !== req.user.id) {
           return send.forbidden(res);
+        }
+
+        // ── Requester ────────────────────────────────────────────────────
+        // Staff may raise on someone's behalf, but only for a requester who
+        // belongs to the same app: a corporate request is always for a
+        // corporate customer, an internal one never is.
+        let requester = req.user.id;
+        if (staff && requesterId) {
+          const [[reqUser]] = await pool.query(
+            `SELECT u.id, u.is_active,
+                    EXISTS(SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+                            WHERE ur.user_id = u.id AND r.name = 'corporate_customer') AS is_customer
+               FROM users u WHERE u.id = ?`,
+            [Number(requesterId)]
+          );
+          if (!reqUser || !reqUser.is_active) return send.bad(res, "Requester not found or inactive");
+          if (isCorporate && !reqUser.is_customer) {
+            return send.bad(res, "A corporate request must be raised for a corporate customer.");
+          }
+          if (!isCorporate && reqUser.is_customer) {
+            return send.bad(res, "Corporate customers can't be requesters on internal tickets.");
+          }
+          requester = reqUser.id;
+        } else if (staff && isCorporate) {
+          return send.bad(res, "Choose the corporate customer this request is for.");
         }
 
         const requestedStatus = statusKey === "draft" ? "draft" : "open";
         const statusId =
           (await getLookupId(pool, "ticket_statuses", requestedStatus)) ||
           (await getLookupId(pool, "ticket_statuses", "open"));
+        // Corporate priority is NOC's call during triage — a customer can't
+        // self-declare "urgent" and jump the queue.
+        const effectivePriorityKey = isCorporate && !staff ? "normal" : (priorityKey || "normal");
         const priorityId =
-          (await getLookupId(pool, "ticket_priorities", priorityKey || "normal")) || 1;
+          (await getLookupId(pool, "ticket_priorities", effectivePriorityKey)) || 1;
         const typeId = (await getLookupId(pool, "ticket_types", typeKey || "incident")) || 1;
         const channelId =
-          (await getLookupId(pool, "ticket_channels", channelKey || "portal")) || 1;
+          (await getLookupId(pool, "ticket_channels", staff ? (channelKey || "portal") : "portal")) || 1;
 
-        // Corporate self-service: the chosen service category routes the request to
-        // a team queue. Customers always route by category; agents may still pass an
-        // explicit teamId to override it.
         let serviceCategoryId = null;
-        let routedTeamId = teamId || null;
-        if (serviceCategoryKey) {
+        let routedTeamId = null;
+        let effectiveTemplateId = null;
+        let effectiveAssigneeId = null;
+
+        if (isCorporate) {
+          // ── Corporate: the service category decides the queue ─────────
+          if (templateId) return send.bad(res, "Templates belong to the internal service desk.");
+          if (!serviceCategoryKey) return send.bad(res, "Please choose a service category for this request.");
           const [[cat]] = await pool.query(
-            "SELECT id, routing_team_id FROM service_categories WHERE `key` = ? AND is_active = 1 LIMIT 1",
+            `SELECT sc.id, sc.routing_team_id, t.workspace AS team_workspace
+               FROM service_categories sc LEFT JOIN teams t ON t.id = sc.routing_team_id
+              WHERE sc.\`key\` = ? AND sc.is_active = 1 LIMIT 1`,
             [serviceCategoryKey]
           );
-          if (cat) {
-            serviceCategoryId = cat.id;
-            if (!teamId || !isAgent(req.user)) routedTeamId = cat.routing_team_id || routedTeamId;
+          if (!cat) return send.bad(res, "That service category doesn't exist.");
+          // Refuse rather than create a ticket that lands in nobody's queue.
+          if (!cat.routing_team_id || cat.team_workspace !== "corporate") {
+            return send.bad(res, "This service category isn't set up yet. Please contact Vodafone support.");
+          }
+          serviceCategoryId = cat.id;
+          routedTeamId = cat.routing_team_id;
+
+          // Staff may override the queue — but only to another corporate team.
+          if (staff && teamId && Number(teamId) !== routedTeamId) {
+            if ((await getTeamWorkspace(pool, Number(teamId))) !== "corporate") {
+              return send.bad(res, "A corporate request can only be routed to a corporate team.");
+            }
+            routedTeamId = Number(teamId);
+          }
+          if (staff && assigneeId) effectiveAssigneeId = Number(assigneeId);
+        } else {
+          // ── Internal: teams, templates, approvals ─────────────────────
+          if (serviceCategoryKey) {
+            return send.bad(res, "Service categories belong to the corporate service desk.");
+          }
+          if (teamId) {
+            if ((await getTeamWorkspace(pool, Number(teamId))) !== "internal") {
+              return send.bad(res, "An internal ticket can only be assigned to an internal team.");
+            }
+            routedTeamId = Number(teamId);
+          }
+          if (templateId) {
+            const [[tmpl]] = await pool.query(
+              "SELECT id, default_assignee_id FROM ticket_templates WHERE id = ?",
+              [templateId]
+            );
+            if (!tmpl) return send.bad(res, "Template not found");
+            effectiveTemplateId = tmpl.id;
+            // A non-agent can't choose who works their ticket; the template's
+            // configured default is what applies. (Previously ANY templateId
+            // let the client set an arbitrary assignee.)
+            effectiveAssigneeId = staff ? (assigneeId ? Number(assigneeId) : null) : tmpl.default_assignee_id || null;
+          } else if (staff && assigneeId) {
+            effectiveAssigneeId = Number(assigneeId);
           }
         }
 
@@ -921,8 +1028,8 @@ export function makeTicketController(pool) {
         const [result] = await pool.query(
           `INSERT INTO tickets
             (ticket_number, subject, description, status_id, priority_id, type_id, service_category_id, channel_id,
-             requester_id, assignee_id, team_id, organization_id, template_id, due_at, estimated_cost, created_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             requester_id, assignee_id, team_id, workspace, organization_id, template_id, due_at, estimated_cost, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             tempNumber,
             subject,
@@ -933,11 +1040,12 @@ export function makeTicketController(pool) {
             serviceCategoryId,
             channelId,
             requester,
-            isAgent(req.user) || templateId ? assigneeId || null : null,
+            effectiveAssigneeId,
             routedTeamId,
-            organizationId || null,
-            templateId || null,
-            dueAt || null,
+            workspace,
+            staff ? organizationId || null : null,
+            effectiveTemplateId,
+            staff ? dueAt || null : null,
             estimatedCost || null,
             req.user.id,
           ]
@@ -1038,27 +1146,31 @@ export function makeTicketController(pool) {
           requesterDepartmentId = reqUser[0]?.department_id || null;
         } catch (_) {}
 
-        // Check and process approval workflow
-        // Template-specific flows take priority over global approval rules
-        let approvalResult;
-        if (templateId) {
-          approvalResult = await processTemplateApprovalFlow(pool, ticketId, templateId, {
-            priority_key: priorityKey || "normal",
-            type_key: typeKey || "incident",
-            team_id: routedTeamId,
-            department_id: requesterDepartmentId,
-            estimated_cost: estimatedCost || null,
-          }, requester);
-        }
-        if (!approvalResult || !approvalResult.requiresApproval) {
-          // Fallback to global approval rules
-          approvalResult = await processTicketApproval(pool, ticketId, {
-            priority_key: priorityKey || "normal",
-            type_key: typeKey || "incident",
-            team_id: routedTeamId,
-            department_id: requesterDepartmentId,
-            estimated_cost: estimatedCost || null,
-          }, requester);
+        // Check and process approval workflow — an INTERNAL service-desk feature.
+        // Corporate requests go through NOC triage and delivery queues instead, so
+        // internal approval rules must never pause a customer's request.
+        // Template-specific flows take priority over global approval rules.
+        let approvalResult = { requiresApproval: false };
+        if (!isCorporate) {
+          if (effectiveTemplateId) {
+            approvalResult = await processTemplateApprovalFlow(pool, ticketId, effectiveTemplateId, {
+              priority_key: effectivePriorityKey,
+              type_key: typeKey || "incident",
+              team_id: routedTeamId,
+              department_id: requesterDepartmentId,
+              estimated_cost: estimatedCost || null,
+            }, requester);
+          }
+          if (!approvalResult || !approvalResult.requiresApproval) {
+            // Fallback to global approval rules
+            approvalResult = await processTicketApproval(pool, ticketId, {
+              priority_key: effectivePriorityKey,
+              type_key: typeKey || "incident",
+              team_id: routedTeamId,
+              department_id: requesterDepartmentId,
+              estimated_cost: estimatedCost || null,
+            }, requester);
+          }
         }
 
         // If ticket requires approval, pause SLA — team can't work until approved
@@ -1112,9 +1224,9 @@ export function makeTicketController(pool) {
           }
         }
 
-        // Corporate-flow notifications: alert the routed queue + the Service
-        // Delivery Manager so an engineer can pick it up and the SDM can re-route.
-        if (serviceCategoryId && routedTeamId) {
+        // Corporate-flow notifications: alert the routed queue + Service Delivery
+        // so an engineer can pick it up and the SDM can re-route.
+        if (isCorporate && serviceCategoryId && routedTeamId) {
           try {
             const [[cat]] = await pool.query("SELECT name FROM service_categories WHERE id = ?", [serviceCategoryId]);
             const [[team]] = await pool.query("SELECT name FROM teams WHERE id = ?", [routedTeamId]);
@@ -1124,10 +1236,7 @@ export function makeTicketController(pool) {
               "SELECT user_id FROM team_members WHERE team_id = ? AND user_id <> ?",
               [routedTeamId, requester]
             );
-            const [sdms] = await pool.query(
-              "SELECT id FROM users WHERE title = 'Service Delivery Manager' AND is_active = 1 AND id <> ?",
-              [requester]
-            );
+            const sdmIds = await getServiceDeliveryUserIds(pool, requester);
             const recips = new Map();
             for (const m of members) recips.set(m.user_id, [
               m.user_id, ticketId,
@@ -1135,8 +1244,8 @@ export function makeTicketController(pool) {
               `${ticketNumber} — ${subject}`,
               "queue",
             ]);
-            for (const s of sdms) recips.set(s.id, [
-              s.id, ticketId,
+            for (const sdmId of sdmIds) recips.set(sdmId, [
+              sdmId, ticketId,
               `Corporate request routed — ${catName}`,
               `${ticketNumber} routed to ${teamName}. Reassign if it belongs in another queue.`,
               "sdm",
@@ -1190,17 +1299,36 @@ export function makeTicketController(pool) {
 
         // Apply any edited fields + re-route by (possibly changed) service category.
         const { subject, description, priorityKey, typeKey, serviceCategoryKey, estimatedCost } = req.body;
+        // A draft's app was fixed when it was created; the same per-app rules as
+        // create() apply to anything edited on the way to submitting it.
+        const isCorporate = t.workspace === "corporate";
         const sets = [], vals = [];
         if (subject !== undefined) { sets.push("subject = ?"); vals.push(subject); }
         if (description !== undefined) { sets.push("description = ?"); vals.push(description || null); }
         let priorityId = t.priority_id;
-        if (priorityKey) { const pid = await getLookupId(pool, "ticket_priorities", priorityKey); if (pid) { priorityId = pid; sets.push("priority_id = ?"); vals.push(pid); } }
+        // Corporate priority is NOC's call — a customer can't set it on a draft either.
+        if (priorityKey && !(isCorporate && !isAgent(req.user))) { const pid = await getLookupId(pool, "ticket_priorities", priorityKey); if (pid) { priorityId = pid; sets.push("priority_id = ?"); vals.push(pid); } }
         if (typeKey) { const tid = await getLookupId(pool, "ticket_types", typeKey); if (tid) { sets.push("type_id = ?"); vals.push(tid); } }
         let serviceCategoryId = t.service_category_id;
         let routedTeamId = t.team_id;
         if (serviceCategoryKey) {
-          const [[cat]] = await pool.query("SELECT id, routing_team_id FROM service_categories WHERE `key` = ? AND is_active = 1 LIMIT 1", [serviceCategoryKey]);
-          if (cat) { serviceCategoryId = cat.id; routedTeamId = cat.routing_team_id || routedTeamId; sets.push("service_category_id = ?"); vals.push(cat.id); sets.push("team_id = ?"); vals.push(routedTeamId); }
+          if (!isCorporate) return send.bad(res, "Service categories belong to the corporate service desk.");
+          const [[cat]] = await pool.query(
+            `SELECT sc.id, sc.routing_team_id, tt.workspace AS team_workspace
+               FROM service_categories sc LEFT JOIN teams tt ON tt.id = sc.routing_team_id
+              WHERE sc.\`key\` = ? AND sc.is_active = 1 LIMIT 1`,
+            [serviceCategoryKey]
+          );
+          if (!cat) return send.bad(res, "That service category doesn't exist.");
+          if (!cat.routing_team_id || cat.team_workspace !== "corporate") {
+            return send.bad(res, "This service category isn't set up yet. Please contact Vodafone support.");
+          }
+          serviceCategoryId = cat.id; routedTeamId = cat.routing_team_id;
+          sets.push("service_category_id = ?"); vals.push(cat.id); sets.push("team_id = ?"); vals.push(routedTeamId);
+        }
+        // Never promote a corporate draft that would land in nobody's queue.
+        if (!draftOnly && isCorporate && (!serviceCategoryId || !routedTeamId)) {
+          return send.bad(res, "Please choose a service category for this request.");
         }
         if (estimatedCost !== undefined) { sets.push("estimated_cost = ?"); vals.push(estimatedCost || null); }
         if (sets.length) { vals.push(ticketId); await pool.query(`UPDATE tickets SET ${sets.join(", ")} WHERE id = ?`, vals); }
@@ -1242,10 +1370,13 @@ export function makeTicketController(pool) {
         // Approval flow (pause SLA + assign approval SLAs if required).
         let requesterDepartmentId = null;
         try { const [ru] = await pool.query("SELECT department_id FROM users WHERE id = ?", [t.requester_id]); requesterDepartmentId = ru[0]?.department_id || null; } catch (_) {}
-        const approvalResult = await processTicketApproval(pool, ticketId, {
-          priority_key: priorityKey || "normal", type_key: typeKey || "incident",
-          team_id: routedTeamId, department_id: requesterDepartmentId, estimated_cost: estimatedCost || null,
-        }, t.requester_id);
+        // Approvals are an internal service-desk feature — never on corporate requests.
+        const approvalResult = isCorporate
+          ? { requiresApproval: false }
+          : await processTicketApproval(pool, ticketId, {
+              priority_key: priorityKey || "normal", type_key: typeKey || "incident",
+              team_id: routedTeamId, department_id: requesterDepartmentId, estimated_cost: estimatedCost || null,
+            }, t.requester_id);
         if (approvalResult && approvalResult.requiresApproval) {
           try {
             const [slas] = await pool.query(`SELECT response_due_at, resolve_due_at, response_met_at, resolve_met_at FROM ticket_slas WHERE ticket_id = ?`, [ticketId]);
@@ -1261,16 +1392,16 @@ export function makeTicketController(pool) {
         }
 
         // Corporate-flow notifications: alert the routed queue + the SDM.
-        if (serviceCategoryId && routedTeamId) {
+        if (isCorporate && serviceCategoryId && routedTeamId) {
           try {
             const [[cat]] = await pool.query("SELECT name FROM service_categories WHERE id = ?", [serviceCategoryId]);
             const [[team]] = await pool.query("SELECT name FROM teams WHERE id = ?", [routedTeamId]);
             const catName = cat?.name || "Service"; const teamName = team?.name || "the team";
             const [members] = await pool.query("SELECT user_id FROM team_members WHERE team_id = ? AND user_id <> ?", [routedTeamId, t.requester_id]);
-            const [sdms] = await pool.query("SELECT id FROM users WHERE title = 'Service Delivery Manager' AND is_active = 1 AND id <> ?", [t.requester_id]);
+            const sdmIds = await getServiceDeliveryUserIds(pool, t.requester_id);
             const recips = new Map();
             for (const m of members) recips.set(m.user_id, [m.user_id, ticketId, `New ${catName} request in ${teamName}`, `${ticketNumber} — ${subjectVal}`, "queue"]);
-            for (const s of sdms) recips.set(s.id, [s.id, ticketId, `Corporate request routed — ${catName}`, `${ticketNumber} routed to ${teamName}. Reassign if it belongs in another queue.`, "sdm"]);
+            for (const sdmId of sdmIds) recips.set(sdmId, [sdmId, ticketId, `Corporate request routed — ${catName}`, `${ticketNumber} routed to ${teamName}. Reassign if it belongs in another queue.`, "sdm"]);
             const rows = [...recips.values()];
             if (rows.length) await pool.query("INSERT INTO notifications (user_id, ticket_id, title, message, type) VALUES ?", [rows]);
           } catch (notifyErr) { console.error("Corporate routing notification error:", notifyErr); }
@@ -1341,12 +1472,32 @@ export function makeTicketController(pool) {
         // Priority (urgency) is NOC's call and drives the SLA — it can only be set
         // by NOC while the ticket is still in the triage queue (or by an admin).
         // Once it's routed to a handling team the priority is locked.
-        if (req.body.priority_id !== undefined && Number(req.body.priority_id) !== current.priority_id) {
+        // (Corporate only — on the internal desk, agents set priority as normal.)
+        if (current.workspace === "corporate" && req.body.priority_id !== undefined && Number(req.body.priority_id) !== current.priority_id) {
           const prIsAdmin = (req.user.roles || []).includes("admin");
           const nocTeamId = await getNocTeamId(pool);
           const inNocQueue = !!nocTeamId && current.team_id === nocTeamId;
           if (!prIsAdmin && !(inNocQueue && await isNocMember(pool, req.user.id))) {
             return send.forbidden(res, "Only NOC can set a ticket's priority, and only while it's in the triage queue.");
+          }
+        }
+
+        // A ticket never crosses apps: its team must belong to the same workspace.
+        // On the corporate side, moving between teams is also a triage action.
+        if (req.body.team_id !== undefined && (req.body.team_id || null) !== current.team_id) {
+          if (req.body.team_id) {
+            const targetWs = await getTeamWorkspace(pool, Number(req.body.team_id));
+            if (targetWs !== current.workspace) {
+              return send.bad(res, current.workspace === "corporate"
+                ? "A corporate request can only move to a corporate team."
+                : "An internal ticket can only move to an internal team.");
+            }
+          }
+          if (current.workspace === "corporate") {
+            const tIsAdmin = (req.user.roles || []).includes("admin");
+            if (!tIsAdmin && !(await isNocMember(pool, req.user.id))) {
+              return send.forbidden(res, "Only NOC can move a corporate request to another team — use \"Flag back to NOC\" instead.");
+            }
           }
         }
 
@@ -1592,10 +1743,43 @@ export function makeTicketController(pool) {
       const fields = Object.keys(updates).filter(k => allowedFields.includes(k));
       if (fields.length === 0) return send.bad(res, "No valid fields to update");
 
-      // Priority (urgency) is NOC's call — keep bulk priority changes to NOC
-      // members and admins (the per-ticket triage-window rule is enforced in update()).
-      if (updates.priority_id !== undefined) {
-        const bulkIsAdmin = (req.user.roles || []).includes("admin");
+      // A bulk action works inside ONE app, on tickets the caller can reach.
+      // (There's no :id param here, so the router-level ticket guard can't help.)
+      const bulkIds = ticketIds.map(Number);
+      if (bulkIds.some((id) => !Number.isInteger(id) || id <= 0)) return send.bad(res, "Invalid ticket id");
+      let bulkWorkspace;
+      try {
+        const [wsRows] = await pool.query(
+          `SELECT DISTINCT workspace FROM tickets WHERE id IN (${bulkIds.map(() => "?").join(",")})`,
+          bulkIds
+        );
+        const [[{ found }]] = await pool.query(
+          `SELECT COUNT(*) AS found FROM tickets WHERE id IN (${bulkIds.map(() => "?").join(",")})`,
+          bulkIds
+        );
+        if (found !== new Set(bulkIds).size) return send.bad(res, "One or more tickets were not found");
+        if (wsRows.length !== 1) return send.bad(res, "Bulk actions can't mix corporate and internal tickets");
+        bulkWorkspace = wsRows[0].workspace;
+        await resolveRequestWorkspace(req, bulkWorkspace);
+      } catch (err) {
+        if (err.status) return sendWorkspaceError(res, err);
+        throw err;
+      }
+      const bulkIsAdmin = (req.user.roles || []).includes("admin");
+
+      if (updates.team_id) {
+        if ((await getTeamWorkspace(pool, Number(updates.team_id))) !== bulkWorkspace) {
+          return send.bad(res, "Tickets can only move to a team in the same workspace.");
+        }
+        if (bulkWorkspace === "corporate" && !bulkIsAdmin && !(await isNocMember(pool, req.user.id))) {
+          return send.forbidden(res, "Only NOC can move corporate requests between teams.");
+        }
+      }
+
+      // Priority (urgency) is NOC's call on the corporate desk — keep bulk
+      // priority changes to NOC members and admins (the per-ticket triage-window
+      // rule is enforced in update()). Internal agents set priority as normal.
+      if (updates.priority_id !== undefined && bulkWorkspace === "corporate") {
         if (!bulkIsAdmin && !(await isNocMember(pool, req.user.id))) {
           return send.forbidden(res, "Only NOC can change ticket priority.");
         }
@@ -1723,7 +1907,7 @@ export function makeTicketController(pool) {
 
       try {
         const [currentRows] = await pool.query(
-          `SELECT t.priority_id, t.team_id, p.\`key\` AS priority_key
+          `SELECT t.priority_id, t.team_id, t.workspace, p.\`key\` AS priority_key
            FROM tickets t
            INNER JOIN ticket_priorities p ON p.id = t.priority_id
            WHERE t.id = ?`,
@@ -1732,13 +1916,13 @@ export function makeTicketController(pool) {
         if (currentRows.length === 0) return send.notFound(res);
         const current = currentRows[0];
 
-        // This endpoint bumps the ticket's PRIORITY, which is NOC's call and only
-        // while the ticket is in the triage queue — same rule as update(). After
-        // the ticket is routed to a handling team the priority is locked.
+        // This endpoint bumps the ticket's PRIORITY. On the corporate desk that's
+        // NOC's call and only while the ticket is in the triage queue — same rule
+        // as update(). Internal agents escalate priority as normal.
         const escIsAdmin = (req.user.roles || []).includes("admin");
         const escNocTeamId = await getNocTeamId(pool);
         const escInNocQueue = !!escNocTeamId && current.team_id === escNocTeamId;
-        if (!escIsAdmin && !(escInNocQueue && await isNocMember(pool, req.user.id))) {
+        if (current.workspace === "corporate" && !escIsAdmin && !(escInNocQueue && await isNocMember(pool, req.user.id))) {
           return send.forbidden(res, "Only NOC can change a ticket's priority, and only while it's in the triage queue.");
         }
 
@@ -1849,34 +2033,39 @@ export function makeTicketController(pool) {
       try {
         // Get current ticket state
         const [currentRows] = await pool.query(
-          `SELECT t.team_id, t.assignee_id, t.approval_status, t.priority_id, s.\`key\` AS status_key
+          `SELECT t.team_id, t.assignee_id, t.approval_status, t.priority_id, t.workspace, s.\`key\` AS status_key
            FROM tickets t JOIN ticket_statuses s ON s.id = t.status_id WHERE t.id = ?`,
           [ticketId]
         );
         if (currentRows.length === 0) return send.notFound(res);
         const current = currentRows[0];
 
-        // Moving a ticket to a DIFFERENT team is a triage action — restricted to
-        // NOC members + admins. Anyone else must flag it back to NOC instead.
         const changingTeam = team_id !== undefined && (team_id || null) !== current.team_id;
         if (changingTeam) {
           const isAdmin = (req.user.roles || []).includes("admin");
-          if (!isAdmin && !(await isNocMember(pool, req.user.id))) {
-            return send.forbidden(res, "Only NOC can reassign a ticket to another team — use \"Flag back to NOC\" instead.");
-          }
-          // A requirements note is mandatory on a team change (triage hand-off).
-          if (!reason || !reason.trim()) {
-            return send.bad(res, "A requirements note is required when reassigning to another team.");
-          }
-          // Triage targets are restricted to the corporate-flow teams (matches the
-          // UI dropdown). Enforced here too so a direct API call can't route a
-          // ticket back into NOC (which would leave it untriaged) or to an
-          // internal team that isn't part of this flow.
-          const [allowedTeams] = await pool.query(
-            `SELECT id FROM teams WHERE name IN ('Cloud','Transmission','MTX','Security Operations')`
-          );
-          if (!allowedTeams.some((t) => t.id === Number(team_id))) {
-            return send.bad(res, "Tickets can only be reassigned to Cloud, Transmission, MTX, or Security Operations.");
+          if (current.workspace === "corporate") {
+            // Moving a corporate request to a DIFFERENT team is a triage action —
+            // restricted to NOC members + admins. Anyone else flags it back to NOC.
+            if (!isAdmin && !(await isNocMember(pool, req.user.id))) {
+              return send.forbidden(res, "Only NOC can reassign a ticket to another team — use \"Flag back to NOC\" instead.");
+            }
+            // A requirements note is mandatory on a team change (triage hand-off).
+            if (!reason || !reason.trim()) {
+              return send.bad(res, "A requirements note is required when reassigning to another team.");
+            }
+            // Triage targets are the corporate DELIVERY QUEUES (teams with
+            // corporate_role = 'queue'). Enforced server-side so a direct API call
+            // can't route a request back into NOC (leaving it untriaged) or out
+            // into an internal team.
+            const queueIds = await getCorporateQueueTeamIds(pool);
+            if (!queueIds.includes(Number(team_id))) {
+              return send.bad(res, "Corporate requests can only be reassigned to a corporate delivery team.");
+            }
+          } else {
+            // Internal desk: any agent may move a ticket between internal teams.
+            if (!team_id || (await getTeamWorkspace(pool, Number(team_id))) !== "internal") {
+              return send.bad(res, "Internal tickets can only be reassigned to an internal team.");
+            }
           }
         }
 
@@ -2043,10 +2232,13 @@ export function makeTicketController(pool) {
       const ticketId = Number(req.params.id);
       const { reason } = req.body;
       try {
-        const [[noc]] = await pool.query(`SELECT id FROM teams WHERE name = 'NOC' LIMIT 1`);
-        if (!noc) return send.bad(res, "NOC team is not configured");
-        const [[current]] = await pool.query(`SELECT team_id, assignee_id, ticket_number, subject FROM tickets t WHERE id = ?`, [ticketId]);
+        const nocId = await getTriageTeamId(pool);
+        if (!nocId) return send.bad(res, "No triage team is configured");
+        const noc = { id: nocId };
+        const [[current]] = await pool.query(`SELECT team_id, assignee_id, ticket_number, subject, workspace FROM tickets t WHERE id = ?`, [ticketId]);
         if (!current) return send.notFound(res);
+        // NOC triage is part of the corporate flow; internal tickets are reassigned directly.
+        if (current.workspace !== "corporate") return send.bad(res, "Only corporate requests can be flagged back to NOC.");
         if (current.team_id === noc.id) return send.bad(res, "Ticket is already in the NOC queue");
 
         // Only the owning team (or its assignee, or an admin) can flag a ticket
@@ -2116,6 +2308,13 @@ export function makeTicketController(pool) {
       if (!team_id) return send.bad(res, "Team ID is required");
 
       try {
+        // A supporting team must work in the same app as the ticket.
+        const [[tws]] = await pool.query("SELECT workspace FROM tickets WHERE id = ?", [ticketId]);
+        if (!tws) return send.notFound(res);
+        if ((await getTeamWorkspace(pool, Number(team_id))) !== tws.workspace) {
+          return send.bad(res, "A supporting team must belong to the same workspace as the ticket.");
+        }
+
         // Check if team already assigned
         const [existing] = await pool.query(
           `SELECT id FROM ticket_teams WHERE ticket_id = ? AND team_id = ?`,

@@ -1,9 +1,12 @@
 // src/routes/templates.js
 import { Router } from "express";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
+import { requireWorkspace } from "../middleware/workspace.js";
 
 export function makeTemplateRouter(controller) {
   const router = Router();
+  // Ticket templates are an internal service-desk feature (path-scoped guard).
+  router.use(["/templates", "/tickets/:id/template-response"], requireAuth, requireWorkspace("internal"));
 
   // ── Categories ──
   router.get("/templates/categories", requireAuth, controller.getCategories);

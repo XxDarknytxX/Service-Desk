@@ -8,7 +8,8 @@
  */
 
 import { useEffect, useState, useCallback, useRef } from "react"
-import { useNavigate, useSearchParams } from "react-router-dom"
+import { useSearchParams } from "react-router-dom"
+import { useWsNavigate, useWorkspace } from "../contexts/workspace"
 import { api } from "../services/api"
 import { useMeta } from "../contexts/meta"
 import { useAuth } from "../contexts/auth"
@@ -54,13 +55,17 @@ function loadVisibleCols() {
 }
 
 export default function Tickets() {
-  const navigate = useNavigate()
+  const navigate = useWsNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const { meta } = useMeta()
   const { user } = useAuth()
   const toast = useToast()
   const isAgent = user?.roles?.includes("admin") || user?.roles?.includes("agent")
+  // `isCorporate` = the customer's own view of their requests. `inCorporateApp`
+  // = the corporate desk is on screen (customer, corporate staff, or an admin).
   const isCorporate = !isAgent && user?.roles?.includes("corporate_customer")
+  const { isCorporate: inCorporateApp } = useWorkspace()
+  const noun = inCorporateApp ? "request" : "ticket"
 
   const [tickets, setTickets] = useState([])
   const [loading, setLoading] = useState(true)
@@ -440,12 +445,13 @@ export default function Tickets() {
         { key: "closed-requests", label: "Closed Requests", icon: "checkCircle", desc: "Your completed requests" },
       ]
     : [
-        { key: "my-tickets", label: "My Tickets", icon: "user", desc: "Tickets assigned to me to work on" },
-        { key: "team-queue", label: "Team Queue", icon: "inbox", desc: "Unclaimed tickets in my team's queue" },
-        { key: "my-requests", label: "My Requests", icon: "fileText", desc: "Tickets I raised as requester" },
-        { key: "resolved", label: "Resolved", icon: "checkCircle", desc: "Completed tickets" },
-        { key: "all", label: "All Tickets", icon: "list", desc: "All tickets in system", adminOnly: true },
-      ].filter(tab => !tab.adminOnly || user?.roles?.includes('admin'))
+        { key: "my-tickets", label: inCorporateApp ? "My Requests" : "My Tickets", icon: "user", desc: `${inCorporateApp ? "Requests" : "Tickets"} assigned to me to work on` },
+        { key: "team-queue", label: "Team Queue", icon: "inbox", desc: `Unclaimed ${noun}s in my team's queue` },
+        // Staff are never the requester of a corporate request — customers are.
+        { key: "my-requests", label: "My Requests", icon: "fileText", desc: "Tickets I raised as requester", internalOnly: true },
+        { key: "resolved", label: "Resolved", icon: "checkCircle", desc: `Completed ${noun}s` },
+        { key: "all", label: inCorporateApp ? "All Requests" : "All Tickets", icon: "list", desc: `All ${noun}s in this desk`, adminOnly: true },
+      ].filter(tab => (!tab.adminOnly || user?.roles?.includes('admin')) && !(tab.internalOnly && inCorporateApp))
 
   // Reusable header control button
   const ControlButton = ({ active, title, onClick, children }) => (
@@ -470,8 +476,8 @@ export default function Tickets() {
         {/* Header */}
         <PageHeader
           icon="tickets"
-          title="Tickets"
-          subtitle={`${total} ${total === 1 ? "ticket" : "tickets"} in this view`}
+          title={inCorporateApp ? (isCorporate ? "My Requests" : "Corporate Requests") : "Tickets"}
+          subtitle={`${total} ${total === 1 ? noun : `${noun}s`} in this view`}
           actions={
             <>
               <ControlButton title="Refresh" onClick={() => fetchTickets()}>
@@ -531,7 +537,7 @@ export default function Tickets() {
               </ControlButton>
 
               <Button onClick={handleCreateTicket} icon={<Icon name="plus" size={16} />}>
-                New Ticket
+                {inCorporateApp ? "New Request" : "New Ticket"}
               </Button>
             </>
           }

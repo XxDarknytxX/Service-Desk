@@ -72,6 +72,15 @@ export function makeHierarchyController(pool) {
       }
 
       try {
+        // The org chart is Vodafone's staff structure — customers are never in it,
+        // either as a report or as a manager.
+        const [custRows] = await pool.query(
+          `SELECT ur.user_id FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+            WHERE r.name = 'corporate_customer' AND ur.user_id IN (?, ?)`,
+          [user_id, manager_id]
+        );
+        if (custRows.length) return send.bad(res, "Corporate customers can't be placed in the org hierarchy.");
+
         // Check for circular reference - walk up the proposed manager's chain
         // to see if user_id appears anywhere (would create a loop)
         const circularCheck = await checkCircularReference(pool, user_id, manager_id);

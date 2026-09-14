@@ -26,6 +26,16 @@ import Skeleton from "../components/ui/Skeleton";
 import useConfirm from "../components/ui/useConfirm";
 import { useAuth } from "../contexts/auth";
 import { useToast } from "../contexts/toast";
+import { useWorkspace } from "../contexts/workspace";
+import { Select } from "../components/ui/Input";
+
+// What a corporate team does in the request flow.
+const CORPORATE_ROLES = [
+  { value: "queue", label: "Delivery queue", hint: "Customers' requests route here by category; NOC can triage requests into it." },
+  { value: "triage", label: "Triage (NOC)", hint: "Receives \"Not sure\" requests, sets priority and routes them to a delivery queue." },
+  { value: "service_delivery", label: "Service delivery", hint: "Notified about every corporate request (SDM / SDE)." },
+];
+const CORPORATE_ROLE_LABEL = Object.fromEntries(CORPORATE_ROLES.map((r) => [r.value, r.label]));
 
 // Mini Team Hierarchy Component - Similar to main OrgChart
 
@@ -216,6 +226,9 @@ export default function Teams() {
   const [addMemberSearch, setAddMemberSearch] = useState("");
 
   const isAdmin = user?.roles?.includes("admin");
+  // Internal teams and corporate delivery teams are managed from their own app;
+  // the server lists only the teams of the app on screen.
+  const { isCorporate: inCorporateApp } = useWorkspace();
 
   useEffect(() => { loadTeams(); }, []);
 
@@ -230,25 +243,30 @@ export default function Teams() {
 
   function openCreateModal() {
     setEditingTeam(null);
-    setFormData({ name: "", description: "" });
+    setFormData({ name: "", description: "", corporate_role: "queue" });
     setShowModal(true);
   }
 
   function openEditModal(team) {
     setEditingTeam(team);
-    setFormData({ name: team.name || "", description: team.description || "" });
+    setFormData({ name: team.name || "", description: team.description || "", corporate_role: team.corporate_role || "queue" });
     setShowModal(true);
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
     setSubmitting(true);
+    // A team is created in the app it's created from. Only corporate teams carry
+    // a role (triage / delivery queue / service delivery).
+    const body = inCorporateApp
+      ? { ...formData, workspace: "corporate" }
+      : { name: formData.name, description: formData.description, workspace: "internal" };
     try {
       if (editingTeam) {
-        await api(`/teams/${editingTeam.id}`, { method: "PATCH", body: formData });
+        await api(`/teams/${editingTeam.id}`, { method: "PATCH", body });
         toast.success("Team updated");
       } else {
-        await api("/teams", { method: "POST", body: formData });
+        await api("/teams", { method: "POST", body });
         toast.success("Team created");
       }
       setShowModal(false);
@@ -285,12 +303,20 @@ export default function Teams() {
     setAddMemberSearch("");
     setLoadingMembers(true);
     try {
-      const [membersData, usersData] = await Promise.all([
+      // Candidates to add: staff only (customers can never be team members).
+      // An admin building a corporate delivery team usually moves an existing
+      // employee across, so admins get BOTH directories to pick from.
+      const [membersData, usersData, otherData] = await Promise.all([
         api(`/teams/${team.id}/members`),
         api("/users"),
+        isAdmin ? api(`/users?workspace=${inCorporateApp ? "internal" : "corporate"}`).catch(() => ({ items: [] })) : Promise.resolve({ items: [] }),
       ]);
       setTeamMembers(membersData.members || membersData.items || []);
-      setAllUsers(usersData.items || []);
+      const byId = new Map();
+      for (const u of [...(usersData.items || []), ...(otherData.items || [])]) {
+        if (!(u.roles || []).includes("corporate_customer")) byId.set(u.id, u);
+      }
+      setAllUsers([...byId.values()]);
     } catch (error) {
       console.error("Failed to load team members:", error);
       setTeamMembers([]);
@@ -474,10 +500,10 @@ export default function Teams() {
       {/* Header */}
       <PageHeader
         icon="teams"
-        title="Teams"
+        title={inCorporateApp ? "Delivery Teams" : "Teams"}
         subtitle={
           loading
-            ? "Organize agents by department or expertise"
+            ? inCorporateApp ? "The teams that triage and action corporate requests" : "Organize agents by department or expertise"
             : `${teams.length} ${teams.length === 1 ? "team" : "teams"} · ${totalMembers} ${totalMembers === 1 ? "member" : "members"} across your organization`
         }
         actions={
@@ -646,6 +672,11 @@ export default function Teams() {
                             <Icon name="teams" size={16} />
                           </div>
                           <span className="font-medium text-[var(--fg-primary)] truncate">{team.name}</span>
+                          {team.corporate_role && (
+                            <Badge tone={team.corporate_role === "triage" ? "amber" : team.corporate_role === "service_delivery" ? "violet" : "blue"} size="sm">
+                              {CORPORATE_ROLE_LABEL[team.corporate_role]}
+                            </Badge>
+                          )}
                         </div>
                       </td>
                       <td className="px-4 py-3 max-w-[360px]">
@@ -667,9 +698,9 @@ export default function Teams() {
                           </button>
                           {isAdmin && (
                             <>
-                              <button onClick={() => openPrivilegesModal(team)} title="Team privileges" className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-amber-500 hover:bg-amber-500/10 transition-all">
+                              {!inCorporateApp && (<button onClick={() => openPrivilegesModal(team)} title="Team privileges" className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-amber-500 hover:bg-amber-500/10 transition-all">
                                 <Icon name="shield" size={14} />
-                              </button>
+                              </button>)}
                               <button onClick={() => openEditModal(team)} title="Edit team" className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-surface)] transition-all">
                                 <Icon name="pencil" size={14} />
                               </button>
@@ -721,17 +752,20 @@ export default function Teams() {
                       className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <button
-                        onClick={() => openPrivilegesModal(team)}
-                        className={cn(
-                          "p-2 rounded-lg transition-all duration-150",
-                          "text-[var(--fg-muted)] hover:text-amber-500",
-                          "hover:bg-amber-500/10"
-                        )}
-                        title="Team Privileges"
-                      >
-                        <Icon name="shield" size={15} />
-                      </button>
+                      {/* Module privileges gate internal-desk modules — not applicable to corporate teams. */}
+                      {!inCorporateApp && (
+                        <button
+                          onClick={() => openPrivilegesModal(team)}
+                          className={cn(
+                            "p-2 rounded-lg transition-all duration-150",
+                            "text-[var(--fg-muted)] hover:text-amber-500",
+                            "hover:bg-amber-500/10"
+                          )}
+                          title="Team Privileges"
+                        >
+                          <Icon name="shield" size={15} />
+                        </button>
+                      )}
                       <button
                         onClick={() => openEditModal(team)}
                         className={cn(
@@ -761,6 +795,13 @@ export default function Teams() {
                 <h3 className="relative text-base font-semibold text-[var(--fg-primary)] mb-1.5 line-clamp-1 group-hover:text-[var(--accent)] transition-colors">
                   {team.name}
                 </h3>
+                {team.corporate_role && (
+                  <div className="relative mb-2">
+                    <Badge tone={team.corporate_role === "triage" ? "amber" : team.corporate_role === "service_delivery" ? "violet" : "blue"} size="sm">
+                      {CORPORATE_ROLE_LABEL[team.corporate_role]}
+                    </Badge>
+                  </div>
+                )}
                 <p className="relative text-sm text-[var(--fg-secondary)] line-clamp-2 mb-4 min-h-[40px] leading-relaxed">
                   {team.description || "No description provided"}
                 </p>
@@ -826,6 +867,22 @@ export default function Teams() {
                 rows={4}
                 helperText="Optional — appears on the team card to help others understand its focus."
               />
+              {inCorporateApp && (
+                <div>
+                  <Select
+                    label="Role in the corporate flow"
+                    value={formData.corporate_role || "queue"}
+                    onChange={(e) => setFormData({ ...formData, corporate_role: e.target.value })}
+                  >
+                    {CORPORATE_ROLES.map((r) => (
+                      <option key={r.value} value={r.value}>{r.label}</option>
+                    ))}
+                  </Select>
+                  <p className="mt-1.5 text-xs text-[var(--fg-tertiary)]">
+                    {CORPORATE_ROLES.find((r) => r.value === (formData.corporate_role || "queue"))?.hint}
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         </form>

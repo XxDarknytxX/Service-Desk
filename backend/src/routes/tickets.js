@@ -2,9 +2,16 @@
 import { Router } from "express";
 import { body } from "express-validator";
 import { requireAuth } from "../middleware/auth.js";
+import { ticketWorkspaceParam } from "../middleware/workspace.js";
 
 export function makeTicketRouter(controller) {
   const router = Router();
+
+  // Every route with a ticket :id first checks the caller can use that ticket's
+  // app (corporate vs internal). Runs after requireAuth, before the handler.
+  router.param("id", (req, res, next, id) => {
+    requireAuth(req, res, () => ticketWorkspaceParam(req, res, next, id));
+  });
 
   router.get("/tickets", requireAuth, controller.list);
   router.get("/tickets/:id", requireAuth, controller.getById);

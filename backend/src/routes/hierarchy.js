@@ -2,9 +2,13 @@
 import { Router } from "express";
 import { body } from "express-validator";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireStaff, requireWorkspace } from "../middleware/workspace.js";
 
 export function makeHierarchyRouter(controller) {
   const router = Router();
+  // Reporting lines are internal staff data: never readable by customers (the
+  // review showed any login could read anyone's management chain).
+  router.use("/hierarchy", requireAuth, requireStaff, requireWorkspace("internal"));
 
   // Get user's reporting chain
   router.get("/hierarchy/user/:id", requireAuth, controller.getUserChain);

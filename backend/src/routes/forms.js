@@ -1,9 +1,12 @@
 // src/routes/forms.js
 import express from "express";
 import { verifyToken, requireAgent } from "../middleware/auth.js";
+import { requireWorkspace } from "../middleware/workspace.js";
 
 export function makeFormsRouter(controller) {
   const router = express.Router();
+  // Customer forms are internal-desk tooling. Public /public/forms stays open.
+  router.use(["/forms", "/tickets/:ticketId/forms"], verifyToken, requireWorkspace("internal"));
 
   // ── Admin / agent management ──
   router.get("/forms", verifyToken, requireAgent, controller.list);

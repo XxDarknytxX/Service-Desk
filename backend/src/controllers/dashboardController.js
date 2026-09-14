@@ -1,4 +1,6 @@
 // src/controllers/dashboardController.js
+import { resolveRequestWorkspace } from "../middleware/workspace.js";
+
 const send = {
   ok: (res, data = {}) => res.json(data),
   serverErr: (res, msg = "Internal server error") => res.status(500).json({ error: msg }),
@@ -33,6 +35,16 @@ export function makeDashboardController(pool) {
         const filter = [];
         const params = [];
 
+        // One app's tickets only (admins choose via ?workspace=).
+        let workspace;
+        try {
+          ({ workspace } = await resolveRequestWorkspace(req));
+        } catch (err) {
+          return res.status(err.status || 403).json({ error: err.message });
+        }
+        filter.push("t.workspace = ?");
+        params.push(workspace);
+
         if (!isAgent(req.user)) {
           filter.push("t.requester_id = ?");
           params.push(req.user.id);
@@ -64,9 +76,11 @@ export function makeDashboardController(pool) {
           params
         );
 
-        // Get recent activity (last 10 events across all tickets)
-        const activityFilter = isAgent(req.user) ? "" : `WHERE t.requester_id = ?`;
-        const activityParams = isAgent(req.user) ? [] : [req.user.id];
+        // Get recent activity (last 15 events across this app's tickets)
+        const activityFilter = isAgent(req.user)
+          ? "WHERE t.workspace = ?"
+          : "WHERE t.workspace = ? AND t.requester_id = ?";
+        const activityParams = isAgent(req.user) ? [workspace] : [workspace, req.user.id];
         const [activity] = await pool.query(
           `SELECT e.id, e.ticket_id, e.event_type, e.payload_json, e.created_at,
                   u.full_name AS actor_name, u.email AS actor_email,
@@ -89,17 +103,17 @@ export function makeDashboardController(pool) {
         const [openCount] = await pool.query(
           `SELECT COUNT(*) as count FROM tickets t
            INNER JOIN ticket_statuses s ON s.id = t.status_id
-           WHERE s.\`key\` IN ('open', 'pending', 'in_progress') ${!isAgent(req.user) ? 'AND t.requester_id = ?' : ''}`,
-          isAgent(req.user) ? [] : [req.user.id]
+           WHERE t.workspace = ? AND s.\`key\` IN ('open', 'pending', 'in_progress') ${!isAgent(req.user) ? 'AND t.requester_id = ?' : ''}`,
+          isAgent(req.user) ? [workspace] : [workspace, req.user.id]
         );
 
         const [urgentCount] = await pool.query(
           `SELECT COUNT(*) as count FROM tickets t
            INNER JOIN ticket_priorities p ON p.id = t.priority_id
            INNER JOIN ticket_statuses s ON s.id = t.status_id
-           WHERE p.\`key\` IN ('high', 'urgent') AND s.is_closed = 0 AND s.\`key\` != 'draft'
+           WHERE t.workspace = ? AND p.\`key\` IN ('high', 'urgent') AND s.is_closed = 0 AND s.\`key\` != 'draft'
            ${!isAgent(req.user) ? 'AND t.requester_id = ?' : ''}`,
-          isAgent(req.user) ? [] : [req.user.id]
+          isAgent(req.user) ? [workspace] : [workspace, req.user.id]
         );
 
         return send.ok(res, {

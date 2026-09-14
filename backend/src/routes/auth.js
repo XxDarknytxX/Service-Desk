@@ -6,15 +6,9 @@ import { requireAuth } from "../middleware/auth.js";
 export function makeAuthRouter(controller) {
   const router = Router();
 
-  router.post(
-    "/auth/register",
-    [
-      body("email").isEmail().withMessage("Valid email required"),
-      body("password").isLength({ min: 6 }).withMessage("Password >= 6 chars"),
-      body("fullName").optional().isLength({ min: 2 }).withMessage("Name too short"),
-    ],
-    controller.register
-  );
+  // There is deliberately no /auth/register. Accounts are created by admins
+  // (staff) or as corporate customers — an open sign-up let anyone on the
+  // internet create a login and read internal data.
 
   router.post(
     "/auth/login",

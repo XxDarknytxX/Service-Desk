@@ -17,6 +17,7 @@ import Icon from "../components/ui/Icon";
 import VodafoneLogo from "../components/ui/VodafoneLogo";
 import { useBoot } from "../contexts/boot";
 import { useTheme } from "../contexts/theme";
+import { homePathFor } from "../contexts/workspace";
 
 function cn(...parts) {
   return parts.filter(Boolean).join(" ");
@@ -69,10 +70,11 @@ export default function Login() {
 
     setLoading(true);
     try {
-      await login(email, password);
-      // Recede the login into the blooming orb, then hand off to the app.
+      const signedIn = await login(email, password);
+      // Recede the login into the blooming orb, then hand off to the app the
+      // user works in (corporate customers/staff → Corporate, others → Internal).
       setLeaving(true);
-      boot({ onCovered: () => navigate("/dashboard") });
+      boot({ onCovered: () => navigate(homePathFor(signedIn)) });
     } catch (err) {
       toast.error(err.message || "Invalid credentials");
       setLoading(false);

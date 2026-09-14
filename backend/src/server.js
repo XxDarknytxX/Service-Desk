@@ -7,6 +7,7 @@ import compression from "compression";
 import rateLimit from "express-rate-limit";
 import { getPool } from "./config/db.js";
 import { setAuthPool } from "./middleware/auth.js";
+import { setWorkspacePool } from "./middleware/workspace.js";
 import { makeAuthController } from "./controllers/authController.js";
 import { makeTicketController } from "./controllers/ticketController.js";
 import { makeUserController } from "./controllers/userController.js";
@@ -114,7 +115,6 @@ const authLimiter = rateLimit({
   message: { error: "Too many auth attempts, please try again later" },
 });
 app.use("/api/login", authLimiter);
-app.use("/api/register", authLimiter);
 
 // Each forgot-password request can send an email, so it gets its own budget.
 // Kept modest rather than tight: many staff can share one egress IP.
@@ -173,6 +173,8 @@ const pool = await getPool();
 // Lets requireAuth reject tokens for deactivated accounts and sessions that
 // predate a password change.
 setAuthPool(pool);
+// Lets route guards decide which app (corporate / internal) a user can reach.
+setWorkspacePool(pool);
 const auth = makeAuthController(pool);
 const tickets = makeTicketController(pool);
 const users = makeUserController(pool);
@@ -183,7 +185,6 @@ const dashboard = makeDashboardController(pool);
 const kb = makeKbController(pool);
 const assets = makeAssetController(pool);
 const sla = makeSlaController(pool);
-const reports = makeReportController(pool);
 const departments = makeDepartmentController(pool);
 const hierarchy = makeHierarchyController(pool);
 const approvals = makeApprovalController(pool);
@@ -205,7 +206,8 @@ app.use("/api", makeDashboardRouter(dashboard));
 app.use("/api", makeKbRouter(kb));
 app.use("/api", makeAssetRouter(assets));
 app.use("/api", makeSlaRouter(sla));
-app.use("/api", makeReportRouter(reports));
+// Reports are instantiated per workspace over a pool that only sees that app's tickets.
+app.use("/api", makeReportRouter(makeReportController, pool));
 app.use("/api", makeDepartmentRouter(departments));
 app.use("/api", makeHierarchyRouter(hierarchy));
 app.use("/api", makeApprovalRouter(approvals));

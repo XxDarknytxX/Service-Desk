@@ -1,9 +1,16 @@
 // src/routes/sla.js
 import express from "express";
 import { verifyToken, requireAgent, requireAdmin } from "../middleware/auth.js";
+import { requireStaff, ticketWorkspaceParam } from "../middleware/workspace.js";
 
 export function makeSlaRouter(controller) {
   const router = express.Router();
+
+  // SLA policies, stats and per-ticket SLA management are staff tooling (the
+  // customer-facing SLA view comes from /tickets/:id/sla). A ticket's SLA is
+  // only reachable by staff of that ticket's app.
+  router.use("/sla", verifyToken, requireStaff);
+  router.param("ticketId", (req, res, next, id) => ticketWorkspaceParam(req, res, next, id));
 
   // SLA Policies
   router.get("/sla/policies", verifyToken, controller.getPolicies);

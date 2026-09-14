@@ -67,15 +67,23 @@ async function migrate() {
     const nocId = await teamId(conn, "NOC");
     const mtxId = await teamId(conn, "MTX");
 
-    // Repoint Unified Communications → MTX
-    await conn.query(`UPDATE service_categories SET routing_team_id=? WHERE \`key\`='unified_comms'`, [mtxId]);
-    console.log(`  unified_comms → MTX (#${mtxId})`);
+    // Repoint Unified Communications → MTX — only from its ORIGINAL routing
+    // (unset, or the old Network Operations team, now NOC). Unconditionally
+    // re-running this on every deploy overrode any later re-routing.
+    if (mtxId) {
+      await conn.query(
+        `UPDATE service_categories SET routing_team_id=?
+          WHERE \`key\`='unified_comms' AND (routing_team_id IS NULL OR routing_team_id <=> ?)`,
+        [mtxId, nocId]
+      );
+      console.log(`  unified_comms → MTX (#${mtxId}) if still on its original routing`);
+    }
 
     // Add the "Not sure" triage category → NOC, +50% SLA
     await conn.query(
       `INSERT INTO service_categories (\`key\`, name, description, routing_team_id, sla_grace_pct, is_triage, icon, sort_order)
        VALUES ('not_sure', 'Not sure', 'Not sure who handles it — NOC will triage and route it to the right team.', ?, 50, 1, 'alertCircle', 99)
-       ON DUPLICATE KEY UPDATE name=VALUES(name), description=VALUES(description), routing_team_id=VALUES(routing_team_id),
+       ON DUPLICATE KEY UPDATE name=VALUES(name), description=VALUES(description), routing_team_id=COALESCE(routing_team_id, VALUES(routing_team_id)),
          sla_grace_pct=VALUES(sla_grace_pct), is_triage=VALUES(is_triage), icon=VALUES(icon), sort_order=VALUES(sort_order)`,
       [nocId]
     );

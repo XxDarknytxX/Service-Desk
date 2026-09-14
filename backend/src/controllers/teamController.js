@@ -1,5 +1,31 @@
 // src/controllers/teamController.js
 import { validationResult } from "express-validator";
+import { getWorkspaceAccess, canAccessWorkspace, WORKSPACES } from "../middleware/workspace.js";
+
+const CORPORATE_ROLES = ["triage", "queue", "service_delivery"];
+
+/**
+ * Validates the workspace / corporate_role pair from a create or update body.
+ * Returns { error } or { workspace, corporateRole } (either may be undefined when
+ * not supplied).
+ */
+function parseTeamWorkspace(body, existing = null) {
+  let workspace = body.workspace;
+  let corporateRole = body.corporate_role;
+  if (workspace !== undefined && !WORKSPACES.includes(workspace)) {
+    return { error: "workspace must be 'internal' or 'corporate'" };
+  }
+  if (corporateRole !== undefined && corporateRole !== null && !CORPORATE_ROLES.includes(corporateRole)) {
+    return { error: "corporate_role must be triage, queue or service_delivery" };
+  }
+  const finalWs = workspace ?? existing?.workspace ?? "internal";
+  // An internal team has no corporate role; clear it when moving a team inward.
+  if (finalWs === "internal") {
+    if (corporateRole) return { error: "Only corporate teams can have a corporate role" };
+    if (workspace === "internal") corporateRole = null;
+  }
+  return { workspace, corporateRole };
+}
 
 const send = {
   ok: (res, data = {}) => res.json(data),
@@ -33,26 +59,44 @@ export function makeTeamController(pool) {
       const userId = req.query.userId;
 
       try {
+        // Staff see the teams of their own app; admins see both, or one via
+        // ?workspace=. Teams are how people and queues are organised, so the
+        // corporate and internal desks never see each other's.
+        const access = await getWorkspaceAccess(req);
+        let visible = access.workspaces;
+        // Same precedence as resolveRequestWorkspace: ?workspace= then the
+        // X-Workspace header the app sends for the view on screen. Without the
+        // header check an admin (who can see both) got every team in either view.
+        const requested = req.query.workspace || req.headers["x-workspace"];
+        if (requested) {
+          if (!WORKSPACES.includes(requested) || !canAccessWorkspace(access, requested)) {
+            return res.status(403).json({ error: "You don't have access to this workspace" });
+          }
+          visible = [requested];
+        }
+
         if (userId) {
           // Get teams for specific user
           const [rows] = await pool.query(
-            `SELECT t.id, t.name, t.description, tm.is_lead
+            `SELECT t.id, t.name, t.description, t.workspace, t.corporate_role, tm.is_lead
              FROM teams t
              INNER JOIN team_members tm ON tm.team_id = t.id
-             WHERE tm.user_id = ?
+             WHERE tm.user_id = ? AND t.workspace IN (?)
              ORDER BY t.name ASC`,
-            [userId]
+            [userId, visible]
           );
           return send.ok(res, { teams: rows });
         } else {
           // Get all teams with member count
           const [rows] = await pool.query(
-            `SELECT t.id, t.name, t.description, t.created_at, t.updated_at,
+            `SELECT t.id, t.name, t.description, t.workspace, t.corporate_role, t.created_at, t.updated_at,
                     COUNT(tm.user_id) as member_count
              FROM teams t
              LEFT JOIN team_members tm ON tm.team_id = t.id
+             WHERE t.workspace IN (?)
              GROUP BY t.id
-             ORDER BY t.name ASC`
+             ORDER BY t.name ASC`,
+            [visible]
           );
           return send.ok(res, { items: rows });
         }
@@ -66,6 +110,11 @@ export function makeTeamController(pool) {
     getMembers: async (req, res) => {
       const teamId = Number(req.params.id);
       try {
+        const [[teamRow]] = await pool.query("SELECT workspace FROM teams WHERE id = ?", [teamId]);
+        if (teamRow && !canAccessWorkspace(await getWorkspaceAccess(req), teamRow.workspace)) {
+          return res.status(403).json({ error: "You don't have access to this team" });
+        }
+
         // Get team members
         const [rows] = await pool.query(
           `SELECT u.id, u.email, u.full_name, u.title, tm.is_lead
@@ -133,12 +182,16 @@ export function makeTeamController(pool) {
       if (!errors.isEmpty()) return send.bad(res, errors.array()[0].msg);
 
       const { name, description } = req.body;
+      const parsed = parseTeamWorkspace(req.body);
+      if (parsed.error) return send.bad(res, parsed.error);
+      const workspace = parsed.workspace || "internal";
+      const corporateRole = workspace === "corporate" ? parsed.corporateRole || null : null;
       try {
         const [result] = await pool.query(
-          `INSERT INTO teams (name, description) VALUES (?, ?)`,
-          [name, description || null]
+          `INSERT INTO teams (name, description, workspace, corporate_role) VALUES (?, ?, ?, ?)`,
+          [name, description || null, workspace, corporateRole]
         );
-        return send.created(res, { id: result.insertId, name, description });
+        return send.created(res, { id: result.insertId, name, description, workspace, corporate_role: corporateRole });
       } catch (e) {
         console.error(e);
         return send.serverErr(res);
@@ -162,6 +215,26 @@ export function makeTeamController(pool) {
           values.push(description);
         }
 
+        if (req.body.workspace !== undefined || req.body.corporate_role !== undefined) {
+          const [[existing]] = await pool.query("SELECT workspace, corporate_role FROM teams WHERE id = ?", [teamId]);
+          if (!existing) return send.bad(res, "Team not found");
+          const parsed = parseTeamWorkspace(req.body, existing);
+          if (parsed.error) return send.bad(res, parsed.error);
+
+          // Moving a team that customer categories route to out of the corporate
+          // app would silently strand every request raised in those categories.
+          if (parsed.workspace === "internal" && existing.workspace === "corporate") {
+            const [[routed]] = await pool.query(
+              "SELECT COUNT(*) AS n FROM service_categories WHERE routing_team_id = ?", [teamId]
+            );
+            if (routed.n > 0) {
+              return send.bad(res, "Customer service categories route to this team — re-route them before moving it to the internal desk.");
+            }
+          }
+          if (parsed.workspace !== undefined) { updates.push("workspace = ?"); values.push(parsed.workspace); }
+          if (parsed.corporateRole !== undefined) { updates.push("corporate_role = ?"); values.push(parsed.corporateRole); }
+        }
+
         if (updates.length === 0) return send.bad(res, "No fields to update");
 
         await pool.query(`UPDATE teams SET ${updates.join(", ")} WHERE id = ?`, [
@@ -179,6 +252,14 @@ export function makeTeamController(pool) {
     remove: async (req, res) => {
       const teamId = Number(req.params.id);
       try {
+        // Deleting a routing team would null out category routing (FK SET NULL)
+        // and strand every new request in those categories.
+        const [[routed]] = await pool.query(
+          "SELECT COUNT(*) AS n FROM service_categories WHERE routing_team_id = ?", [teamId]
+        );
+        if (routed.n > 0) {
+          return send.bad(res, "Customer service categories route to this team — re-route them before deleting it.");
+        }
         const [result] = await pool.query(`DELETE FROM teams WHERE id = ?`, [teamId]);
         if (result.affectedRows === 0) return send.bad(res, "Team not found");
         return send.ok(res, { ok: true });
@@ -197,6 +278,15 @@ export function makeTeamController(pool) {
       }
 
       try {
+        // Customers are never team members: membership is what gives STAFF
+        // access to a queue and to the corporate app.
+        const [[cust]] = await pool.query(
+          `SELECT 1 AS yes FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+            WHERE ur.user_id = ? AND r.name = 'corporate_customer' LIMIT 1`,
+          [user_id]
+        );
+        if (cust) return send.bad(res, "Corporate customers can't be added to teams.");
+
         await pool.query(
           `INSERT INTO team_members (team_id, user_id, is_lead)
            VALUES (?, ?, ?)

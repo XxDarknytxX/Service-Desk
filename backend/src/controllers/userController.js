@@ -3,6 +3,27 @@ import bcrypt from "bcryptjs";
 import { validationResult } from "express-validator";
 import { getUserRoles, setUserRoles } from "../utils/roles.js";
 import { forgetSession } from "../middleware/auth.js";
+import { resolveRequestWorkspace, computeWorkspaceAccess, getWorkspaceAccess, canAccessWorkspace } from "../middleware/workspace.js";
+
+// A corporate customer is a different KIND of account, not a permission level:
+// combining it with a staff role would hand an external customer the staff side
+// of the app (isAgent is true for any agent/admin role).
+function validateRoleSet(roles) {
+  if (!Array.isArray(roles)) return null;
+  if (roles.includes("corporate_customer") && roles.length > 1) {
+    return "A corporate customer can't also have another role.";
+  }
+  return null;
+}
+
+// SQL predicates for "belongs to this app's directory". Admins are in both.
+const IS_ADMIN_SQL = `EXISTS (SELECT 1 FROM user_roles ura JOIN roles ra ON ra.id = ura.role_id WHERE ura.user_id = u.id AND ra.name = 'admin')`;
+const IS_CUSTOMER_SQL = `EXISTS (SELECT 1 FROM user_roles urc JOIN roles rc ON rc.id = urc.role_id WHERE urc.user_id = u.id AND rc.name = 'corporate_customer')`;
+const IN_CORP_TEAM_SQL = `EXISTS (SELECT 1 FROM team_members tmc JOIN teams tc ON tc.id = tmc.team_id WHERE tmc.user_id = u.id AND tc.workspace = 'corporate')`;
+const WORKSPACE_DIRECTORY_SQL = {
+  internal: `(${IS_ADMIN_SQL} OR (NOT ${IS_CUSTOMER_SQL} AND NOT ${IN_CORP_TEAM_SQL}))`,
+  corporate: `(${IS_ADMIN_SQL} OR ${IS_CUSTOMER_SQL} OR ${IN_CORP_TEAM_SQL})`,
+};
 import { sendAdminReset } from "../services/passwordResetService.js";
 import * as XLSX from "xlsx";
 
@@ -17,20 +38,32 @@ const send = {
 export function makeUserController(pool) {
   return {
     // GET /api/users
-    list: async (_req, res) => {
+    // GET /api/users[?workspace=internal|corporate]
+    // The directory of ONE app: internal staff, or corporate customers + the
+    // staff who serve them. Non-admins only ever get their own app's directory.
+    list: async (req, res) => {
       try {
+        let workspace;
+        try {
+          ({ workspace } = await resolveRequestWorkspace(req));
+        } catch (err) {
+          return res.status(err.status || 403).json({ error: err.message });
+        }
         const [rows] = await pool.query(
           `SELECT u.id, u.email, u.full_name, u.title, u.company, u.phone, u.is_active,
                   u.created_at, u.last_login_at,
+                  ${IN_CORP_TEAM_SQL} AS in_corporate_team,
                   GROUP_CONCAT(r.name ORDER BY r.name SEPARATOR ',') AS roles
            FROM users u
            LEFT JOIN user_roles ur ON ur.user_id = u.id
            LEFT JOIN roles r ON r.id = ur.role_id
+           WHERE ${WORKSPACE_DIRECTORY_SQL[workspace]}
            GROUP BY u.id
            ORDER BY u.created_at DESC`
         );
         const items = rows.map((row) => ({
           ...row,
+          in_corporate_team: !!row.in_corporate_team,
           roles: row.roles ? row.roles.split(",") : [],
         }));
         return send.ok(res, { items });
@@ -46,6 +79,8 @@ export function makeUserController(pool) {
       if (!errors.isEmpty()) return send.bad(res, errors.array()[0].msg);
 
       const { email, password, fullName, full_name, title, company, phone, roles } = req.body;
+      const roleProblem = validateRoleSet(roles);
+      if (roleProblem) return send.bad(res, roleProblem);
       try {
         // Generate random password if not provided
         const finalPassword = password || Math.random().toString(36).slice(-10) + 'Aa1!';
@@ -131,7 +166,16 @@ export function makeUserController(pool) {
         if (passwordChanged || "is_active" in req.body) forgetSession(userId);
 
         if (req.body.roles) {
+          const roleProblem = validateRoleSet(req.body.roles);
+          if (roleProblem) return send.bad(res, roleProblem);
           await setUserRoles(pool, userId, req.body.roles);
+          // Becoming a customer means leaving every team and the org chart:
+          // both are staff structures and team membership grants queue access.
+          if (req.body.roles.includes("corporate_customer")) {
+            await pool.query("DELETE FROM team_members WHERE user_id = ?", [userId]);
+            await pool.query("DELETE FROM user_hierarchy WHERE user_id = ? OR manager_id = ?", [userId, userId]);
+          }
+          forgetSession(userId);
         }
 
         const roles = await getUserRoles(pool, userId);
@@ -154,6 +198,14 @@ export function makeUserController(pool) {
         const user = rows[0];
         if (!user) return send.notFound(res, "User not found");
         const roles = await getUserRoles(pool, userId);
+        // Staff can only look up people in their own app's directory.
+        const viewer = await getWorkspaceAccess(req);
+        if (!viewer.isAdmin) {
+          const target = await computeWorkspaceAccess(pool, userId, roles);
+          if (!target.workspaces.some((w) => canAccessWorkspace(viewer, w))) {
+            return send.notFound(res, "User not found");
+          }
+        }
         return send.ok(res, { user: { ...user, roles } });
       } catch (e) {
         console.error(e);
@@ -321,6 +373,13 @@ export function makeUserController(pool) {
             }
           }
           const finalRoles = assignedRoles.length > 0 ? assignedRoles : ["requester"];
+
+          const importRoleProblem = validateRoleSet(finalRoles);
+          if (importRoleProblem) {
+            results.push({ row: rowNum, email: email || "(empty)", status: "failed", reason: importRoleProblem });
+            failed++;
+            continue;
+          }
 
           // Validate email
           if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {

@@ -114,6 +114,10 @@ CREATE TABLE IF NOT EXISTS teams (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(120) NOT NULL UNIQUE,
   description TEXT NULL,
+  -- Which app the team works in; corporate_role replaces name lookups
+  -- (see workspace-split-migration.js)
+  workspace ENUM('internal','corporate') NOT NULL DEFAULT 'internal',
+  corporate_role ENUM('triage','queue','service_delivery') NULL,
   department_id INT UNSIGNED NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -212,6 +216,7 @@ CREATE TABLE IF NOT EXISTS tickets (
   requester_id INT NOT NULL,
   assignee_id INT NULL,
   team_id INT NULL,
+  workspace ENUM('internal','corporate') NOT NULL DEFAULT 'internal',
   organization_id INT NULL,
   due_at DATETIME NULL,
   estimated_cost DECIMAL(10,2) NULL DEFAULT NULL,

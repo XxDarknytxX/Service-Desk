@@ -79,7 +79,10 @@ async function migrate() {
         `INSERT INTO service_categories (\`key\`, name, description, routing_team_id, icon, sort_order)
          VALUES (?,?,?,?,?,?)
          ON DUPLICATE KEY UPDATE name=VALUES(name), description=VALUES(description),
-           routing_team_id=VALUES(routing_team_id), icon=VALUES(icon), sort_order=VALUES(sort_order)`,
+           -- Only FILL routing. Re-asserting it by team name on every deploy used
+           -- to overwrite whatever the category had been pointed at since.
+           routing_team_id=COALESCE(routing_team_id, VALUES(routing_team_id)),
+           icon=VALUES(icon), sort_order=VALUES(sort_order)`,
         [c.key, c.name, c.description, teamId, c.icon, c.sort]
       );
       console.log(`  category ${c.key} -> team ${c.team} (#${teamId})`);
