@@ -65,6 +65,7 @@ const MIGRATIONS = [
   "solved-at-migration.js",           // tickets.solved_at
   "manager-sla-migration.js",         // ticket_manager_slas (manager review clock)
   "smtp-settings-migration.js",       // smtp_settings (outbound mail config)
+  "password-reset-migration.js",      // password_reset_tokens + users.password_changed_at
 ];
 
 // Optional demo data — teams, staff/customer users, ticket templates.

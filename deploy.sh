@@ -141,6 +141,15 @@ deploy() {
         SD_REEXECED=1 exec bash "$APP_DIR/deploy.sh" deploy
     fi
 
+    # Password reset emails link to APP_URL. Without it the backend falls back to
+    # CORS_ORIGIN, which on a server set up before this existed may be a bare IP
+    # or localhost — a reset link nobody outside can open. Only ever ADDS the
+    # line; an APP_URL someone set by hand is left alone.
+    if ! grep -q '^APP_URL=' backend/.env; then
+        printf '\n# Public base URL used in email links (added by deploy.sh)\nAPP_URL=https://%s\n' "$SERVER_NAME" >> backend/.env
+        log "Added APP_URL=https://$SERVER_NAME to backend/.env"
+    fi
+
     log "Installing backend dependencies..."
     ( cd backend && npm ci --omit=dev )
 

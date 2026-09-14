@@ -320,6 +320,30 @@ export default function Users() {
     });
   }
 
+  // Emails a single-use reset link. The admin never sees or picks the password.
+  function handleSendPasswordReset(u) {
+    confirm({
+      title: "Send password reset?",
+      message: (
+        <>
+          A single-use link to set a new password will be emailed to{" "}
+          <strong className="text-[var(--fg-primary)]">{u.email}</strong>. It expires in 24 hours.
+          Their current password keeps working until they use it, and setting a new one signs
+          them out everywhere.
+        </>
+      ),
+      confirmText: "Send reset link",
+      onConfirm: async () => {
+        try {
+          const res = await api(`/users/${u.id}/reset-password`, { method: "POST" });
+          toast.success(res.message || `Reset link sent to ${u.email}`);
+        } catch (error) {
+          toast.error(error.message || "Failed to send password reset");
+        }
+      },
+    });
+  }
+
   const isCustomer = (u) => (u.roles || []).includes("corporate_customer");
 
   async function handleToggleActive(u) {
@@ -464,6 +488,14 @@ export default function Users() {
             <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
               <button onClick={() => openEditModal(u)} className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-surface-hover)] transition-colors" title="Edit user">
                 <Icon name="pencil" size={15} />
+              </button>
+              <button
+                onClick={() => handleSendPasswordReset(u)}
+                disabled={!u.is_active}
+                className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-blue-500 hover:bg-blue-500/10 transition-colors disabled:opacity-35 disabled:pointer-events-none"
+                title={u.is_active ? "Send password reset email" : "Activate the account to send a password reset"}
+              >
+                <Icon name="key" size={15} />
               </button>
               <button
                 onClick={() => handleToggleActive(u)}

@@ -31,6 +31,9 @@ export function makeUserRouter(controller) {
 
   router.patch("/users/:id", requireAuth, requireRole("admin"), controller.update);
 
+  // Emails the user a single-use reset link via the SMTP relay in Email Settings.
+  router.post("/users/:id/reset-password", requireAuth, requireRole("admin"), controller.sendPasswordReset);
+
   router.delete("/users/:id", requireAuth, requireRole("admin"), controller.delete);
 
   return router;

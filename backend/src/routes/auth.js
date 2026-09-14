@@ -27,5 +27,11 @@ export function makeAuthRouter(controller) {
 
   router.get("/auth/me", requireAuth, controller.me);
 
+  // Password reset. Public by necessity — the user can't sign in. Living under
+  // /auth/ puts them behind nginx's strict `auth` rate-limit zone.
+  router.post("/auth/forgot-password", controller.forgotPassword);
+  router.post("/auth/reset-password/validate", controller.validateResetToken);
+  router.post("/auth/reset-password", controller.resetPassword);
+
   return router;
 }

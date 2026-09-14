@@ -3,6 +3,14 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { validationResult } from "express-validator";
 import { getUserRoles, setUserRoles } from "../utils/roles.js";
+import { forgetSession } from "../middleware/auth.js";
+import {
+  sendSelfServiceReset,
+  inspectToken,
+  completeReset,
+  RESET_TTL_MINUTES,
+  MIN_PASSWORD_LENGTH,
+} from "../services/passwordResetService.js";
 
 const send = {
   ok: (res, data = {}) => res.json(data),
@@ -121,6 +129,51 @@ export function makeAuthController(pool) {
         });
       } catch (e) {
         console.error(e);
+        return send.serverErr(res);
+      }
+    },
+
+    // POST /api/auth/forgot-password
+    // Always the same response, and the work happens after we've replied — see
+    // sendSelfServiceReset for why neither the body nor the timing may depend
+    // on whether the address has an account.
+    forgotPassword: async (req, res) => {
+      const email = String(req.body?.email || "").trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 255) {
+        return send.bad(res, "Please enter a valid email address");
+      }
+      send.ok(res, {
+        success: true,
+        message: "If an account exists for that address, a password reset link is on its way.",
+        expires_in_minutes: RESET_TTL_MINUTES.self_service,
+      });
+      sendSelfServiceReset(pool, { email, requestIp: req.ip });
+    },
+
+    // POST /api/auth/reset-password/validate — token in the body, never the URL,
+    // so it doesn't end up in access logs.
+    validateResetToken: async (req, res) => {
+      try {
+        const result = await inspectToken(pool, req.body?.token);
+        return send.ok(res, { ...result, min_password_length: MIN_PASSWORD_LENGTH });
+      } catch (e) {
+        console.error(e);
+        return send.serverErr(res);
+      }
+    },
+
+    // POST /api/auth/reset-password
+    resetPassword: async (req, res) => {
+      try {
+        const result = await completeReset(pool, {
+          rawToken: req.body?.token,
+          password: req.body?.password,
+        });
+        if (!result.ok) return res.status(result.status).json({ error: result.error });
+        forgetSession(result.userId);
+        return send.ok(res, { success: true, message: "Your password has been changed. You can now sign in." });
+      } catch (e) {
+        console.error("resetPassword error:", e);
         return send.serverErr(res);
       }
     },

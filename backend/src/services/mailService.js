@@ -6,8 +6,11 @@
 //
 // The transport is cached because nodemailer pools connections, and rebuilding
 // it per send would open a new TCP connection every time. The cache is keyed on
-// the settings row's updated_at — so an admin save invalidates it on the next
-// send without needing a process restart or a pub/sub channel.
+// the connection settings THEMSELVES, so any change to them — through the admin
+// page or straight in SQL — rebuilds it on the next send. (It used to be keyed
+// on updated_at, which has one-second resolution: two changes inside the same
+// second left a transport pointing at the old port.)
+import crypto from "crypto";
 import nodemailer from "nodemailer";
 
 let cached = null; // { key, transporter }
@@ -63,7 +66,11 @@ export async function getTransporter(pool) {
   const s = await getSmtpSettings(pool);
   if (!s || !s.enabled || !s.host) return null;
 
-  const key = `${s.updated_at instanceof Date ? s.updated_at.getTime() : s.updated_at}`;
+  // Hashed so the cache key never holds the SMTP password in plain form.
+  const key = crypto
+    .createHash("sha256")
+    .update(JSON.stringify([s.host, s.port, s.security, s.auth_required, s.username, s.password]))
+    .digest("hex");
   if (cached && cached.key === key) return cached.transporter;
 
   if (cached?.transporter) cached.transporter.close();

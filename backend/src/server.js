@@ -6,6 +6,7 @@ import helmet from "helmet";
 import compression from "compression";
 import rateLimit from "express-rate-limit";
 import { getPool } from "./config/db.js";
+import { setAuthPool } from "./middleware/auth.js";
 import { makeAuthController } from "./controllers/authController.js";
 import { makeTicketController } from "./controllers/ticketController.js";
 import { makeUserController } from "./controllers/userController.js";
@@ -115,6 +116,17 @@ const authLimiter = rateLimit({
 app.use("/api/login", authLimiter);
 app.use("/api/register", authLimiter);
 
+// Each forgot-password request can send an email, so it gets its own budget.
+// Kept modest rather than tight: many staff can share one egress IP.
+const forgotPasswordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: isProd ? 10 : 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many password reset requests, please try again later" },
+});
+app.use("/api/auth/forgot-password", forgotPasswordLimiter);
+
 // Request logging - only in development or minimal in production
 app.use((req, res, next) => {
   if (!isProd) {
@@ -158,6 +170,9 @@ app.use(express.json({ limit: "10mb" }));
 
 // DB + controllers
 const pool = await getPool();
+// Lets requireAuth reject tokens for deactivated accounts and sessions that
+// predate a password change.
+setAuthPool(pool);
 const auth = makeAuthController(pool);
 const tickets = makeTicketController(pool);
 const users = makeUserController(pool);

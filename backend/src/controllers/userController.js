@@ -2,6 +2,8 @@
 import bcrypt from "bcryptjs";
 import { validationResult } from "express-validator";
 import { getUserRoles, setUserRoles } from "../utils/roles.js";
+import { forgetSession } from "../middleware/auth.js";
+import { sendAdminReset } from "../services/passwordResetService.js";
 import * as XLSX from "xlsx";
 
 const send = {
@@ -107,10 +109,13 @@ export function makeUserController(pool) {
           values.push(req.body.email);
         }
 
-        // Handle password update
-        if (req.body.password && req.body.password.trim()) {
+        // Handle password update. Stamping password_changed_at signs out the
+        // user's existing sessions, same as an emailed reset — an admin setting
+        // a password by hand is usually doing it for the same reasons.
+        const passwordChanged = !!(req.body.password && req.body.password.trim());
+        if (passwordChanged) {
           const passwordHash = await bcrypt.hash(req.body.password, 10);
-          updates.push(`password_hash = ?`);
+          updates.push(`password_hash = ?`, `password_changed_at = NOW()`);
           values.push(passwordHash);
         }
 
@@ -120,6 +125,10 @@ export function makeUserController(pool) {
             userId,
           ]);
         }
+
+        // Deactivation and password changes must bite on the next request, not
+        // after the auth middleware's cache TTL.
+        if (passwordChanged || "is_active" in req.body) forgetSession(userId);
 
         if (req.body.roles) {
           await setUserRoles(pool, userId, req.body.roles);
@@ -152,6 +161,30 @@ export function makeUserController(pool) {
       }
     },
 
+    // POST /api/users/:id/reset-password — email the user a single-use reset link.
+    // The admin never sees or chooses the new password.
+    sendPasswordReset: async (req, res) => {
+      const userId = Number(req.params.id);
+      if (!Number.isInteger(userId) || userId <= 0) return send.bad(res, "Invalid user id");
+      try {
+        const result = await sendAdminReset(pool, {
+          userId,
+          adminId: req.user.id,
+          requestIp: req.ip,
+        });
+        if (!result.ok) return res.status(result.status).json({ error: result.error });
+        return send.ok(res, {
+          success: true,
+          email: result.email,
+          expires_in_minutes: result.ttlMinutes,
+          message: `Password reset link sent to ${result.email}`,
+        });
+      } catch (e) {
+        console.error("sendPasswordReset error:", e);
+        return send.serverErr(res, "Failed to send password reset");
+      }
+    },
+
     // DELETE /api/users/:id
     delete: async (req, res) => {
       const userId = Number(req.params.id);
@@ -172,6 +205,7 @@ export function makeUserController(pool) {
 
         // Delete the user
         await pool.query(`DELETE FROM users WHERE id = ?`, [userId]);
+        forgetSession(userId);
 
         return send.ok(res, { success: true, message: "User deleted successfully" });
       } catch (e) {

@@ -27,6 +27,7 @@ import Profile from "./pages/profile";
 import Forms from "./pages/forms";
 import FormPreview from "./pages/formPreview";
 import PublicForm from "./pages/publicForm";
+import { ForgotPassword, ResetPassword } from "./pages/passwordReset";
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -60,6 +61,9 @@ export default function App() {
             <BootProvider>
             <Routes>
               <Route path="/login" element={<Login />} />
+              {/* Public password reset — the emailed token is the credential */}
+              <Route path="/forgot-password" element={<ForgotPassword />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
               {/* Public customer form — the token in the URL is the credential */}
               <Route path="/f/:token" element={<PublicForm />} />
               <Route

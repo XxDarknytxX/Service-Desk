@@ -9,7 +9,7 @@
  */
 
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/auth";
 import { useToast } from "../contexts/toast";
 import Button from "../components/ui/Button";
@@ -322,12 +322,23 @@ export default function Login() {
 
             {/* Password */}
             <div className="group animate-fade-up" style={{ animationDelay: "220ms" }}>
-              <label
-                htmlFor="login-password"
-                className={cn("block text-[13px] font-medium mb-2 transition-colors duration-200 group-focus-within:text-[var(--accent)]", dark ? "text-white/60" : "text-black/55")}
-              >
-                Password
-              </label>
+              <div className="flex items-center justify-between mb-2">
+                <label
+                  htmlFor="login-password"
+                  className={cn("block text-[13px] font-medium transition-colors duration-200 group-focus-within:text-[var(--accent)]", dark ? "text-white/60" : "text-black/55")}
+                >
+                  Password
+                </label>
+                <Link
+                  to="/forgot-password"
+                  className={cn(
+                    "text-[12px] font-medium transition-colors hover:text-[var(--accent)]",
+                    dark ? "text-white/45" : "text-black/45"
+                  )}
+                >
+                  Forgot password?
+                </Link>
+              </div>
               <div className="relative">
                 <Icon
                   name="lock"

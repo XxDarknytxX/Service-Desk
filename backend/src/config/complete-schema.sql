@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS users (
   id INT AUTO_INCREMENT PRIMARY KEY,
   email VARCHAR(255) NOT NULL UNIQUE,
   password_hash VARCHAR(255) NOT NULL,
+  -- JWTs issued before this are rejected (see middleware/auth.js)
+  password_changed_at DATETIME NULL,
   full_name VARCHAR(200) NULL,
   title VARCHAR(120) NULL,
   department_id INT UNSIGNED NULL,
@@ -753,6 +755,25 @@ CREATE TABLE IF NOT EXISTS smtp_settings (
   updated_by INT NULL,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Emailed single-use password reset links. Only the SHA-256 of the token is
+-- stored; the raw token exists only in the email.
+-- Kept in sync with src/config/password-reset-migration.js.
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  token_hash CHAR(64) NOT NULL,
+  purpose ENUM('admin_reset','self_service') NOT NULL,
+  requested_by INT NULL,
+  request_ip VARCHAR(45) NULL,
+  expires_at DATETIME NOT NULL,
+  used_at DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_password_reset_token_hash (token_hash),
+  KEY idx_password_reset_user (user_id, used_at),
+  CONSTRAINT fk_password_reset_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_password_reset_requested_by FOREIGN KEY (requested_by) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Email Integration (optional)
