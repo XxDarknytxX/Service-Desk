@@ -125,8 +125,10 @@ async function getPriorityKey(pool, priorityId) {
   return rows[0]?.key || null;
 }
 
-// Auto-assign SLA when ticket is created or priority/team changes
-async function assignSla(pool, ticketId, priorityId, teamId) {
+// Auto-assign SLA when ticket is created or priority/team changes.
+// { restart: true } (a reopened ticket) also clears the met / paused state, so
+// both the response and resolution clocks run again from now.
+async function assignSla(pool, ticketId, priorityId, teamId, { restart = false } = {}) {
   try {
     // Find matching SLA policy IN THE TICKET'S APP (corporate requests use the
     // targets from Corporate → SLA Settings): team + priority, then priority,
@@ -169,7 +171,9 @@ async function assignSla(pool, ticketId, priorityId, teamId) {
        ON DUPLICATE KEY UPDATE policy_id = VALUES(policy_id),
          response_due_at = VALUES(response_due_at),
          resolve_due_at = VALUES(resolve_due_at),
-         response_breached = 0, resolve_breached = 0`,
+         response_breached = 0, resolve_breached = 0
+         ${restart ? `, response_met_at = NULL, resolve_met_at = NULL,
+         paused_at = NULL, response_remaining_ms = NULL, resolve_remaining_ms = NULL` : ""}`,
       [ticketId, policy.id, responseDue, resolveDue]
     );
 
@@ -181,6 +185,7 @@ async function assignSla(pool, ticketId, priorityId, teamId) {
         response_due_at: responseDue,
         resolve_due_at: resolveDue,
         team_id: teamId,
+        ...(restart ? { restarted: true } : {}),
       })]
     );
   } catch (e) {
@@ -409,6 +414,53 @@ async function resolveNextApprover(pool, fromUserId, teamId, workspace, { allowT
     }
   }
   return { next: null, outside };
+}
+
+// ── Reopen ────────────────────────────────────────────────────────────────
+// A solved / closed ticket that comes back is live work again: its clocks start
+// over from the moment it's reopened — the team's response AND resolution SLA,
+// or the triage clock if it's sitting in the NOC queue — and the people working
+// it are told why.
+
+/** Restart the live clock(s) for a reopened ticket. */
+async function restartSlaOnReopen(pool, ticketId, priorityId, teamId) {
+  const nocTeamId = await getNocTeamId(pool);
+  if (nocTeamId && teamId === nocTeamId) {
+    await startTriageSla(pool, ticketId, priorityId, null);
+  } else {
+    await assignSla(pool, ticketId, priorityId, teamId, { restart: true });
+  }
+}
+
+/** Tell the assignee and the ticket's team that it's back, and why. */
+async function notifyReopen(pool, ticketId, actorId, reason) {
+  try {
+    const [[t]] = await pool.query(
+      `SELECT t.ticket_number, t.subject, t.assignee_id, t.team_id, t.requester_id, u.full_name AS actor_name
+         FROM tickets t LEFT JOIN users u ON u.id = ? WHERE t.id = ?`,
+      [actorId, ticketId]
+    );
+    if (!t) return;
+    const ids = new Set();
+    if (t.assignee_id) ids.add(t.assignee_id);
+    if (t.team_id) {
+      const [members] = await pool.query("SELECT user_id FROM team_members WHERE team_id = ?", [t.team_id]);
+      members.forEach((m) => ids.add(m.user_id));
+    }
+    ids.delete(actorId);
+    if (!ids.size) return;
+    const byCustomer = actorId === t.requester_id;
+    const note = reason ? ` — "${reason.length > 140 ? `${reason.slice(0, 137)}…` : reason}"` : "";
+    const rows = [...ids].map((uid) => [
+      uid, ticketId,
+      `${t.ticket_number} reopened${byCustomer ? " by the customer" : t.actor_name ? ` by ${t.actor_name}` : ""}`,
+      `${t.subject}${note}`,
+      "reopened",
+    ]);
+    await pool.query("INSERT INTO notifications (user_id, ticket_id, title, message, type) VALUES ?", [rows]);
+  } catch (e) {
+    console.error("Reopen notification error:", e);
+  }
 }
 
 // Is there an open (unmet) manager SLA for this ticket? (i.e. it's with the manager)
@@ -1602,6 +1654,7 @@ export function makeTicketController(pool) {
           }
         }
 
+        let reopening = false;
         // Validate status transitions
         if (req.body.status_id && req.body.status_id !== current.status_id) {
           const newStatusKey = await getStatusKey(pool, req.body.status_id);
@@ -1618,6 +1671,10 @@ export function makeTicketController(pool) {
             const requesterAllowed = { solved: ["closed", "in_progress"], closed: ["in_progress"] };
             if (!(requesterAllowed[current.status_key] || []).includes(newStatusKey)) {
               return send.forbidden(res, "You can only confirm or reopen a solved ticket.");
+            }
+            // Reopening needs a note on what's still wrong — POST /tickets/:id/reopen.
+            if (newStatusKey === "in_progress") {
+              return send.bad(res, "Tell the team what's still not working when you reopen — use Reopen on the ticket.");
             }
           }
 
@@ -1765,7 +1822,9 @@ export function makeTicketController(pool) {
           }
 
           // Handle reopen: increment reopened_count, clear closed_at + solved_at
+          // (the SLA restart happens after the status is written, below)
           if ((current.status_key === "solved" || current.status_key === "closed") && newStatusKey === "in_progress") {
+            reopening = true;
             req.body.closed_at = null;
             try {
               await pool.query(
@@ -1810,10 +1869,17 @@ export function makeTicketController(pool) {
           payload: { changes },
         });
 
+        // A reopened ticket is live again: restart its clocks and tell the team.
+        if (reopening) {
+          await restartSlaOnReopen(pool, ticketId, req.body.priority_id || current.priority_id, req.body.team_id || current.team_id);
+          await insertEvent(pool, { ticketId, actorId: req.user.id, type: "ticket.reopened", payload: { from_status: current.status_key } });
+          await notifyReopen(pool, ticketId, req.user.id, null);
+        }
+
         // Re-target the SLA when priority or team changed. During NOC triage the
         // live clock is the triage SLA (the team SLA hasn't started yet), so
         // re-target that; otherwise re-point the team response/resolve SLA.
-        if (req.body.priority_id || req.body.team_id) {
+        if (!reopening && (req.body.priority_id || req.body.team_id)) {
           const newPriorityId = req.body.priority_id || current.priority_id;
           const newTeamId = req.body.team_id || current.team_id;
           const nocTeamId = await getNocTeamId(pool);
@@ -2702,6 +2768,65 @@ export function makeTicketController(pool) {
       }
     },
 
+    // POST /api/tickets/:id/reopen  { reason }
+    // Reopen a solved / closed ticket with a note on what's still wrong. The
+    // requester (customer) does this from the resolution banner; admins and the
+    // ticket's own team / assignee may too. The note is posted to the
+    // conversation, the SLA clocks restart from now, and the team is notified.
+    reopen: async (req, res) => {
+      const ticketId = Number(req.params.id);
+      const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+      if (reason.length < 5) return send.bad(res, "Tell the team what's still not working (a few words at least).");
+      if (reason.length > 4000) return send.bad(res, "Please keep the note under 4000 characters.");
+
+      try {
+        const [[t]] = await pool.query(
+          `SELECT t.id, t.requester_id, t.assignee_id, t.team_id, t.priority_id, s.\`key\` AS status_key
+             FROM tickets t JOIN ticket_statuses s ON s.id = t.status_id WHERE t.id = ?`,
+          [ticketId]
+        );
+        if (!t) return send.notFound(res, "Ticket not found");
+
+        const isAdmin = (req.user.roles || []).includes("admin");
+        const isRequester = t.requester_id === req.user.id;
+        const onTeam = isAgent(req.user) && (t.assignee_id === req.user.id || (await isTeamMember(pool, req.user.id, t.team_id)));
+        if (!isRequester && !isAdmin && !onTeam) return send.forbidden(res, "You can't reopen this ticket.");
+        if (t.status_key !== "solved" && t.status_key !== "closed") {
+          return send.bad(res, "Only a solved or closed ticket can be reopened.");
+        }
+
+        const inProgressId = await getLookupId(pool, "ticket_statuses", "in_progress");
+        if (!inProgressId) return send.serverErr(res, "Ticket statuses are not set up");
+
+        await pool.query(
+          `UPDATE tickets SET status_id = ?, solved_at = NULL, closed_at = NULL,
+                  reopened_count = COALESCE(reopened_count, 0) + 1
+            WHERE id = ?`,
+          [inProgressId, ticketId]
+        );
+        const [comment] = await pool.query(
+          "INSERT INTO ticket_comments (ticket_id, author_id, body, is_public) VALUES (?, ?, ?, 1)",
+          [ticketId, req.user.id, `Reopened: ${reason}`]
+        );
+        await insertEvent(pool, {
+          ticketId, actorId: req.user.id, type: "ticket.updated",
+          payload: { changes: { status: { from: t.status_key, to: "in_progress" } } },
+        });
+        await insertEvent(pool, {
+          ticketId, actorId: req.user.id, type: "ticket.reopened",
+          payload: { reason, from_status: t.status_key, comment_id: comment.insertId, by_requester: isRequester },
+        });
+
+        await restartSlaOnReopen(pool, ticketId, t.priority_id, t.team_id);
+        await notifyReopen(pool, ticketId, req.user.id, reason);
+
+        return send.ok(res, { ok: true });
+      } catch (e) {
+        console.error("reopen error:", e);
+        return send.serverErr(res);
+      }
+    },
+
     // POST /api/tickets/:id/teams/:teamId/reopen
     // Reopen a team's work (mark as active again)
     reopenTeamWork: async (req, res) => {
@@ -2747,7 +2872,7 @@ export function makeTicketController(pool) {
           const inProgressId = await getLookupId(pool, "ticket_statuses", "in_progress");
           if (inProgressId) {
             await pool.query(
-              `UPDATE tickets SET status_id = ?, closed_at = NULL, reopened_count = COALESCE(reopened_count, 0) + 1 WHERE id = ?`,
+              `UPDATE tickets SET status_id = ?, closed_at = NULL, solved_at = NULL, reopened_count = COALESCE(reopened_count, 0) + 1 WHERE id = ?`,
               [inProgressId, ticketId]
             );
 
@@ -2755,8 +2880,10 @@ export function makeTicketController(pool) {
               ticketId,
               actorId: req.user.id,
               type: "ticket.reopened",
-              payload: { reason: "Team work was reopened" },
+              payload: { reason: "Team work was reopened", from_status: ticketRows[0].status_key },
             });
+            const [[tk]] = await pool.query("SELECT priority_id, team_id FROM tickets WHERE id = ?", [ticketId]);
+            await restartSlaOnReopen(pool, ticketId, tk.priority_id, tk.team_id);
           }
         }
 
@@ -2830,8 +2957,19 @@ export function makeTicketController(pool) {
         // queue. NOC commenting after it handed the ticket off must NOT meet/answer
         // the team's response SLA (nor set first_responded_at, which would rob the
         // team's own first reply of the credit), nor advance the ticket.
+        // After a reopen the response clock runs again (response_met_at cleared),
+        // so the handling team's next public reply meets it even though the
+        // ticket already had a first response.
+        let responseOpen = !ticket.first_responded_at;
+        if (!responseOpen && isAgent(req.user) && isPublic) {
+          const [[open]] = await pool.query(
+            "SELECT 1 AS yes FROM ticket_slas WHERE ticket_id = ? AND response_met_at IS NULL AND paused_at IS NULL",
+            [ticketId]
+          );
+          responseOpen = !!open;
+        }
         let firstHandlingReply = false;
-        if (isAgent(req.user) && isPublic && !ticket.first_responded_at) {
+        if (isAgent(req.user) && isPublic && responseOpen) {
           const isAdmin = (req.user.roles || []).includes("admin");
           const nocTeamId = await getNocTeamId(pool);
           const inTriageQueue = !!nocTeamId && ticket.team_id === nocTeamId;
@@ -2843,7 +2981,7 @@ export function makeTicketController(pool) {
 
         // Track first response time + mark the team response SLA met.
         if (firstHandlingReply) {
-          await pool.query("UPDATE tickets SET first_responded_at = NOW() WHERE id = ?", [ticketId]);
+          await pool.query("UPDATE tickets SET first_responded_at = COALESCE(first_responded_at, NOW()) WHERE id = ?", [ticketId]);
           try {
             await pool.query(
               `UPDATE ticket_slas SET response_met_at = NOW()

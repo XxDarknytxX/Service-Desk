@@ -34,6 +34,7 @@ export function makeTicketRouter(controller) {
   // Quick actions
   router.post("/tickets/:id/submit", requireAuth, controller.submitDraft);
   router.post("/tickets/:id/assign", requireAuth, controller.assignToMe);
+  router.post("/tickets/:id/reopen", requireAuth, controller.reopen);
   router.post("/tickets/:id/escalate", requireAuth, controller.escalate);
   router.post("/tickets/:id/escalate-to-manager", requireAuth, controller.escalateToManager);
   router.post("/tickets/:id/reassign", requireAuth, controller.reassign);

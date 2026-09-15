@@ -72,6 +72,10 @@ export default function TicketDetail() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("comments");
   const [actionLoading, setActionLoading] = useState(null);
+  // Reopen asks what's still wrong; the note goes to the team and the SLA restarts.
+  const [showReopen, setShowReopen] = useState(false);
+  const [reopenReason, setReopenReason] = useState("");
+  const [reopening, setReopening] = useState(false);
 
   const [commentBody, setCommentBody] = useState("");
   const [isInternalNote, setIsInternalNote] = useState(false);
@@ -335,6 +339,22 @@ export default function TicketDetail() {
       toast.error(err.message || "Failed to update status");
     }
     finally { setActionLoading(null); }
+  };
+
+  const openReopen = () => { setReopenReason(""); setShowReopen(true); };
+  const submitReopen = async () => {
+    if (reopenReason.trim().length < 5) return toast.error("Tell the team what's still not working");
+    setReopening(true);
+    try {
+      await api(`/tickets/${id}/reopen`, { method: "POST", body: { reason: reopenReason.trim() } });
+      setShowReopen(false);
+      toast.success("Reopened — the team has your note and is back on it");
+      await loadTicketData();
+    } catch (err) {
+      toast.error(err.message || "Couldn't reopen the ticket");
+    } finally {
+      setReopening(false);
+    }
   };
 
   const handleAssignToMe = async () => {
@@ -1137,7 +1157,7 @@ export default function TicketDetail() {
               <Button onClick={() => handleQuickStatus("closed")} loading={actionLoading === "closed"}>
                 <Icon name="check" size={16} className="mr-1.5" /> Confirm &amp; close
               </Button>
-              <Button variant="secondary" onClick={() => handleQuickStatus("in_progress")} loading={actionLoading === "in_progress"}>
+              <Button variant="secondary" onClick={openReopen}>
                 <Icon name="refresh" size={16} className="mr-1.5" /> Reopen
               </Button>
             </div>
@@ -1162,7 +1182,7 @@ export default function TicketDetail() {
                 <p className="text-xs text-[var(--fg-secondary)] mt-1 italic">"{csatExisting.comment}"</p>
               )}
             </div>
-            <Button variant="secondary" onClick={() => handleQuickStatus("in_progress")} loading={actionLoading === "in_progress"} className="shrink-0">
+            <Button variant="secondary" onClick={openReopen} className="shrink-0">
               <Icon name="refresh" size={16} className="mr-1.5" /> Reopen
             </Button>
           </div>
@@ -1207,7 +1227,7 @@ export default function TicketDetail() {
                   <Button onClick={handleSubmitCsat} loading={csatSubmitting} disabled={!csatRating}>
                     <Icon name="star" size={16} className="mr-1.5" /> Submit rating
                   </Button>
-                  <Button variant="secondary" onClick={() => handleQuickStatus("in_progress")} loading={actionLoading === "in_progress"}>
+                  <Button variant="secondary" onClick={openReopen}>
                     <Icon name="refresh" size={16} className="mr-1.5" /> Reopen
                   </Button>
                 </div>
@@ -1565,7 +1585,15 @@ export default function TicketDetail() {
                                 {/* SLA target set on creation and re-set on every (re)assignment. */}
                                 {event.event_type === "sla.assigned" && (
                                   <p className="text-sm text-[var(--fg-secondary)] mt-2 ml-[88px]">
-                                    SLA target set{event.routed_team && <> for <span className="font-semibold text-[var(--fg-primary)]">{event.routed_team}</span></>}
+                                    {event.payload?.restarted ? "SLA restarted after reopening" : "SLA target set"}
+                                    {event.routed_team && <> for <span className="font-semibold text-[var(--fg-primary)]">{event.routed_team}</span></>}
+                                  </p>
+                                )}
+                                {/* Reopened: what the customer (or team) said is still wrong. */}
+                                {event.event_type === "ticket.reopened" && (
+                                  <p className="text-sm text-[var(--fg-secondary)] mt-2 ml-[88px]">
+                                    Reopened{event.payload?.from_status ? ` from ${event.payload.from_status}` : ""}
+                                    {event.payload?.reason && <span className="block text-xs text-[var(--fg-muted)] italic mt-1">“{event.payload.reason}”</span>}
                                   </p>
                                 )}
                                 {/* Triage SLA started — the NOC "reassign on time" clock. */}
@@ -2827,6 +2855,45 @@ export default function TicketDetail() {
                 "focus:outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/20"
               )}
             />
+          </div>
+        </div>
+      </Modal>
+
+      {/* Reopen — what's still wrong */}
+      <Modal
+        open={showReopen}
+        onClose={() => !reopening && setShowReopen(false)}
+        title="Reopen this request"
+        subtitle="Tell the team what's still not working so they can pick it up straight away."
+        size="sm"
+        actions={
+          <>
+            <Button variant="secondary" onClick={() => setShowReopen(false)} disabled={reopening}>Cancel</Button>
+            <Button onClick={submitReopen} loading={reopening} disabled={reopenReason.trim().length < 5} icon={<Icon name="refresh" size={14} />}>
+              Reopen request
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <div>
+            <label htmlFor="reopen-reason" className="block text-sm font-medium text-[var(--fg-primary)] mb-1.5">What's still wrong?</label>
+            <textarea
+              id="reopen-reason"
+              autoFocus
+              value={reopenReason}
+              onChange={(e) => setReopenReason(e.target.value)}
+              rows={5}
+              maxLength={4000}
+              placeholder="e.g. The link dropped again this morning at 9am and hasn't come back."
+              className="w-full px-3.5 py-2.5 rounded-xl text-sm resize-none bg-[var(--bg-base)] text-[var(--fg-primary)] placeholder:text-[var(--fg-muted)] border border-[var(--border-default)] focus:outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/20"
+            />
+          </div>
+          <div className="flex items-start gap-2.5 px-3.5 py-2.5 rounded-xl bg-blue-500/5 border border-blue-500/20">
+            <Icon name="clock" size={15} className="text-blue-500 shrink-0 mt-0.5" />
+            <p className="text-xs text-[var(--fg-secondary)]">
+              Your note is added to the conversation and sent to the team. The response and resolution times start again from now.
+            </p>
           </div>
         </div>
       </Modal>
