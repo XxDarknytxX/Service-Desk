@@ -10,6 +10,7 @@ import {
   getServiceDeliveryUserIds,
 } from "../middleware/workspace.js";
 import { getEscalationChain } from "../services/hierarchyService.js";
+import { isLayerRole } from "../utils/corporateRoles.js";
 
 const send = {
   ok: (res, data = {}) => res.json(data),
@@ -33,12 +34,12 @@ async function isNocMember(pool, userId) {
 }
 
 // Which app a team works tickets in ('internal' | 'corporate'), or null if no
-// team. Only used to check a ticket's target team, so the corporate Executive
-// team — a hierarchy layer, not a queue — counts as neither and is refused.
+// team. Only used to check a ticket's target team, so corporate business and
+// Executive teams — hierarchy teams, not queues — count as neither and are refused.
 async function getTeamWorkspace(pool, teamId) {
   if (!teamId) return null;
   const [[row]] = await pool.query("SELECT workspace, corporate_role FROM teams WHERE id = ?", [teamId]);
-  if (row?.corporate_role === "executive") return null;
+  if (isLayerRole(row?.corporate_role)) return null;
   return row?.workspace || null;
 }
 

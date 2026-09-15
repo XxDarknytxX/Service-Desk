@@ -6,27 +6,23 @@
  * be corporate staff. The chain is also the escalation ladder for requests — an
  * engineer escalates to their L1 manager, who can pass it to L2, and so on.
  *
- * Reporting lines that still point into the internal desk (e.g. a team manager
- * who reports to an internal executive) end the corporate chain there; they are
- * listed so an admin can re-point them.
+ * Reporting lines that still point into the internal desk end the corporate
+ * chain there; they are listed so an admin can re-point them.
+ *
+ * Admins edit a person's full profile straight from their card — details,
+ * team, position, reporting line and account — with the same form as People.
  */
 
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../services/api";
+import { useMeta } from "../contexts/meta";
 import { useToast } from "../contexts/toast";
-import Button from "../components/ui/Button";
 import Icon from "../components/ui/Icon";
-import Badge from "../components/ui/Badge";
-import Modal from "../components/ui/Modal";
 import PageHeader from "../components/ui/PageHeader";
 import EmptyState from "../components/ui/EmptyState";
 import Skeleton from "../components/ui/Skeleton";
-import { SearchableSelect } from "../components/ui/Input";
 import OrgChart from "../components/OrgChart";
-
-const POSITION_TONE = { queue: "blue", triage: "amber", service_delivery: "violet", executive: "rose" };
-// "Delivery Manager · Cloud", but just "Executive" when the team is named for the position.
-const positionText = (p, sep = " · ") => (p.label === p.team_name ? p.label : `${p.label}${sep}${p.team_name}`);
+import { POSITION_TONE, StaffProfileModal } from "../components/corporate/staffProfile";
 
 function Stat({ icon, label, value, hint, tone = "text-[var(--accent)] bg-[var(--accent)]/10" }) {
   return (
@@ -45,22 +41,30 @@ function Stat({ icon, label, value, hint, tone = "text-[var(--accent)] bg-[var(-
 
 export default function CorporateHierarchy() {
   const toast = useToast();
+  const { meta } = useMeta();
   const [people, setPeople] = useState([]);
   const [links, setLinks] = useState([]);
   const [canEdit, setCanEdit] = useState(false);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
-  const [editing, setEditing] = useState(null);
-  const [managerId, setManagerId] = useState("");
-  const [saving, setSaving] = useState(false);
+  // Full staff records (phone, account status, …) for the profile form — only
+  // fetched for people who can edit.
+  const [staff, setStaff] = useState([]);
+  const [editingId, setEditingId] = useState(null);
 
-  async function load() {
-    setLoading(true);
+  const teams = useMemo(() => (meta?.teams || []).filter((t) => t.workspace === "corporate"), [meta]);
+
+  async function load({ quiet = false } = {}) {
+    if (!quiet) setLoading(true);
     try {
       const data = await api("/corporate/hierarchy");
       setPeople(data.users || []);
       setLinks(data.hierarchy || []);
       setCanEdit(!!data.can_edit);
+      if (data.can_edit) {
+        const s = await api("/corporate/people?type=staff");
+        setStaff(s.items || []);
+      }
     } catch (err) {
       toast.error(err.message || "Failed to load hierarchy");
     } finally {
@@ -73,16 +77,21 @@ export default function CorporateHierarchy() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const byId = useMemo(() => new Map(people.map((p) => [p.id, p])), [people]);
+  const staffById = useMemo(() => new Map(staff.map((s) => [s.id, s])), [staff]);
 
   // Decorate for OrgChart: show position instead of access role, plus level.
+  // Business teams have no position tag, so their cards show just the title.
   const chartUsers = useMemo(
     () =>
-      people.map((p) => ({
-        ...p,
-        position_label: p.positions?.[0]?.label,
-        position_tone: POSITION_TONE[p.positions?.[0]?.corporate_role],
-      })),
+      people.map((p) => {
+        const tagged = (p.positions || []).find((x) => x.label);
+        return {
+          ...p,
+          position_label: tagged?.label,
+          position_tone: POSITION_TONE[tagged?.corporate_role],
+          position_hidden: !tagged,
+        };
+      }),
     [people]
   );
 
@@ -90,69 +99,9 @@ export default function CorporateHierarchy() {
   const tops = people.filter((p) => !p.manager_id);
   const outside = people.filter((p) => p.outside_manager);
 
-  function chainFrom(id, selfId) {
-    const out = [];
-    const seen = new Set([selfId]);
-    let cur = id ? Number(id) : null;
-    while (cur && !seen.has(cur) && out.length < 10) {
-      seen.add(cur);
-      const p = byId.get(cur);
-      if (!p) break;
-      out.push(p);
-      cur = p.manager_id;
-    }
-    return out;
-  }
-
-  // People below someone can't become their manager (it would loop).
-  function descendantsOf(id) {
-    const out = new Set();
-    let frontier = [id];
-    while (frontier.length) {
-      const next = [];
-      for (const l of links) if (frontier.includes(l.manager_id) && !out.has(l.user_id)) { out.add(l.user_id); next.push(l.user_id); }
-      frontier = next;
-    }
-    return out;
-  }
-
   function openEdit(person) {
-    if (!canEdit) return;
-    setEditing(person);
-    setManagerId(person.manager_id ? String(person.manager_id) : "");
+    if (canEdit) setEditingId(person.id);
   }
-
-  async function save() {
-    setSaving(true);
-    try {
-      await api(`/corporate/people/${editing.id}`, {
-        method: "PATCH",
-        body: { manager_id: managerId ? Number(managerId) : null },
-      });
-      toast.success("Reporting line updated");
-      setEditing(null);
-      load();
-    } catch (err) {
-      toast.error(err.message || "Couldn't update reporting line");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  const blocked = editing ? descendantsOf(editing.id) : new Set();
-  const options = editing
-    ? [
-        { value: "", label: "No one — top of the escalation chain" },
-        ...people
-          .filter((p) => p.id !== editing.id && !blocked.has(p.id))
-          .map((p) => ({
-            value: String(p.id),
-            label: p.full_name,
-            subtitle: (p.positions || []).map((x) => positionText(x)).join(", "),
-          })),
-      ]
-    : [];
-  const preview = editing ? chainFrom(managerId, editing.id) : [];
 
   return (
     <div className="space-y-5">
@@ -231,7 +180,7 @@ export default function CorporateHierarchy() {
             className="w-full pl-9 pr-3 py-2 rounded-lg text-sm bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[var(--fg-primary)] placeholder:text-[var(--fg-muted)] focus:outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/20"
           />
         </div>
-        {canEdit && <p className="text-xs text-[var(--fg-muted)]">Hover a card and use the pencil to change who they report to.</p>}
+        {canEdit && <p className="text-xs text-[var(--fg-muted)]">Use the pencil on a card to edit their profile, team and who they report to.</p>}
       </div>
 
       {loading ? (
@@ -246,56 +195,14 @@ export default function CorporateHierarchy() {
         </div>
       )}
 
-      <Modal
-        open={!!editing}
-        onClose={() => setEditing(null)}
-        title="Change reporting line"
-        subtitle={editing ? `${editing.full_name} · ${(editing.positions || []).map((p) => p.label).join(", ")}` : ""}
-        actions={
-          <>
-            <Button variant="secondary" onClick={() => setEditing(null)}>Cancel</Button>
-            <Button onClick={save} loading={saving}>Save</Button>
-          </>
-        }
-      >
-        {editing && (
-          <div className="space-y-4">
-            {editing.outside_manager && (
-              <p className="text-xs text-amber-600 flex items-start gap-1.5">
-                <Icon name="alertTriangle" size={13} className="mt-0.5 shrink-0" />
-                Currently reports to {editing.outside_manager.full_name}, outside the corporate desk.
-              </p>
-            )}
-            <SearchableSelect
-              label="Reports to"
-              value={managerId}
-              onChange={(e) => setManagerId(e.target.value)}
-              options={options}
-              placeholder="No one — top of the escalation chain"
-              searchPlaceholder="Search delivery staff…"
-            />
-            <div className="rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)] px-3 py-2.5">
-              <p className="text-xs font-medium text-[var(--fg-secondary)] mb-1.5">Escalation layers for {editing.full_name.split(" ")[0]}'s requests</p>
-              {preview.length === 0 ? (
-                <p className="text-xs text-[var(--fg-muted)]">None — they're the final approver for anything escalated to them.</p>
-              ) : (
-                <div className="flex items-center flex-wrap gap-1.5 text-xs">
-                  {preview.map((p, i) => (
-                    <span key={p.id} className="inline-flex items-center gap-1.5">
-                      {i > 0 && <Icon name="chevronRight" size={12} className="text-[var(--fg-muted)]" />}
-                      <Badge tone={i === 0 ? "blue" : "slate"} size="sm">L{i + 1}</Badge>
-                      <span className="text-[var(--fg-primary)]">{p.full_name}</span>
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-            <p className="text-xs text-[var(--fg-muted)]">
-              People who report to {editing.full_name.split(" ")[0]} keep reporting to them; their chains update automatically.
-            </p>
-          </div>
-        )}
-      </Modal>
+      <StaffProfileModal
+        open={!!editingId && staffById.has(editingId)}
+        person={staffById.get(editingId) || null}
+        staff={staff}
+        teams={teams}
+        onClose={() => setEditingId(null)}
+        onSaved={() => load({ quiet: true })}
+      />
     </div>
   );
 }

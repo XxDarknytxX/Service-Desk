@@ -1,8 +1,7 @@
 // src/controllers/teamController.js
 import { validationResult } from "express-validator";
 import { getWorkspaceAccess, canAccessWorkspace, WORKSPACES } from "../middleware/workspace.js";
-
-const CORPORATE_ROLES = ["triage", "queue", "service_delivery", "executive"];
+import { CORPORATE_ROLES, hasLeadPosition } from "../utils/corporateRoles.js";
 
 /**
  * Validates the workspace / corporate_role pair from a create or update body.
@@ -16,7 +15,7 @@ function parseTeamWorkspace(body, existing = null) {
     return { error: "workspace must be 'internal' or 'corporate'" };
   }
   if (corporateRole !== undefined && corporateRole !== null && !CORPORATE_ROLES.includes(corporateRole)) {
-    return { error: "corporate_role must be triage, queue, service_delivery or executive" };
+    return { error: `corporate_role must be one of: ${CORPORATE_ROLES.join(", ")}` };
   }
   const finalWs = workspace ?? existing?.workspace ?? "internal";
   // An internal team has no corporate role; clear it when moving a team inward.
@@ -287,11 +286,15 @@ export function makeTeamController(pool) {
         );
         if (cust) return send.bad(res, "Corporate customers can't be added to teams.");
 
+        // The Executive team has no manager position.
+        const [[team]] = await pool.query("SELECT corporate_role FROM teams WHERE id = ?", [team_id]);
+        const lead = hasLeadPosition(team?.corporate_role) ? !!is_lead : false;
+
         await pool.query(
           `INSERT INTO team_members (team_id, user_id, is_lead)
            VALUES (?, ?, ?)
            ON DUPLICATE KEY UPDATE is_lead = VALUES(is_lead)`,
-          [team_id, user_id, is_lead || false]
+          [team_id, user_id, lead]
         );
         return send.ok(res, { success: true });
       } catch (e) {
@@ -300,12 +303,27 @@ export function makeTeamController(pool) {
       }
     },
 
-    // DELETE /api/teams/members/:userId - Remove user from all teams
+    // DELETE /api/teams/members/:userId[?team_id=]
+    // With team_id: leave that one team. Without: leave every team of the app on
+    // screen (?workspace= / X-Workspace) — editing someone on the internal desk
+    // must not strip a head or executive of their corporate hierarchy team.
     removeMember: async (req, res) => {
       const userId = Number(req.params.userId);
+      const teamId = req.query.team_id ? Number(req.query.team_id) : null;
+      const workspace = req.query.workspace || req.headers["x-workspace"];
 
       try {
-        await pool.query(`DELETE FROM team_members WHERE user_id = ?`, [userId]);
+        if (teamId) {
+          await pool.query(`DELETE FROM team_members WHERE user_id = ? AND team_id = ?`, [userId, teamId]);
+        } else if (WORKSPACES.includes(workspace)) {
+          await pool.query(
+            `DELETE tm FROM team_members tm JOIN teams t ON t.id = tm.team_id
+              WHERE tm.user_id = ? AND t.workspace = ?`,
+            [userId, workspace]
+          );
+        } else {
+          await pool.query(`DELETE FROM team_members WHERE user_id = ?`, [userId]);
+        }
         return send.ok(res, { success: true });
       } catch (e) {
         console.error(e);

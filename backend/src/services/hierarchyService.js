@@ -19,18 +19,19 @@
 // outside" rather than silently escalating a customer's request out of the
 // corporate desk.
 
+import { corporateOnlyTeamSql } from "../utils/corporateRoles.js";
+
 const MAX_DEPTH = 12;
 
 /** SQL predicate: is user `alias`.id in the given app's staff directory? */
 function directorySql(workspace, alias = "u") {
   const inCorpTeam = `EXISTS (SELECT 1 FROM team_members tmx JOIN teams tx ON tx.id = tmx.team_id
                               WHERE tmx.user_id = ${alias}.id AND tx.workspace = 'corporate')`;
-  // The Executive layer belongs to BOTH hierarchies (they top the corporate
-  // escalation chain and run the internal side), so only corporate-only teams
-  // take someone out of the internal chart.
+  // Business and Executive teams belong to BOTH hierarchies (they sit in the
+  // corporate escalation chain and run the internal side), so only
+  // corporate-only teams take someone out of the internal chart.
   const inCorpOnlyTeam = `EXISTS (SELECT 1 FROM team_members tmy JOIN teams ty ON ty.id = tmy.team_id
-                                  WHERE tmy.user_id = ${alias}.id AND ty.workspace = 'corporate'
-                                    AND (ty.corporate_role <=> 'executive') = 0)`;
+                                  WHERE tmy.user_id = ${alias}.id AND ${corporateOnlyTeamSql("ty")})`;
   const isCustomer = `EXISTS (SELECT 1 FROM user_roles urx JOIN roles rx ON rx.id = urx.role_id
                               WHERE urx.user_id = ${alias}.id AND rx.name = 'corporate_customer')`;
   return workspace === "corporate"

@@ -137,10 +137,12 @@ function EmployeeNode({ employee, onEdit, hasReports, isExpanded, dimmed, highli
             <button
               data-stop-toggle
               onClick={(e) => { e.stopPropagation(); onEdit(employee); }}
-              title="Edit user"
+              title="Edit profile"
+              aria-label={`Edit ${displayName}'s profile`}
               className={cn(
                 "shrink-0 p-1.5 rounded-lg transition-all duration-150",
-                "opacity-0 group-hover/node:opacity-100",
+                // Faintly visible at rest so it's findable (and tappable on touch).
+                "opacity-40 group-hover/node:opacity-100 focus-visible:opacity-100",
                 "text-[var(--fg-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-surface)]"
               )}
             >
@@ -160,9 +162,13 @@ function EmployeeNode({ employee, onEdit, hasReports, isExpanded, dimmed, highli
 
           {/* Corporate chart passes the person's position (e.g. "Delivery
               Manager") and org level instead of an access role. */}
-          <Badge tone={employee.position_tone || role.tone} size="sm">
-            {employee.position_label || role.label}
-          </Badge>
+          {/* position_hidden: a corporate business team — no position tag, the
+              job title above says it. */}
+          {!employee.position_hidden && (
+            <Badge tone={employee.position_tone || role.tone} size="sm">
+              {employee.position_label || role.label}
+            </Badge>
+          )}
           {employee.org_level != null && (
             <Badge tone="slate" size="sm">Level {employee.org_level}</Badge>
           )}

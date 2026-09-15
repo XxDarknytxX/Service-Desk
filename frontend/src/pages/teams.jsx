@@ -34,7 +34,8 @@ const CORPORATE_ROLES = [
   { value: "queue", label: "Delivery queue", hint: "Customers' requests route here by category; NOC can triage requests into it." },
   { value: "triage", label: "Triage (NOC)", hint: "Receives \"Not sure\" requests, sets priority and routes them to a delivery queue." },
   { value: "service_delivery", label: "Service delivery", hint: "Notified about every corporate request (SDM / SDE)." },
-  { value: "executive", label: "Executive", hint: "CTO, CEO and heads of business: the top escalation layers. Members also keep the internal desk." },
+  { value: "business", label: "Business team", hint: "A commercial team under the CCO (e.g. Corporate ICT). Not a ticket queue and no position tags; its head is an escalation layer. Members also keep the internal desk." },
+  { value: "executive", label: "Executive", hint: "CTO, CCO and CEO: the top escalation layers. Not a ticket queue. Members also keep the internal desk." },
 ];
 const CORPORATE_ROLE_LABEL = Object.fromEntries(CORPORATE_ROLES.map((r) => [r.value, r.label]));
 
@@ -371,8 +372,9 @@ export default function Teams() {
       confirmText: "Remove",
       onConfirm: async () => {
         try {
-          // DELETE /teams/members/:userId removes the user from all teams
-          await api(`/teams/members/${member.id}`, { method: "DELETE" });
+          // Only this team — people can sit in more than one (e.g. an executive
+          // is in EXCO and in the corporate Executive team).
+          await api(`/teams/members/${member.id}?team_id=${selectedTeam.id}`, { method: "DELETE" });
           toast.success("Member removed");
           await reloadMembers();
           loadTeams();
@@ -674,7 +676,7 @@ export default function Teams() {
                           </div>
                           <span className="font-medium text-[var(--fg-primary)] truncate">{team.name}</span>
                           {team.corporate_role && (
-                            <Badge tone={team.corporate_role === "triage" ? "amber" : team.corporate_role === "service_delivery" ? "violet" : team.corporate_role === "executive" ? "rose" : "blue"} size="sm">
+                            <Badge tone={team.corporate_role === "triage" ? "amber" : team.corporate_role === "service_delivery" ? "violet" : team.corporate_role === "executive" ? "rose" : team.corporate_role === "business" ? "emerald" : "blue"} size="sm">
                               {CORPORATE_ROLE_LABEL[team.corporate_role]}
                             </Badge>
                           )}
@@ -798,7 +800,7 @@ export default function Teams() {
                 </h3>
                 {team.corporate_role && (
                   <div className="relative mb-2">
-                    <Badge tone={team.corporate_role === "triage" ? "amber" : team.corporate_role === "service_delivery" ? "violet" : team.corporate_role === "executive" ? "rose" : "blue"} size="sm">
+                    <Badge tone={team.corporate_role === "triage" ? "amber" : team.corporate_role === "service_delivery" ? "violet" : team.corporate_role === "executive" ? "rose" : team.corporate_role === "business" ? "emerald" : "blue"} size="sm">
                       {CORPORATE_ROLE_LABEL[team.corporate_role]}
                     </Badge>
                   </div>

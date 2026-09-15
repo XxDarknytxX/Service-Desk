@@ -1,5 +1,6 @@
 // src/controllers/metaController.js
 import { resolveRequestWorkspace } from "../middleware/workspace.js";
+import { corporateOnlyTeamSql } from "../utils/corporateRoles.js";
 
 const send = {
   ok: (res, data = {}) => res.json(data),
@@ -67,12 +68,11 @@ export function makeMetaController(pool) {
         const [roles] = await pool.query(`SELECT id, name FROM roles ORDER BY name`);
         // Agents of THIS app: corporate staff are members of corporate teams;
         // internal staff are everyone not in a corporate-only team. Admins and
-        // the corporate Executive layer appear in both.
+        // the corporate business / Executive teams appear in both.
         const inAnyCorporateTeam = `EXISTS (SELECT 1 FROM team_members tm JOIN teams tt ON tt.id = tm.team_id
                                             WHERE tm.user_id = u.id AND tt.workspace = 'corporate')`;
         const inCorporateOnlyTeam = `EXISTS (SELECT 1 FROM team_members tm JOIN teams tt ON tt.id = tm.team_id
-                                             WHERE tm.user_id = u.id AND tt.workspace = 'corporate'
-                                               AND (tt.corporate_role <=> 'executive') = 0)`;
+                                             WHERE tm.user_id = u.id AND ${corporateOnlyTeamSql("tt")})`;
         const [agents] = await pool.query(
           `SELECT u.id, u.full_name, u.email
            FROM users u

@@ -29,6 +29,12 @@ const sizes = {
   full: "max-w-7xl",
 };
 
+// Open modals, oldest first. A confirm dialog can open over another modal; only
+// the TOPMOST one may react to Escape / Tab, and body scroll stays locked until
+// the last one closes.
+const openStack = [];
+let nextModalId = 1;
+
 const FOCUSABLE =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
@@ -47,16 +53,19 @@ export default function Modal({
   const isLight = theme === "light";
   const dialogRef = useRef(null);
   const restoreFocusRef = useRef(null);
+  const idRef = useRef(0);
+  if (!idRef.current) idRef.current = nextModalId++;
 
-  // Lock body scroll when open
+  // Register as open, and lock body scroll while any modal is open.
   useEffect(() => {
-    if (open) {
-      document.body.style.overflow = "hidden";
-    } else {
-      document.body.style.overflow = "unset";
-    }
+    if (!open) return undefined;
+    const id = idRef.current;
+    openStack.push(id);
+    document.body.style.overflow = "hidden";
     return () => {
-      document.body.style.overflow = "unset";
+      const i = openStack.lastIndexOf(id);
+      if (i !== -1) openStack.splice(i, 1);
+      if (openStack.length === 0) document.body.style.overflow = "unset";
     };
   }, [open]);
 
@@ -84,6 +93,7 @@ export default function Modal({
   useEffect(() => {
     if (!open) return undefined;
     function onKeyDown(event) {
+      if (openStack[openStack.length - 1] !== idRef.current) return;
       if (event.key === "Escape") {
         event.stopPropagation();
         onClose?.();

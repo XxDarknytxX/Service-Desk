@@ -33,6 +33,7 @@ import { forgetSession } from "../middleware/auth.js";
 import { isServiceDeliveryMember } from "../middleware/workspace.js";
 import { sendOnboarding, sendAdminReset, validateNewPassword } from "../services/passwordResetService.js";
 import { setDirectManager, wouldCreateCycle } from "../services/hierarchyService.js";
+import { hasLeadPosition } from "../utils/corporateRoles.js";
 
 const send = {
   ok: (res, data = {}) => res.json(data),
@@ -49,7 +50,9 @@ const POSITION_LABELS = {
   queue: ["Delivery Engineer", "Delivery Manager"],
   triage: ["Triage Engineer (NOC)", "Triage Manager (NOC)"],
   service_delivery: ["Service Delivery Executive", "Service Delivery Manager"],
-  // The executive layer (CTO, CEO, heads of business) — tops the escalation chain.
+  // Commercial teams under the CCO carry no position tag — job titles say it.
+  business: [null, null],
+  // The executive layer (CTO, CCO, CEO) at the top of the escalation chain.
   executive: ["Executive", "Executive"],
 };
 
@@ -286,7 +289,7 @@ export function makeCorporatePeopleController(pool) {
       const full_name = clean(req.body.full_name);
       const email = clean(req.body.email)?.toLowerCase();
       const teamId = Number(req.body.team_id);
-      const isLead = !!req.body.is_lead;
+      let isLead = !!req.body.is_lead;
       const managerId = req.body.manager_id ? Number(req.body.manager_id) : null;
       const sendInvite = req.body.send_onboarding !== false;
 
@@ -299,8 +302,10 @@ export function makeCorporatePeopleController(pool) {
       }
 
       try {
-        const [[team]] = await pool.query("SELECT id, name, workspace FROM teams WHERE id = ?", [teamId]);
+        const [[team]] = await pool.query("SELECT id, name, workspace, corporate_role FROM teams WHERE id = ?", [teamId]);
         if (!team || team.workspace !== "corporate") return send.bad(res, "Choose a corporate team");
+        // The Executive team has no manager position.
+        if (!hasLeadPosition(team.corporate_role)) isLead = false;
         if (isLead) {
           const [[lead]] = await pool.query(
             `SELECT u.full_name FROM team_members tm JOIN users u ON u.id = tm.user_id
@@ -402,9 +407,10 @@ export function makeCorporatePeopleController(pool) {
             [userId]
           );
           const teamId = "team_id" in req.body ? Number(req.body.team_id) : current?.team_id;
-          const isLead = "is_lead" in req.body ? !!req.body.is_lead : !!current?.is_lead;
-          const [[team]] = await pool.query("SELECT id, name, workspace FROM teams WHERE id = ?", [teamId]);
+          let isLead = "is_lead" in req.body ? !!req.body.is_lead : !!current?.is_lead;
+          const [[team]] = await pool.query("SELECT id, name, workspace, corporate_role FROM teams WHERE id = ?", [teamId]);
           if (!team || team.workspace !== "corporate") return send.bad(res, "Choose a corporate team");
+          if (!hasLeadPosition(team.corporate_role)) isLead = false;
           if (isLead) {
             const [[lead]] = await pool.query(
               `SELECT u.full_name FROM team_members tm JOIN users u ON u.id = tm.user_id

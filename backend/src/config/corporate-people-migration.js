@@ -24,6 +24,7 @@
  */
 import mysql from "mysql2/promise";
 import dotenv from "dotenv";
+import { CORPORATE_ROLES, CORPORATE_ROLE_ENUM } from "../utils/corporateRoles.js";
 dotenv.config();
 
 const unquote = (v) => (v || "").replace(/^"(.*)"$/, "$1").replace(/^'(.*)'$/, "$1");
@@ -88,17 +89,24 @@ async function migrate() {
       console.warn("  ! password_reset_tokens missing — run password-reset-migration.js first");
     }
 
-    // ── Executive layer ───────────────────────────────────────────────────
-    // A corporate team role for the executives above the team managers (CTO,
-    // CEO, heads of business). They top the escalation chain and — unlike other
-    // corporate staff — keep the internal desk too (see middleware/workspace.js).
+    // ── Hierarchy teams: business + executive ─────────────────────────────
+    // Corporate team roles above the delivery teams: commercial teams under the
+    // CCO ('business' — a head, no position tags) and the executives
+    // ('executive'). They sit in the escalation chain, never take tickets, and —
+    // unlike other corporate staff — keep the internal desk (utils/corporateRoles.js).
     if (await colExists(conn, "teams", "corporate_role")) {
       const roleType = await columnType(conn, "teams", "corporate_role");
-      if (!roleType.includes("'executive'")) {
-        await conn.query(
-          `ALTER TABLE teams MODIFY COLUMN corporate_role ENUM('triage','queue','service_delivery','executive') NULL`
-        );
-        console.log("  + teams.corporate_role 'executive'");
+      const missing = CORPORATE_ROLES.filter((r) => !roleType.includes(`'${r}'`));
+      const [[{ unknown }]] = await conn.query(
+        "SELECT COUNT(*) AS unknown FROM teams WHERE corporate_role IS NOT NULL AND corporate_role NOT IN (?)",
+        [CORPORATE_ROLES]
+      );
+      if (unknown) throw new Error(`${unknown} team(s) use a corporate_role this version doesn't know`);
+      if (missing.length || roleType !== CORPORATE_ROLE_ENUM.toLowerCase()) {
+        await conn.query(`ALTER TABLE teams MODIFY COLUMN corporate_role ${CORPORATE_ROLE_ENUM} NULL`);
+        console.log(missing.length
+          ? `  + teams.corporate_role ${missing.map((r) => `'${r}'`).join(", ")}`
+          : "  ~ teams.corporate_role values brought up to date");
       }
     }
 

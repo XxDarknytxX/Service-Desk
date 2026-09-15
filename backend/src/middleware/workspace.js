@@ -20,8 +20,10 @@
 //   everyone else                       → internal
 //
 // A staff member in both a corporate and an internal team is treated as
-// corporate — only admins and members of the corporate Executive team
-// (corporate_role = 'executive') get both apps.
+// corporate — only admins and members of a corporate HIERARCHY team (business
+// teams like Corporate ICT, and the Executive team — utils/corporateRoles.js)
+// get both apps.
+import { layerTeamSql } from "../utils/corporateRoles.js";
 
 export const WORKSPACES = ["internal", "corporate"];
 
@@ -41,23 +43,23 @@ export async function computeWorkspaceAccess(pool, userId, roles = []) {
   const isCustomer = roles.includes("corporate_customer");
 
   let inCorporateTeam = false;
-  let isExecutive = false;
+  let inLayer = false;
   if (!isAdmin && !isCustomer) {
     const [[row]] = await pool.query(
       `SELECT
          EXISTS(SELECT 1 FROM team_members tm JOIN teams t ON t.id = tm.team_id
                  WHERE tm.user_id = ? AND t.workspace = 'corporate') AS c,
          EXISTS(SELECT 1 FROM team_members tm JOIN teams t ON t.id = tm.team_id
-                 WHERE tm.user_id = ? AND t.corporate_role = 'executive') AS e`,
+                 WHERE tm.user_id = ? AND ${layerTeamSql("t")}) AS e`,
       [userId, userId]
     );
     inCorporateTeam = !!row.c;
-    isExecutive = !!row.e;
+    inLayer = !!row.e;
   }
 
-  // Executives sit at the top of the corporate escalation chain but also run
+  // Business heads and executives sit in the corporate escalation chain but also run
   // the internal side of the business, so — like admins — they get both apps.
-  const workspaces = isAdmin || isExecutive
+  const workspaces = isAdmin || inLayer
     ? ["internal", "corporate"]
     : isCustomer || inCorporateTeam
       ? ["corporate"]
@@ -66,7 +68,7 @@ export async function computeWorkspaceAccess(pool, userId, roles = []) {
   return {
     isAdmin,
     isCustomer,
-    isExecutive,
+    isLayerMember: inLayer,
     // Staff who work corporate tickets (admins and executives included).
     isCorporateStaff: !isCustomer && (isAdmin || inCorporateTeam),
     workspaces,

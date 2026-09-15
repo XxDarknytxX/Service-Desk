@@ -7,8 +7,11 @@
  *   Customers       raise requests for their company.
  *   Delivery staff  work requests. Their position comes from their team —
  *                   Delivery Engineer / Manager, Triage Engineer / Manager (NOC),
- *                   Service Delivery Executive / Manager — and their reporting
- *                   line sets the escalation layers (L1 = direct manager, …).
+ *                   Service Delivery Executive / Manager, and the Heads (no tag)
+ *                   and Executive layers — and their reporting line sets the
+ *                   escalation layers (L1 = direct manager, …). The staff form
+ *                   lives in components/corporate/staffProfile.jsx, shared with
+ *                   the Hierarchy page.
  *
  * New accounts are emailed a link to set their own password by default (the
  * "Email a set-password link" box); an invitation can be resent until it's
@@ -27,114 +30,18 @@ import Modal from "../components/ui/Modal";
 import PageHeader from "../components/ui/PageHeader";
 import EmptyState from "../components/ui/EmptyState";
 import { SkeletonTable } from "../components/ui/Skeleton";
-import Input, { Select, SearchableSelect } from "../components/ui/Input";
-import useConfirm from "../components/ui/useConfirm";
+import Input, { SearchableSelect } from "../components/ui/Input";
+import {
+  POSITION_TONE, describePerson, ago, StatusBadge, AccessSection, useAccountActions, StaffProfileModal,
+} from "../components/corporate/staffProfile";
 
 function cn(...parts) {
   return parts.filter(Boolean).join(" ");
 }
 
-const POSITION_NAMES = {
-  queue: ["Delivery Engineer", "Delivery Manager"],
-  triage: ["Triage Engineer (NOC)", "Triage Manager (NOC)"],
-  service_delivery: ["Service Delivery Executive", "Service Delivery Manager"],
-  executive: ["Executive", "Executive"],
-};
-const POSITION_TONE = { queue: "blue", triage: "amber", service_delivery: "violet", executive: "rose" };
-// "Delivery Manager · Cloud", but just "Executive" when the team is named for the position.
-const positionText = (p, sep = " · ") => (p.label === p.team_name ? p.label : `${p.label}${sep}${p.team_name}`);
-
-function ago(ts) {
-  if (!ts) return "Never";
-  const s = Math.max(0, Math.floor((Date.now() - new Date(ts).getTime()) / 1000));
-  if (s < 60) return "Just now";
-  const m = Math.floor(s / 60); if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60); if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24); if (d < 30) return `${d}d ago`;
-  return new Date(ts).toLocaleDateString();
-}
-
-function until(ts) {
-  if (!ts) return null;
-  const ms = new Date(ts).getTime() - Date.now();
-  if (ms <= 0) return "expired";
-  // Round UP: a link sent a minute ago has "3d left", not "2d".
-  const h = Math.ceil(ms / 3600000);
-  return h > 24 ? `${Math.ceil(ms / 86400000)}d left` : `${Math.max(1, h)}h left`;
-}
-
-function generatePassword() {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
-  const bytes = new Uint32Array(14);
-  crypto.getRandomValues(bytes);
-  let pw = Array.from(bytes, (b) => alphabet[b % alphabet.length]).join("");
-  if (!/[0-9]/.test(pw)) pw = pw.slice(0, -1) + "7";
-  if (!/[A-Za-z]/.test(pw)) pw = "K" + pw.slice(1);
-  return pw;
-}
-
-function StatusBadge({ person }) {
-  if (!person.is_active) return <Badge tone="slate" size="sm">Inactive</Badge>;
-  if (person.must_set_password) {
-    const left = until(person.invite_expires_at);
-    return (
-      <Badge tone="amber" size="sm" dot>
-        Invited{left ? ` · ${left === "expired" ? "link expired" : left}` : " · no active link"}
-      </Badge>
-    );
-  }
-  return <Badge tone="emerald" size="sm" dot>Active</Badge>;
-}
-
-/** Email-a-link vs set-a-password, shown when creating any account. */
-function AccessSection({ form, setForm }) {
-  return (
-    <div className="rounded-xl border border-[var(--border-default)] bg-[var(--bg-base)] p-4 space-y-3">
-      <label className="flex items-start gap-3 cursor-pointer select-none">
-        <input
-          type="checkbox"
-          className="mt-0.5 h-4 w-4 accent-[var(--accent)]"
-          checked={form.send_onboarding}
-          onChange={(e) => setForm({ ...form, send_onboarding: e.target.checked, password: "" })}
-        />
-        <span>
-          <span className="block text-sm font-medium text-[var(--fg-primary)]">Email a link to set their password</span>
-          <span className="block text-xs text-[var(--fg-tertiary)] mt-0.5">
-            They receive a welcome email and choose their own password. The link works once and lasts 3 days — you can resend it.
-          </span>
-        </span>
-      </label>
-      {!form.send_onboarding && (
-        <div className="space-y-2">
-          <div className="flex items-end gap-2">
-            <div className="flex-1">
-              <Input
-                label="Password"
-                type="text"
-                autoComplete="new-password"
-                value={form.password}
-                onChange={(e) => setForm({ ...form, password: e.target.value })}
-                placeholder="At least 8 characters, a letter and a number"
-              />
-            </div>
-            <Button type="button" variant="secondary" onClick={() => setForm({ ...form, password: generatePassword() })}>
-              Generate
-            </Button>
-          </div>
-          <p className="text-xs text-amber-600 flex items-start gap-1.5">
-            <Icon name="alertTriangle" size={13} className="mt-0.5 shrink-0" />
-            You'll need to share this password securely. Emailing a set-password link is safer.
-          </p>
-        </div>
-      )}
-    </div>
-  );
-}
-
 export default function CorporatePeople() {
   const toast = useToast();
   const { meta } = useMeta();
-  const { confirm, confirmDialog } = useConfirm();
 
   const [tab, setTab] = useState("customers");
   const [customers, setCustomers] = useState([]);
@@ -144,9 +51,12 @@ export default function CorporatePeople() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("active");
 
-  const [editing, setEditing] = useState(null); // null | { kind, person? }
+  const [editing, setEditing] = useState(null); // customer form: null | { person? }
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
+  // Staff profile: null | { id } (edit) | { id: null } (add). The record is looked
+  // up from the live list so account actions refresh what the modal shows.
+  const [staffEditor, setStaffEditor] = useState(null);
 
   // Corporate teams (the API scopes meta to the app on screen).
   const teams = useMemo(() => (meta?.teams || []).filter((t) => t.workspace === "corporate"), [meta]);
@@ -176,7 +86,7 @@ export default function CorporatePeople() {
   const list = tab === "customers" ? customers : staff;
   const filtered = list.filter((p) => {
     const q = search.trim().toLowerCase();
-    const matchQ = !q || [p.full_name, p.email, p.company, p.title, ...(p.positions || []).map((x) => `${x.label} ${x.team_name}`)]
+    const matchQ = !q || [p.full_name, p.email, p.company, p.title, ...(p.positions || []).flatMap((x) => [x.label, x.team_name])]
       .filter(Boolean).some((v) => v.toLowerCase().includes(q));
     const matchS = statusFilter === "all" ? true : statusFilter === "active" ? !!p.is_active : !p.is_active;
     return matchQ && matchS;
@@ -184,7 +94,7 @@ export default function CorporatePeople() {
   const canManage = tab === "customers" ? caps.can_manage_customers : caps.can_manage_staff;
   const invitedCount = list.filter((p) => p.is_active && p.must_set_password).length;
 
-  // ── Escalation-chain preview for the staff form ──────────────────────────
+  // ── Escalation-chain preview for the quick reporting-line change ─────────
   const staffById = useMemo(() => new Map(staff.map((s) => [s.id, s])), [staff]);
   function chainFrom(managerId, selfId) {
     const out = [];
@@ -202,7 +112,7 @@ export default function CorporatePeople() {
 
   // ── Open forms ────────────────────────────────────────────────────────────
   function openCustomer(person = null) {
-    setEditing({ kind: "customer", person });
+    setEditing({ person });
     setForm({
       full_name: person?.full_name || "",
       email: person?.email || "",
@@ -214,64 +124,25 @@ export default function CorporatePeople() {
     });
   }
 
-  function openStaff(person = null) {
-    const primary = person?.positions?.[0];
-    const teamId = primary?.team_id || teams.find((t) => t.corporate_role === "queue")?.id || teams[0]?.id || "";
-    setEditing({ kind: "staff", person });
-    setForm({
-      full_name: person?.full_name || "",
-      email: person?.email || "",
-      title: person?.title || "",
-      phone: person?.phone || "",
-      team_id: teamId ? String(teamId) : "",
-      is_lead: !!primary?.is_lead,
-      manager_id: person ? (person.manager_id ? String(person.manager_id) : "") : defaultManagerFor(teamId, false),
-      send_onboarding: true,
-      password: "",
-    });
-  }
-
-  /** New engineers report to their team's manager by default. */
-  function defaultManagerFor(teamId, isLead) {
-    if (isLead || !teamId) return "";
-    const lead = staff.find((s) => (s.positions || []).some((p) => p.team_id === Number(teamId) && p.is_lead));
-    return lead ? String(lead.id) : "";
-  }
-
-  // ── Save ──────────────────────────────────────────────────────────────────
+  // ── Save (customers) ──────────────────────────────────────────────────────
   async function save() {
-    const { kind, person } = editing;
+    const { person } = editing;
     if (!form.full_name.trim()) return toast.error("Full name is required");
     if (!form.email.trim()) return toast.error("Email is required");
-    if (kind === "customer" && !form.company.trim()) return toast.error("Company is required");
-    if (kind === "staff" && !form.team_id) return toast.error("Choose a team");
+    if (!form.company.trim()) return toast.error("Company is required");
     if (!person && !form.send_onboarding && !form.password) return toast.error("Set a password, or email them a link instead");
 
     setSaving(true);
     try {
+      const body = { full_name: form.full_name, email: form.email, title: form.title, phone: form.phone, company: form.company };
       if (person) {
-        const body = { full_name: form.full_name, email: form.email, title: form.title, phone: form.phone };
-        if (kind === "customer") body.company = form.company;
-        if (kind === "staff") {
-          body.team_id = Number(form.team_id);
-          body.is_lead = editingTeam?.corporate_role === "executive" ? false : form.is_lead;
-          body.manager_id = form.manager_id ? Number(form.manager_id) : null;
-        }
         await api(`/corporate/people/${person.id}`, { method: "PATCH", body });
         toast.success("Changes saved");
       } else {
-        const body = {
-          full_name: form.full_name, email: form.email, title: form.title, phone: form.phone,
-          send_onboarding: form.send_onboarding,
-          ...(form.send_onboarding ? {} : { password: form.password }),
-        };
-        if (kind === "customer") body.company = form.company;
-        if (kind === "staff") {
-          body.team_id = Number(form.team_id);
-          body.is_lead = editingTeam?.corporate_role === "executive" ? false : form.is_lead;
-          body.manager_id = form.manager_id ? Number(form.manager_id) : null;
-        }
-        const res = await api(kind === "customer" ? "/corporate/people/customers" : "/corporate/people/staff", { method: "POST", body });
+        const res = await api("/corporate/people/customers", {
+          method: "POST",
+          body: { ...body, send_onboarding: form.send_onboarding, ...(form.send_onboarding ? {} : { password: form.password }) },
+        });
         if (res.onboarding?.requested && res.onboarding.sent) {
           toast.success(`Account created — a set-password email is on its way to ${res.email}`);
         } else if (res.onboarding?.requested) {
@@ -290,55 +161,7 @@ export default function CorporatePeople() {
   }
 
   // ── Row actions ───────────────────────────────────────────────────────────
-  function resendInvite(p) {
-    confirm({
-      title: "Resend onboarding email?",
-      message: <>A new set-password link will be emailed to <strong className="text-[var(--fg-primary)]">{p.email}</strong>. Any earlier invitation link stops working.</>,
-      confirmText: "Resend invitation",
-      onConfirm: async () => {
-        try {
-          const r = await api(`/corporate/people/${p.id}/onboarding`, { method: "POST" });
-          toast.success(r.message || "Invitation sent");
-          load();
-        } catch (err) { toast.error(err.message || "Couldn't resend"); }
-      },
-    });
-  }
-
-  function sendReset(p) {
-    confirm({
-      title: "Send password reset?",
-      message: <>A single-use reset link will be emailed to <strong className="text-[var(--fg-primary)]">{p.email}</strong>. Their current password keeps working until they use it.</>,
-      confirmText: "Send reset link",
-      onConfirm: async () => {
-        try {
-          const r = await api(`/corporate/people/${p.id}/reset-password`, { method: "POST" });
-          toast.success(r.message || "Reset link sent");
-        } catch (err) { toast.error(err.message || "Couldn't send reset"); }
-      },
-    });
-  }
-
-  function toggleActive(p) {
-    const next = !p.is_active;
-    confirm({
-      title: next ? "Activate account?" : "Deactivate account?",
-      message: next
-        ? <><strong className="text-[var(--fg-primary)]">{p.full_name}</strong> will be able to sign in again.</>
-        : <><strong className="text-[var(--fg-primary)]">{p.full_name}</strong> is signed out everywhere and can't sign in. Their requests and history are kept.</>,
-      confirmText: next ? "Activate" : "Deactivate",
-      onConfirm: async () => {
-        try {
-          await api(`/corporate/people/${p.id}`, { method: "PATCH", body: { is_active: next } });
-          toast.success(next ? "Account activated" : "Account deactivated");
-          load();
-        } catch (err) { toast.error(err.message || "Couldn't update"); }
-      },
-    });
-  }
-
-  const editingTeam = teams.find((t) => String(t.id) === String(form.team_id));
-  const positionNames = POSITION_NAMES[editingTeam?.corporate_role] || ["Team Member", "Team Manager"];
+  const { resendInvite, sendReset, toggleActive, confirmDialog } = useAccountActions(load);
   // ── Quick "change reporting line" from the table ─────────────────────────
   const [reportingFor, setReportingFor] = useState(null);
   const [reportingManagerId, setReportingManagerId] = useState("");
@@ -378,61 +201,6 @@ export default function CorporatePeople() {
     return out;
   }, [staff, reportingFor]);
 
-  // People below the person being edited can't become their manager (loop).
-  const blockedManagers = useMemo(() => {
-    const selfId = editing?.person?.id;
-    const out = new Set();
-    if (!selfId) return out;
-    let frontier = [selfId];
-    while (frontier.length) {
-      const next = staff.filter((s) => frontier.includes(s.manager_id) && !out.has(s.id)).map((s) => s.id);
-      next.forEach((id) => out.add(id));
-      frontier = next;
-    }
-    return out;
-  }, [staff, editing]);
-
-  const managerOptions = staff
-    .filter((s) => s.is_active && s.id !== editing?.person?.id && !blockedManagers.has(s.id))
-    .sort((a, b) => (a.org_level || 1) - (b.org_level || 1) || a.full_name.localeCompare(b.full_name))
-    .map((s) => ({
-      value: String(s.id),
-      label: s.full_name,
-      subtitle: `Level ${s.org_level || 1} · ${(s.positions || []).map((p) => positionText(p)).join(", ")}`,
-    }));
-  const chainPreview = editing?.kind === "staff" ? chainFrom(form.manager_id, editing?.person?.id) : [];
-
-  // Level they'll sit at: one below their manager, or 1 at the top.
-  const placementLevel = form.manager_id ? (staffById.get(Number(form.manager_id))?.org_level || 1) + 1 : 1;
-  const teamLeadOther = editing?.kind === "staff"
-    ? staff.find((s) => s.id !== editing?.person?.id && (s.positions || []).some((p) => String(p.team_id) === String(form.team_id) && p.is_lead))
-    : null;
-  const directReports = editing?.person ? staff.filter((s) => s.manager_id === editing.person.id) : [];
-
-  /**
-   * Place someone by choosing who they report to. Reporting to a team manager
-   * makes them an engineer in that manager's team; reporting to someone who
-   * doesn't run a team (a head of delivery, say) makes them a team manager —
-   * unless their team already has one. Team and position stay editable.
-   */
-  function placeUnder(managerId) {
-    setForm((f) => {
-      const next = { ...f, manager_id: managerId };
-      if (!managerId) return next;
-      const mgr = staffById.get(Number(managerId));
-      const ledTeams = (mgr?.positions || []).filter((p) => p.is_lead);
-      if (ledTeams.length) {
-        const sameTeam = ledTeams.find((p) => String(p.team_id) === String(f.team_id));
-        next.team_id = String((sameTeam || ledTeams[0]).team_id);
-        next.is_lead = false;
-      } else {
-        const hasLead = staff.some((s) => s.id !== editing?.person?.id && (s.positions || []).some((p) => String(p.team_id) === String(f.team_id) && p.is_lead));
-        next.is_lead = !hasLead;
-      }
-      return next;
-    });
-  }
-
   return (
     <div className="space-y-5">
       <PageHeader
@@ -445,7 +213,7 @@ export default function CorporatePeople() {
                 <Button onClick={() => openCustomer()} icon={<Icon name="userPlus" size={16} />}>Add customer</Button>
               )
             : caps.can_manage_staff && (
-                <Button onClick={() => openStaff()} icon={<Icon name="userPlus" size={16} />}>Add delivery staff</Button>
+                <Button onClick={() => setStaffEditor({ id: null })} icon={<Icon name="userPlus" size={16} />}>Add delivery staff</Button>
               )
         }
       />
@@ -558,12 +326,20 @@ export default function CorporatePeople() {
                       <>
                         <td className="px-4 py-3">
                           <div className="flex flex-col gap-1">
-                            {(p.positions || []).map((pos) => (
-                              <span key={pos.team_id} className="inline-flex items-center gap-1.5 flex-wrap">
-                                <Badge tone={POSITION_TONE[pos.corporate_role] || "slate"} size="sm">{pos.label}</Badge>
-                                <span className="text-xs text-[var(--fg-muted)]">{pos.team_name !== pos.label ? pos.team_name : ""}</span>
+                            {(p.positions || []).some((pos) => pos.label) ? (
+                              (p.positions || []).filter((pos) => pos.label).map((pos) => (
+                                <span key={pos.team_id} className="inline-flex items-center gap-1.5 flex-wrap">
+                                  <Badge tone={POSITION_TONE[pos.corporate_role] || "slate"} size="sm">{pos.label}</Badge>
+                                  <span className="text-xs text-[var(--fg-muted)]">{pos.team_name !== pos.label ? pos.team_name : ""}</span>
+                                </span>
+                              ))
+                            ) : (
+                              // Business teams carry no tag — show job title and team.
+                              <span className="inline-flex items-center gap-1.5 flex-wrap">
+                                <span className="text-[var(--fg-secondary)]">{p.title || "—"}</span>
+                                <span className="text-xs text-[var(--fg-muted)]">{(p.positions || []).map((pos) => pos.team_name).join(", ")}</span>
                               </span>
-                            ))}
+                            )}
                           </div>
                         </td>
                         <td className="px-4 py-3 hidden lg:table-cell">
@@ -602,7 +378,7 @@ export default function CorporatePeople() {
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-1">
                           <button
-                            onClick={() => (tab === "customers" ? openCustomer(p) : openStaff(p))}
+                            onClick={() => (tab === "customers" ? openCustomer(p) : setStaffEditor({ id: p.id }))}
                             className="p-2 rounded-lg text-[var(--fg-muted)] hover:text-[var(--accent)] hover:bg-[var(--bg-surface)]"
                             title="Edit"
                           >
@@ -645,7 +421,7 @@ export default function CorporatePeople() {
 
       {/* ── Customer form ── */}
       <Modal
-        open={editing?.kind === "customer"}
+        open={!!editing}
         onClose={() => setEditing(null)}
         title={editing?.person ? "Edit customer" : "Add customer"}
         subtitle={editing?.person ? editing.person.email : "Customers raise and track requests for their company."}
@@ -670,141 +446,22 @@ export default function CorporatePeople() {
         </div>
       </Modal>
 
-      {/* ── Delivery staff form ── */}
-      <Modal
-        open={editing?.kind === "staff"}
-        onClose={() => setEditing(null)}
-        size="lg"
-        title={editing?.person ? "Edit delivery staff" : "Add delivery staff"}
-        subtitle={editing?.person ? editing.person.email : "Staff work corporate requests. Their team sets their position; their manager sets the escalation layers."}
-        actions={
-          <>
-            <Button variant="secondary" onClick={() => setEditing(null)}>Cancel</Button>
-            <Button onClick={save} loading={saving}>
-              {editing?.person ? "Save changes" : form.send_onboarding ? "Create & send invite" : "Create account"}
-            </Button>
-          </>
-        }
-      >
-        <div className="space-y-5">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Input label="Full name" value={form.full_name || ""} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
-            <Input label="Email" type="email" value={form.email || ""} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-            <Input label="Job title" value={form.title || ""} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="e.g. Cloud Engineer" />
-            <Input label="Phone" value={form.phone || ""} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
-          </div>
-
-          <div className="rounded-xl border border-[var(--border-default)] p-4 space-y-4">
-            <div>
-              <p className="text-label">Where they sit in the hierarchy</p>
-              <p className="text-xs text-[var(--fg-tertiary)] mt-1">
-                Pick who they report to — their team, position and level follow from that. Adjust below if needed.
-              </p>
-            </div>
-
-            <SearchableSelect
-              label="Reports to (next level up)"
-              value={form.manager_id || ""}
-              onChange={(e) => placeUnder(e.target.value)}
-              options={[
-                { value: "", label: "No one — top of the chain", subtitle: "Level 1 · final approver for escalations" },
-                ...managerOptions,
-              ]}
-              placeholder="No one — top of the chain"
-              searchPlaceholder="Search by name, team or position…"
-            />
-
-            {/* The resulting placement, in plain words. */}
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)] px-3 py-2.5">
-              <Badge tone="blue" size="sm">Level {placementLevel}</Badge>
-              <span className="text-sm font-medium text-[var(--fg-primary)]">{positionNames[form.is_lead ? 1 : 0]}</span>
-              <span className="text-xs text-[var(--fg-muted)]">{editingTeam?.name || "No team"}</span>
-              <span className="text-xs text-[var(--fg-secondary)] sm:ml-auto flex items-center gap-1 flex-wrap">
-                {chainPreview.length === 0 ? (
-                  "Top of the escalation chain"
-                ) : (
-                  <>
-                    Escalates to
-                    {chainPreview.map((p, i) => (
-                      <span key={p.id} className="inline-flex items-center gap-1">
-                        {i > 0 && <Icon name="chevronRight" size={11} className="text-[var(--fg-muted)]" />}
-                        <span className="font-medium text-[var(--fg-primary)]">{p.full_name.split(" ")[0]}</span>
-                      </span>
-                    ))}
-                  </>
-                )}
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Select
-                label="Team"
-                value={form.team_id || ""}
-                onChange={(e) => {
-                  const teamId = e.target.value;
-                  setForm((f) => ({
-                    ...f,
-                    team_id: teamId,
-                    // Only suggest a manager while none has been chosen.
-                    manager_id: f.manager_id || editing?.person ? f.manager_id : defaultManagerFor(teamId, f.is_lead),
-                  }));
-                }}
-              >
-                {teams.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
-                ))}
-              </Select>
-              <div>
-                <label className="block text-sm font-medium text-[var(--fg-primary)] mb-2">Position</label>
-                {editingTeam?.corporate_role === "executive" ? (
-                  // Executives have no engineer / manager split; their level
-                  // comes purely from who they report to.
-                  <div className="px-3 py-2 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-default)] text-[13px] text-[var(--fg-primary)]">
-                    Executive <span className="text-[var(--fg-muted)]">· also has the internal desk</span>
-                  </div>
-                ) : (
-                <div className="grid grid-cols-2 gap-1 p-1 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-default)]">
-                  {[false, true].map((lead) => (
-                    <button
-                      key={String(lead)}
-                      type="button"
-                      onClick={() => setForm((f) => ({ ...f, is_lead: lead }))}
-                      className={cn(
-                        "px-2 py-1.5 rounded-md text-[12px] font-medium transition-all",
-                        form.is_lead === lead ? "bg-[var(--accent)] text-white" : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
-                      )}
-                    >
-                      {positionNames[lead ? 1 : 0]}
-                    </button>
-                  ))}
-                </div>
-                )}
-                {form.is_lead && teamLeadOther && editingTeam?.corporate_role !== "executive" && (
-                  <p className="mt-1.5 text-xs text-amber-600">
-                    {editingTeam?.name} already has a manager ({teamLeadOther.full_name}).
-                  </p>
-                )}
-              </div>
-            </div>
-
-            {editing?.person && directReports.length > 0 && (
-              <p className="text-xs text-[var(--fg-muted)]">
-                {directReports.length === 1 ? "1 person reports" : `${directReports.length} people report`} to {editing.person.full_name.split(" ")[0]} (
-                {directReports.map((p) => p.full_name).join(", ")}) — they move with them.
-              </p>
-            )}
-          </div>
-
-          {!editing?.person && <AccessSection form={form} setForm={setForm} />}
-        </div>
-      </Modal>
+      {/* ── Delivery staff profile (shared with Hierarchy) ── */}
+      <StaffProfileModal
+        open={!!staffEditor}
+        person={staffEditor?.id ? staffById.get(staffEditor.id) || null : null}
+        staff={staff}
+        teams={teams}
+        onClose={() => setStaffEditor(null)}
+        onSaved={load}
+      />
 
       {/* ── Quick reporting-line change ── */}
       <Modal
         open={!!reportingFor}
         onClose={() => setReportingFor(null)}
         title="Who do they report to?"
-        subtitle={reportingFor ? `${reportingFor.full_name} · ${(reportingFor.positions || []).map((p) => positionText(p, ", ")).join(" · ")}` : ""}
+        subtitle={reportingFor ? [reportingFor.full_name, describePerson(reportingFor, ", ")].filter(Boolean).join(" · ") : ""}
         actions={
           <>
             <Button variant="secondary" onClick={() => setReportingFor(null)}>Cancel</Button>
@@ -830,7 +487,7 @@ export default function CorporatePeople() {
                     .map((s) => ({
                       value: String(s.id),
                       label: s.full_name,
-                      subtitle: `Level ${s.org_level || 1} · ${(s.positions || []).map((p) => positionText(p)).join(", ")}`,
+                      subtitle: [`Level ${s.org_level || 1}`, describePerson(s)].filter(Boolean).join(" · "),
                     })),
                 ]}
                 placeholder="No one — top of the chain"

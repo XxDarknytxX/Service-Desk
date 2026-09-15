@@ -12,8 +12,12 @@
  *   • People are matched by email (case-insensitive). An account that already
  *     exists is NEVER modified in ways that could lock someone out — its
  *     password, roles and active flag are left alone (e.g. an admin account on
- *     the target keeps its admin role and password). Only missing corporate
- *     team memberships and an unset reporting line are added.
+ *     the target keeps its admin role and password). Missing corporate team
+ *     memberships and an unset reporting line are added.
+ *
+ *   • Moves carry over: a person in the file is removed from any team that is
+ *     also in the file but no longer lists them (e.g. Sanil moving from
+ *     Executive to Corporate ICT Team). Everyone and everything else is left alone.
  *
  *   • New accounts are created as "Invited": a random password nobody knows and
  *     must_set_password = 1. Nothing is emailed — send onboarding emails from
@@ -60,7 +64,7 @@ const conn = await mysql.createConnection({
   database: unquote(process.env.DATABASE_NAME),
 });
 
-const stats = { teamsCreated: 0, teamsTagged: 0, created: 0, merged: 0, memberships: 0, managers: 0, notes: [] };
+const stats = { teamsCreated: 0, teamsTagged: 0, created: 0, merged: 0, memberships: 0, moved: 0, managers: 0, notes: [] };
 const note = (msg) => stats.notes.push(msg);
 
 async function roleId(name) {
@@ -244,6 +248,24 @@ try {
       await conn.query("INSERT INTO team_members (team_id, user_id, is_lead) VALUES (?, ?, ?)", [teamId, id, lead ? 1 : 0]);
       stats.memberships++;
     }
+
+    // Moves: drop this person from any team IN THE FILE that the file no longer
+    // lists them in (e.g. a head moved from Executive to Corporate ICT Team).
+    // Teams the file doesn't mention, and people it doesn't mention, are untouched.
+    const keep = new Set(s.memberships.map((m) => teamIdByName.get(m.team_name)).filter(Boolean));
+    const managed = [...teamIdByName.values()].filter((tid) => !keep.has(tid));
+    if (managed.length && keep.size) {
+      const [stale] = await conn.query(
+        `SELECT t.id, t.name FROM team_members tm JOIN teams t ON t.id = tm.team_id
+          WHERE tm.user_id = ? AND tm.team_id IN (?)`,
+        [id, managed]
+      );
+      for (const t of stale) {
+        await conn.query("DELETE FROM team_members WHERE user_id = ? AND team_id = ?", [id, t.id]);
+        stats.moved++;
+        note(`${s.email} left ${t.name} — the export no longer places them there`);
+      }
+    }
   }
 
   for (const cu of data.customers) await upsertPerson(cu, "customer");
@@ -269,7 +291,7 @@ try {
   console.log(`\n${DRY ? c.y("DRY RUN — nothing was saved") : c.g("Import complete")}`);
   console.log(`  teams:          ${stats.teamsCreated} created, ${stats.teamsTagged} switched to corporate`);
   console.log(`  people:         ${stats.created} created as Invited, ${stats.merged} already here (merged)`);
-  console.log(`  team places:    ${stats.memberships} added`);
+  console.log(`  team places:    ${stats.memberships} added, ${stats.moved} removed (moved)`);
   console.log(`  reporting lines:${String(stats.managers).padStart(2)} set`);
   if (stats.notes.length) {
     console.log(c.y("\n  Notes:"));
