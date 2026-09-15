@@ -32,10 +32,13 @@ async function isNocMember(pool, userId) {
   return isTriageMember(pool, userId);
 }
 
-// Which app a team belongs to ('internal' | 'corporate'), or null if no team.
+// Which app a team works tickets in ('internal' | 'corporate'), or null if no
+// team. Only used to check a ticket's target team, so the corporate Executive
+// team — a hierarchy layer, not a queue — counts as neither and is refused.
 async function getTeamWorkspace(pool, teamId) {
   if (!teamId) return null;
-  const [[row]] = await pool.query("SELECT workspace FROM teams WHERE id = ?", [teamId]);
+  const [[row]] = await pool.query("SELECT workspace, corporate_role FROM teams WHERE id = ?", [teamId]);
+  if (row?.corporate_role === "executive") return null;
   return row?.workspace || null;
 }
 

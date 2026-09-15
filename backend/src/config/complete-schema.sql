@@ -119,7 +119,7 @@ CREATE TABLE IF NOT EXISTS teams (
   -- Which app the team works in; corporate_role replaces name lookups
   -- (see workspace-split-migration.js)
   workspace ENUM('internal','corporate') NOT NULL DEFAULT 'internal',
-  corporate_role ENUM('triage','queue','service_delivery') NULL,
+  corporate_role ENUM('triage','queue','service_delivery','executive') NULL,
   department_id INT UNSIGNED NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

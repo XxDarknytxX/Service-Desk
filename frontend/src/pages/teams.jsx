@@ -34,6 +34,7 @@ const CORPORATE_ROLES = [
   { value: "queue", label: "Delivery queue", hint: "Customers' requests route here by category; NOC can triage requests into it." },
   { value: "triage", label: "Triage (NOC)", hint: "Receives \"Not sure\" requests, sets priority and routes them to a delivery queue." },
   { value: "service_delivery", label: "Service delivery", hint: "Notified about every corporate request (SDM / SDE)." },
+  { value: "executive", label: "Executive", hint: "CTO, CEO and heads of business: the top escalation layers. Members also keep the internal desk." },
 ];
 const CORPORATE_ROLE_LABEL = Object.fromEntries(CORPORATE_ROLES.map((r) => [r.value, r.label]));
 
@@ -673,7 +674,7 @@ export default function Teams() {
                           </div>
                           <span className="font-medium text-[var(--fg-primary)] truncate">{team.name}</span>
                           {team.corporate_role && (
-                            <Badge tone={team.corporate_role === "triage" ? "amber" : team.corporate_role === "service_delivery" ? "violet" : "blue"} size="sm">
+                            <Badge tone={team.corporate_role === "triage" ? "amber" : team.corporate_role === "service_delivery" ? "violet" : team.corporate_role === "executive" ? "rose" : "blue"} size="sm">
                               {CORPORATE_ROLE_LABEL[team.corporate_role]}
                             </Badge>
                           )}
@@ -797,7 +798,7 @@ export default function Teams() {
                 </h3>
                 {team.corporate_role && (
                   <div className="relative mb-2">
-                    <Badge tone={team.corporate_role === "triage" ? "amber" : team.corporate_role === "service_delivery" ? "violet" : "blue"} size="sm">
+                    <Badge tone={team.corporate_role === "triage" ? "amber" : team.corporate_role === "service_delivery" ? "violet" : team.corporate_role === "executive" ? "rose" : "blue"} size="sm">
                       {CORPORATE_ROLE_LABEL[team.corporate_role]}
                     </Badge>
                   </div>

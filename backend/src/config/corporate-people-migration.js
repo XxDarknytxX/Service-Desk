@@ -88,6 +88,20 @@ async function migrate() {
       console.warn("  ! password_reset_tokens missing — run password-reset-migration.js first");
     }
 
+    // ── Executive layer ───────────────────────────────────────────────────
+    // A corporate team role for the executives above the team managers (CTO,
+    // CEO, heads of business). They top the escalation chain and — unlike other
+    // corporate staff — keep the internal desk too (see middleware/workspace.js).
+    if (await colExists(conn, "teams", "corporate_role")) {
+      const roleType = await columnType(conn, "teams", "corporate_role");
+      if (!roleType.includes("'executive'")) {
+        await conn.query(
+          `ALTER TABLE teams MODIFY COLUMN corporate_role ENUM('triage','queue','service_delivery','executive') NULL`
+        );
+        console.log("  + teams.corporate_role 'executive'");
+      }
+    }
+
     // ── Layered escalation ────────────────────────────────────────────────
     if (await tableExists(conn, "ticket_manager_slas")) {
       if (!(await colExists(conn, "ticket_manager_slas", "layer"))) {

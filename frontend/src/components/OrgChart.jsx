@@ -151,7 +151,7 @@ function EmployeeNode({ employee, onEdit, hasReports, isExpanded, dimmed, highli
 
         {/* Meta row: team + role + reports count */}
         <div className="mt-3 flex items-center gap-1.5 flex-wrap">
-          {employee.team_name && (
+          {employee.team_name && employee.team_name !== employee.position_label && (
             <Badge tone="emerald" size="sm" className="max-w-full">
               <Icon name="teams" size={10} className="shrink-0" />
               <span className="truncate">{employee.team_name}</span>
@@ -439,6 +439,7 @@ export default function OrgChart({ users, hierarchy, onEditUser, query = "" }) {
             <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-blue-500" /> Delivery</span>
             <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-amber-500" /> Triage (NOC)</span>
             <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-violet-500" /> Service Delivery</span>
+            <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-rose-500" /> Executive</span>
             <span className="inline-flex items-center gap-1.5"><span className="font-semibold">Level</span> 1 = top of the chain</span>
           </div>
         )}

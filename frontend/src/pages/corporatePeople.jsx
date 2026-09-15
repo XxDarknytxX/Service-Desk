@@ -38,8 +38,11 @@ const POSITION_NAMES = {
   queue: ["Delivery Engineer", "Delivery Manager"],
   triage: ["Triage Engineer (NOC)", "Triage Manager (NOC)"],
   service_delivery: ["Service Delivery Executive", "Service Delivery Manager"],
+  executive: ["Executive", "Executive"],
 };
-const POSITION_TONE = { queue: "blue", triage: "amber", service_delivery: "violet" };
+const POSITION_TONE = { queue: "blue", triage: "amber", service_delivery: "violet", executive: "rose" };
+// "Delivery Manager · Cloud", but just "Executive" when the team is named for the position.
+const positionText = (p, sep = " · ") => (p.label === p.team_name ? p.label : `${p.label}${sep}${p.team_name}`);
 
 function ago(ts) {
   if (!ts) return "Never";
@@ -251,7 +254,7 @@ export default function CorporatePeople() {
         if (kind === "customer") body.company = form.company;
         if (kind === "staff") {
           body.team_id = Number(form.team_id);
-          body.is_lead = form.is_lead;
+          body.is_lead = editingTeam?.corporate_role === "executive" ? false : form.is_lead;
           body.manager_id = form.manager_id ? Number(form.manager_id) : null;
         }
         await api(`/corporate/people/${person.id}`, { method: "PATCH", body });
@@ -265,7 +268,7 @@ export default function CorporatePeople() {
         if (kind === "customer") body.company = form.company;
         if (kind === "staff") {
           body.team_id = Number(form.team_id);
-          body.is_lead = form.is_lead;
+          body.is_lead = editingTeam?.corporate_role === "executive" ? false : form.is_lead;
           body.manager_id = form.manager_id ? Number(form.manager_id) : null;
         }
         const res = await api(kind === "customer" ? "/corporate/people/customers" : "/corporate/people/staff", { method: "POST", body });
@@ -395,7 +398,7 @@ export default function CorporatePeople() {
     .map((s) => ({
       value: String(s.id),
       label: s.full_name,
-      subtitle: `Level ${s.org_level || 1} · ${(s.positions || []).map((p) => `${p.label} · ${p.team_name}`).join(", ")}`,
+      subtitle: `Level ${s.org_level || 1} · ${(s.positions || []).map((p) => positionText(p)).join(", ")}`,
     }));
   const chainPreview = editing?.kind === "staff" ? chainFrom(form.manager_id, editing?.person?.id) : [];
 
@@ -558,7 +561,7 @@ export default function CorporatePeople() {
                             {(p.positions || []).map((pos) => (
                               <span key={pos.team_id} className="inline-flex items-center gap-1.5 flex-wrap">
                                 <Badge tone={POSITION_TONE[pos.corporate_role] || "slate"} size="sm">{pos.label}</Badge>
-                                <span className="text-xs text-[var(--fg-muted)]">{pos.team_name}</span>
+                                <span className="text-xs text-[var(--fg-muted)]">{pos.team_name !== pos.label ? pos.team_name : ""}</span>
                               </span>
                             ))}
                           </div>
@@ -753,6 +756,13 @@ export default function CorporatePeople() {
               </Select>
               <div>
                 <label className="block text-sm font-medium text-[var(--fg-primary)] mb-2">Position</label>
+                {editingTeam?.corporate_role === "executive" ? (
+                  // Executives have no engineer / manager split; their level
+                  // comes purely from who they report to.
+                  <div className="px-3 py-2 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-default)] text-[13px] text-[var(--fg-primary)]">
+                    Executive <span className="text-[var(--fg-muted)]">· also has the internal desk</span>
+                  </div>
+                ) : (
                 <div className="grid grid-cols-2 gap-1 p-1 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-default)]">
                   {[false, true].map((lead) => (
                     <button
@@ -768,7 +778,8 @@ export default function CorporatePeople() {
                     </button>
                   ))}
                 </div>
-                {form.is_lead && teamLeadOther && (
+                )}
+                {form.is_lead && teamLeadOther && editingTeam?.corporate_role !== "executive" && (
                   <p className="mt-1.5 text-xs text-amber-600">
                     {editingTeam?.name} already has a manager ({teamLeadOther.full_name}).
                   </p>
@@ -793,7 +804,7 @@ export default function CorporatePeople() {
         open={!!reportingFor}
         onClose={() => setReportingFor(null)}
         title="Who do they report to?"
-        subtitle={reportingFor ? `${reportingFor.full_name} · ${(reportingFor.positions || []).map((p) => `${p.label}, ${p.team_name}`).join(" · ")}` : ""}
+        subtitle={reportingFor ? `${reportingFor.full_name} · ${(reportingFor.positions || []).map((p) => positionText(p, ", ")).join(" · ")}` : ""}
         actions={
           <>
             <Button variant="secondary" onClick={() => setReportingFor(null)}>Cancel</Button>
@@ -819,7 +830,7 @@ export default function CorporatePeople() {
                     .map((s) => ({
                       value: String(s.id),
                       label: s.full_name,
-                      subtitle: `Level ${s.org_level || 1} · ${(s.positions || []).map((p) => `${p.label} · ${p.team_name}`).join(", ")}`,
+                      subtitle: `Level ${s.org_level || 1} · ${(s.positions || []).map((p) => positionText(p)).join(", ")}`,
                     })),
                 ]}
                 placeholder="No one — top of the chain"

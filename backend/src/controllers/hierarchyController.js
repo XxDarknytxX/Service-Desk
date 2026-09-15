@@ -134,11 +134,15 @@ export function makeHierarchyController(pool) {
                  t.name as team_name
           FROM users u
           LEFT JOIN departments d ON u.department_id = d.id
+          -- Internal teams only: an executive also sits in the corporate
+          -- Executive team, and joining that too would chart them twice.
           LEFT JOIN team_members tm ON tm.user_id = u.id
+            AND tm.team_id IN (SELECT id FROM teams WHERE workspace = 'internal')
           LEFT JOIN teams t ON t.id = tm.team_id
           WHERE u.is_active = 1
             AND NOT EXISTS (SELECT 1 FROM team_members tmc JOIN teams tc ON tc.id = tmc.team_id
-                             WHERE tmc.user_id = u.id AND tc.workspace = 'corporate')
+                             WHERE tmc.user_id = u.id AND tc.workspace = 'corporate'
+                               AND (tc.corporate_role <=> 'executive') = 0)
             AND NOT EXISTS (SELECT 1 FROM user_roles urc JOIN roles rc ON rc.id = urc.role_id
                              WHERE urc.user_id = u.id AND rc.name = 'corporate_customer')
           ORDER BY d.name, u.full_name

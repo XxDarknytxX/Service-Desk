@@ -10,8 +10,9 @@
  * onboarding email or an admin-set password on the target system.
  *
  * Reporting lines are exported only where the manager is also corporate staff —
- * the corporate hierarchy is self-contained, so links to internal executives
- * are left behind.
+ * the corporate hierarchy is self-contained. Executives sit in the corporate
+ * Executive team, so the chain up to the CEO travels with the export; links to
+ * anyone outside Corporate are left behind.
  *
  * The output contains names, emails and phone numbers. It is git-ignored; copy
  * it to the target machine directly and delete it afterwards.

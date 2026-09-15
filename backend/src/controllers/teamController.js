@@ -2,7 +2,7 @@
 import { validationResult } from "express-validator";
 import { getWorkspaceAccess, canAccessWorkspace, WORKSPACES } from "../middleware/workspace.js";
 
-const CORPORATE_ROLES = ["triage", "queue", "service_delivery"];
+const CORPORATE_ROLES = ["triage", "queue", "service_delivery", "executive"];
 
 /**
  * Validates the workspace / corporate_role pair from a create or update body.
@@ -16,7 +16,7 @@ function parseTeamWorkspace(body, existing = null) {
     return { error: "workspace must be 'internal' or 'corporate'" };
   }
   if (corporateRole !== undefined && corporateRole !== null && !CORPORATE_ROLES.includes(corporateRole)) {
-    return { error: "corporate_role must be triage, queue or service_delivery" };
+    return { error: "corporate_role must be triage, queue, service_delivery or executive" };
   }
   const finalWs = workspace ?? existing?.workspace ?? "internal";
   // An internal team has no corporate role; clear it when moving a team inward.

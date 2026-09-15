@@ -49,6 +49,8 @@ const POSITION_LABELS = {
   queue: ["Delivery Engineer", "Delivery Manager"],
   triage: ["Triage Engineer (NOC)", "Triage Manager (NOC)"],
   service_delivery: ["Service Delivery Executive", "Service Delivery Manager"],
+  // The executive layer (CTO, CEO, heads of business) — tops the escalation chain.
+  executive: ["Executive", "Executive"],
 };
 
 const isAdmin = (req) => (req.user.roles || []).includes("admin");

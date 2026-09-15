@@ -128,6 +128,24 @@ async function wouldLoop(userId, managerId) {
   return false;
 }
 
+// The file may use team roles this database doesn't know yet (e.g. 'executive'
+// before the corporate-people migration has run). Stop with a clear message
+// rather than failing half-way through the transaction.
+{
+  const [[col]] = await conn.query(
+    `SELECT COLUMN_TYPE AS t FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'teams' AND COLUMN_NAME = 'corporate_role'`
+  );
+  const unknown = [...new Set(data.teams.map((t) => t.corporate_role).filter(Boolean))]
+    .filter((r) => !(col?.t || "").includes(`'${r}'`));
+  if (unknown.length) {
+    console.error(c.r(`This database doesn't support team role(s): ${unknown.join(", ")}.`));
+    console.error("Deploy the latest code first (it runs src/config/corporate-people-migration.js), then re-run the import.");
+    await conn.end();
+    process.exit(1);
+  }
+}
+
 try {
   await conn.beginTransaction();
   const AGENT = await roleId("agent");

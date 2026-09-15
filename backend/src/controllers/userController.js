@@ -20,8 +20,11 @@ function validateRoleSet(roles) {
 const IS_ADMIN_SQL = `EXISTS (SELECT 1 FROM user_roles ura JOIN roles ra ON ra.id = ura.role_id WHERE ura.user_id = u.id AND ra.name = 'admin')`;
 const IS_CUSTOMER_SQL = `EXISTS (SELECT 1 FROM user_roles urc JOIN roles rc ON rc.id = urc.role_id WHERE urc.user_id = u.id AND rc.name = 'corporate_customer')`;
 const IN_CORP_TEAM_SQL = `EXISTS (SELECT 1 FROM team_members tmc JOIN teams tc ON tc.id = tmc.team_id WHERE tmc.user_id = u.id AND tc.workspace = 'corporate')`;
+// Corporate-ONLY staff: a corporate team that isn't the Executive layer.
+// Executives belong to both directories, like admins.
+const IN_CORP_ONLY_TEAM_SQL = `EXISTS (SELECT 1 FROM team_members tmo JOIN teams tco ON tco.id = tmo.team_id WHERE tmo.user_id = u.id AND tco.workspace = 'corporate' AND tco.corporate_role <=> 'executive' = 0)`;
 const WORKSPACE_DIRECTORY_SQL = {
-  internal: `(${IS_ADMIN_SQL} OR (NOT ${IS_CUSTOMER_SQL} AND NOT ${IN_CORP_TEAM_SQL}))`,
+  internal: `(${IS_ADMIN_SQL} OR (NOT ${IS_CUSTOMER_SQL} AND NOT ${IN_CORP_ONLY_TEAM_SQL}))`,
   corporate: `(${IS_ADMIN_SQL} OR ${IS_CUSTOMER_SQL} OR ${IN_CORP_TEAM_SQL})`,
 };
 import { sendAdminReset } from "../services/passwordResetService.js";

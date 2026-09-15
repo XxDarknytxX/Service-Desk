@@ -20,7 +20,8 @@
 //   everyone else                       → internal
 //
 // A staff member in both a corporate and an internal team is treated as
-// corporate — only admins get both apps.
+// corporate — only admins and members of the corporate Executive team
+// (corporate_role = 'executive') get both apps.
 
 export const WORKSPACES = ["internal", "corporate"];
 
@@ -40,18 +41,23 @@ export async function computeWorkspaceAccess(pool, userId, roles = []) {
   const isCustomer = roles.includes("corporate_customer");
 
   let inCorporateTeam = false;
+  let isExecutive = false;
   if (!isAdmin && !isCustomer) {
     const [[row]] = await pool.query(
-      `SELECT EXISTS(
-         SELECT 1 FROM team_members tm JOIN teams t ON t.id = tm.team_id
-          WHERE tm.user_id = ? AND t.workspace = 'corporate'
-       ) AS c`,
-      [userId]
+      `SELECT
+         EXISTS(SELECT 1 FROM team_members tm JOIN teams t ON t.id = tm.team_id
+                 WHERE tm.user_id = ? AND t.workspace = 'corporate') AS c,
+         EXISTS(SELECT 1 FROM team_members tm JOIN teams t ON t.id = tm.team_id
+                 WHERE tm.user_id = ? AND t.corporate_role = 'executive') AS e`,
+      [userId, userId]
     );
     inCorporateTeam = !!row.c;
+    isExecutive = !!row.e;
   }
 
-  const workspaces = isAdmin
+  // Executives sit at the top of the corporate escalation chain but also run
+  // the internal side of the business, so — like admins — they get both apps.
+  const workspaces = isAdmin || isExecutive
     ? ["internal", "corporate"]
     : isCustomer || inCorporateTeam
       ? ["corporate"]
@@ -60,7 +66,8 @@ export async function computeWorkspaceAccess(pool, userId, roles = []) {
   return {
     isAdmin,
     isCustomer,
-    // Staff who work corporate tickets (admins included).
+    isExecutive,
+    // Staff who work corporate tickets (admins and executives included).
     isCorporateStaff: !isCustomer && (isAdmin || inCorporateTeam),
     workspaces,
     home: workspaces[0],

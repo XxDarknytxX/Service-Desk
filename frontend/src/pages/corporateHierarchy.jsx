@@ -24,7 +24,9 @@ import Skeleton from "../components/ui/Skeleton";
 import { SearchableSelect } from "../components/ui/Input";
 import OrgChart from "../components/OrgChart";
 
-const POSITION_TONE = { queue: "blue", triage: "amber", service_delivery: "violet" };
+const POSITION_TONE = { queue: "blue", triage: "amber", service_delivery: "violet", executive: "rose" };
+// "Delivery Manager · Cloud", but just "Executive" when the team is named for the position.
+const positionText = (p, sep = " · ") => (p.label === p.team_name ? p.label : `${p.label}${sep}${p.team_name}`);
 
 function Stat({ icon, label, value, hint, tone = "text-[var(--accent)] bg-[var(--accent)]/10" }) {
   return (
@@ -146,7 +148,7 @@ export default function CorporateHierarchy() {
           .map((p) => ({
             value: String(p.id),
             label: p.full_name,
-            subtitle: (p.positions || []).map((x) => `${x.label} · ${x.team_name}`).join(", "),
+            subtitle: (p.positions || []).map((x) => positionText(x)).join(", "),
           })),
       ]
     : [];

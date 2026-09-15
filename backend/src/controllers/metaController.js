@@ -66,7 +66,13 @@ export function makeMetaController(pool) {
         );
         const [roles] = await pool.query(`SELECT id, name FROM roles ORDER BY name`);
         // Agents of THIS app: corporate staff are members of corporate teams;
-        // internal staff are everyone else. Admins appear in both.
+        // internal staff are everyone not in a corporate-only team. Admins and
+        // the corporate Executive layer appear in both.
+        const inAnyCorporateTeam = `EXISTS (SELECT 1 FROM team_members tm JOIN teams tt ON tt.id = tm.team_id
+                                            WHERE tm.user_id = u.id AND tt.workspace = 'corporate')`;
+        const inCorporateOnlyTeam = `EXISTS (SELECT 1 FROM team_members tm JOIN teams tt ON tt.id = tm.team_id
+                                             WHERE tm.user_id = u.id AND tt.workspace = 'corporate'
+                                               AND (tt.corporate_role <=> 'executive') = 0)`;
         const [agents] = await pool.query(
           `SELECT u.id, u.full_name, u.email
            FROM users u
@@ -76,13 +82,10 @@ export function makeMetaController(pool) {
              AND (
                EXISTS (SELECT 1 FROM user_roles ur2 JOIN roles r2 ON r2.id = ur2.role_id
                         WHERE ur2.user_id = u.id AND r2.name = 'admin')
-               OR (? = 'corporate') = EXISTS (
-                    SELECT 1 FROM team_members tm JOIN teams tt ON tt.id = tm.team_id
-                     WHERE tm.user_id = u.id AND tt.workspace = 'corporate')
+               OR ${isCorporate ? inAnyCorporateTeam : `NOT ${inCorporateOnlyTeam}`}
              )
            GROUP BY u.id
-           ORDER BY u.full_name`,
-          [workspace]
+           ORDER BY u.full_name`
         );
 
         let organizations = [];
