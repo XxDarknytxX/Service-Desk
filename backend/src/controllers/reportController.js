@@ -134,6 +134,8 @@ export function makeReportController(pool) {
 
     // ═══════════════════════════════════════════════════════════════
     // 3. SLA COMPLIANCE  (existing — enhanced)
+    //    Counts every SLA cycle: a reopened ticket's earlier cycles
+    //    (ticket_sla_history) stay in the record alongside the live one.
     // ═══════════════════════════════════════════════════════════════
     async getSlaCompliance(req, res) {
       try {
@@ -153,7 +155,13 @@ export function makeReportController(pool) {
             ROUND(COUNT(CASE WHEN ts.response_breached = 0 THEN 1 END)*100.0/NULLIF(COUNT(*),0), 2) as response_compliance_pct,
             ROUND(COUNT(CASE WHEN ts.resolve_breached = 0 THEN 1 END)*100.0/NULLIF(COUNT(*),0), 2) as resolve_compliance_pct
           FROM tickets t
-          JOIN ticket_slas ts ON t.id = ts.ticket_id ${where}`, p);
+          JOIN (SELECT ticket_id, policy_id, cycle, response_due_at, response_met_at, response_breached,
+                         resolve_due_at, resolve_met_at, resolve_breached
+                    FROM ticket_slas
+                  UNION ALL
+                  SELECT ticket_id, policy_id, cycle, response_due_at, response_met_at, response_breached,
+                         resolve_due_at, resolve_met_at, resolve_breached
+                    FROM ticket_sla_history WHERE kind = 'team') ts ON t.id = ts.ticket_id ${where}`, p);
 
         const [byPolicy] = await pool.query(
           `SELECT sp.name as policy_name, COUNT(*) as total_tickets,
@@ -164,7 +172,13 @@ export function makeReportController(pool) {
             ROUND(COUNT(CASE WHEN ts.response_breached = 0 THEN 1 END)*100.0/NULLIF(COUNT(*),0), 1) as response_pct,
             ROUND(COUNT(CASE WHEN ts.resolve_breached = 0 THEN 1 END)*100.0/NULLIF(COUNT(*),0), 1) as resolve_pct
           FROM tickets t
-          JOIN ticket_slas ts ON t.id = ts.ticket_id
+          JOIN (SELECT ticket_id, policy_id, cycle, response_due_at, response_met_at, response_breached,
+                         resolve_due_at, resolve_met_at, resolve_breached
+                    FROM ticket_slas
+                  UNION ALL
+                  SELECT ticket_id, policy_id, cycle, response_due_at, response_met_at, response_breached,
+                         resolve_due_at, resolve_met_at, resolve_breached
+                    FROM ticket_sla_history WHERE kind = 'team') ts ON t.id = ts.ticket_id
           JOIN sla_policies sp ON ts.policy_id = sp.id ${where}
           GROUP BY sp.id, sp.name ORDER BY total_tickets DESC`, p);
 
@@ -175,7 +189,13 @@ export function makeReportController(pool) {
             ROUND(COUNT(CASE WHEN ts.resolve_breached = 0 THEN 1 END)*100.0/NULLIF(COUNT(*),0), 1) as resolve_pct,
             COUNT(*) as total
           FROM tickets t
-          JOIN ticket_slas ts ON t.id = ts.ticket_id ${where}
+          JOIN (SELECT ticket_id, policy_id, cycle, response_due_at, response_met_at, response_breached,
+                         resolve_due_at, resolve_met_at, resolve_breached
+                    FROM ticket_slas
+                  UNION ALL
+                  SELECT ticket_id, policy_id, cycle, response_due_at, response_met_at, response_breached,
+                         resolve_due_at, resolve_met_at, resolve_breached
+                    FROM ticket_sla_history WHERE kind = 'team') ts ON t.id = ts.ticket_id ${where}
           GROUP BY week ORDER BY week`, p);
 
         res.json({ summary: metrics[0], byPolicy, slaTrend });
@@ -702,20 +722,26 @@ export function makeReportController(pool) {
 
         } else if (type === "sla") {
           const [rows] = await pool.query(
-            `SELECT t.ticket_number, t.subject, sp.name as sla_policy,
+            `SELECT t.ticket_number, t.subject, ts.cycle as sla_cycle, sp.name as sla_policy,
               CASE WHEN ts.response_breached = 1 THEN 'Breached' ELSE 'Met' END as response_sla,
               CASE WHEN ts.resolve_breached = 1 THEN 'Breached' ELSE 'Met' END as resolve_sla,
               ts.response_due_at, ts.response_met_at,
               ts.resolve_due_at, ts.resolve_met_at,
               t.created_at, t.closed_at
             FROM tickets t
-            JOIN ticket_slas ts ON t.id = ts.ticket_id
+            JOIN (SELECT ticket_id, policy_id, cycle, response_due_at, response_met_at, response_breached,
+                         resolve_due_at, resolve_met_at, resolve_breached
+                    FROM ticket_slas
+                  UNION ALL
+                  SELECT ticket_id, policy_id, cycle, response_due_at, response_met_at, response_breached,
+                         resolve_due_at, resolve_met_at, resolve_breached
+                    FROM ticket_sla_history WHERE kind = 'team') ts ON t.id = ts.ticket_id
             LEFT JOIN sla_policies sp ON ts.policy_id = sp.id
             ${where}
-            ORDER BY t.created_at DESC`, p);
+            ORDER BY t.created_at DESC, ts.cycle`, p);
 
           const ws = XLSX.utils.json_to_sheet(rows);
-          ws["!cols"] = [{ wch: 12 }, { wch: 35 }, { wch: 18 }, { wch: 12 }, { wch: 12 }, { wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 20 }];
+          ws["!cols"] = [{ wch: 12 }, { wch: 35 }, { wch: 8 }, { wch: 18 }, { wch: 12 }, { wch: 12 }, { wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 20 }];
           XLSX.utils.book_append_sheet(wb, ws, "SLA Compliance");
         }
 

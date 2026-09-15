@@ -3,6 +3,7 @@ import { Router } from "express";
 import { body } from "express-validator";
 import { requireAuth } from "../middleware/auth.js";
 import { ticketWorkspaceParam } from "../middleware/workspace.js";
+import { uploadFiles } from "../services/attachmentStorage.js";
 
 export function makeTicketRouter(controller) {
   const router = Router();
@@ -34,7 +35,11 @@ export function makeTicketRouter(controller) {
   // Quick actions
   router.post("/tickets/:id/submit", requireAuth, controller.submitDraft);
   router.post("/tickets/:id/assign", requireAuth, controller.assignToMe);
-  router.post("/tickets/:id/reopen", requireAuth, controller.reopen);
+  router.post("/tickets/:id/reopen", requireAuth, uploadFiles, controller.reopen);
+
+  // Attachments — on the request itself, and authenticated downloads.
+  router.post("/tickets/:id/attachments", requireAuth, uploadFiles, controller.addAttachments);
+  router.get("/tickets/:id/attachments/:attachmentId", requireAuth, controller.downloadAttachment);
   router.post("/tickets/:id/escalate", requireAuth, controller.escalate);
   router.post("/tickets/:id/escalate-to-manager", requireAuth, controller.escalateToManager);
   router.post("/tickets/:id/reassign", requireAuth, controller.reassign);
@@ -56,7 +61,12 @@ export function makeTicketRouter(controller) {
   router.post(
     "/tickets/:id/comments",
     requireAuth,
-    [body("body").isLength({ min: 2 }).withMessage("Comment required")],
+    uploadFiles, // multipart when files are attached; JSON passes straight through
+    [
+      body("body")
+        .custom((value, { req }) => String(value || "").trim().length >= 2 || (req.files || []).length > 0)
+        .withMessage("Write a message or attach a file"),
+    ],
     controller.addComment
   );
 

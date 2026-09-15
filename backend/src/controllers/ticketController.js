@@ -12,6 +12,10 @@ import {
 import { getEscalationChain } from "../services/hierarchyService.js";
 import { isLayerRole } from "../utils/corporateRoles.js";
 import { getClockMinutes } from "../services/slaTargets.js";
+import {
+  AttachmentError, validateFiles, saveAttachments, loadAttachments, resolveStoredPath, isInlineType,
+} from "../services/attachmentStorage.js";
+import fs from "fs";
 
 const send = {
   ok: (res, data = {}) => res.json(data),
@@ -166,8 +170,8 @@ async function assignSla(pool, ticketId, priorityId, teamId, { restart = false }
 
     // Upsert ticket_slas
     await pool.query(
-      `INSERT INTO ticket_slas (ticket_id, policy_id, response_due_at, resolve_due_at)
-       VALUES (?, ?, ?, ?)
+      `INSERT INTO ticket_slas (ticket_id, policy_id, response_due_at, resolve_due_at, cycle_started_at)
+       VALUES (?, ?, ?, ?, NOW())
        ON DUPLICATE KEY UPDATE policy_id = VALUES(policy_id),
          response_due_at = VALUES(response_due_at),
          resolve_due_at = VALUES(resolve_due_at),
@@ -422,13 +426,82 @@ async function resolveNextApprover(pool, fromUserId, teamId, workspace, { allowT
 // or the triage clock if it's sitting in the NOC queue — and the people working
 // it are told why.
 
-/** Restart the live clock(s) for a reopened ticket. */
-async function restartSlaOnReopen(pool, ticketId, priorityId, teamId) {
+/**
+ * Close the ticket's current SLA cycle into ticket_sla_history — the team
+ * response / resolution clock and the NOC triage clock exactly as they stood —
+ * and clear the live rows. Returns the number the next cycle should use.
+ */
+async function archiveSlaCycle(pool, ticketId, actorId) {
+  const [[team]] = await pool.query(
+    `SELECT ts.*, sp.name AS policy_name, t.team_id, tm.name AS team_name, t.priority_id, tp.label AS priority_label
+       FROM ticket_slas ts
+       JOIN tickets t ON t.id = ts.ticket_id
+       LEFT JOIN sla_policies sp ON sp.id = ts.policy_id
+       LEFT JOIN teams tm ON tm.id = t.team_id
+       LEFT JOIN ticket_priorities tp ON tp.id = t.priority_id
+      WHERE ts.ticket_id = ?`,
+    [ticketId]
+  );
+  const [[triage]] = await pool.query(
+    `SELECT tts.*, tp.label AS priority_label, t.team_id, tm.name AS team_name
+       FROM ticket_triage_slas tts
+       JOIN tickets t ON t.id = tts.ticket_id
+       LEFT JOIN teams tm ON tm.id = (SELECT id FROM teams WHERE corporate_role = 'triage' ORDER BY id LIMIT 1)
+       LEFT JOIN ticket_priorities tp ON tp.id = tts.priority_id
+      WHERE tts.ticket_id = ?`,
+    [ticketId]
+  );
+  const [[{ lastCycle }]] = await pool.query(
+    "SELECT COALESCE(MAX(cycle), 0) AS lastCycle FROM ticket_sla_history WHERE ticket_id = ?", [ticketId]
+  );
+  const cycle = Math.max(team?.cycle || 0, triage?.cycle || 0, lastCycle + 1, 1);
+
+  if (triage) {
+    await pool.query(
+      `INSERT INTO ticket_sla_history
+         (ticket_id, cycle, kind, team_id, team_name, priority_id, priority_label, started_at,
+          target_minutes, due_at, met_at, breached, ended_at, ended_reason, ended_by)
+       VALUES (?, ?, 'triage', ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 'reopened', ?)`,
+      [ticketId, cycle, null, triage.team_name || "NOC", triage.priority_id, triage.priority_label, triage.started_at,
+       triage.target_minutes, triage.due_at, triage.met_at,
+       triage.breached || (!triage.met_at && triage.due_at && new Date(triage.due_at) < new Date()) ? 1 : 0, actorId]
+    );
+    await pool.query("DELETE FROM ticket_triage_slas WHERE ticket_id = ?", [ticketId]);
+  }
+  if (team) {
+    const now = new Date();
+    const late = (due, met) => !!due && (met ? new Date(met) > new Date(due) : new Date(due) < now);
+    await pool.query(
+      `INSERT INTO ticket_sla_history
+         (ticket_id, cycle, kind, policy_id, policy_name, team_id, team_name, priority_id, priority_label, started_at,
+          response_due_at, response_met_at, response_breached, resolve_due_at, resolve_met_at, resolve_breached,
+          paused_at, ended_at, ended_reason, ended_by)
+       VALUES (?, ?, 'team', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 'reopened', ?)`,
+      [ticketId, cycle, team.policy_id, team.policy_name, team.team_id, team.team_name, team.priority_id, team.priority_label,
+       team.cycle_started_at || team.created_at,
+       team.response_due_at, team.response_met_at, team.response_breached || late(team.response_due_at, team.response_met_at) ? 1 : 0,
+       team.resolve_due_at, team.resolve_met_at, team.resolve_breached || late(team.resolve_due_at, team.resolve_met_at) ? 1 : 0,
+       team.paused_at, actorId]
+    );
+    await pool.query("DELETE FROM ticket_slas WHERE ticket_id = ?", [ticketId]);
+  }
+  return cycle + 1;
+}
+
+/**
+ * A reopened ticket gets a NEW set of SLAs: the finished cycle is kept on
+ * record (archiveSlaCycle), then the live clock starts fresh — the team's
+ * response + resolution SLA, or the triage clock if it's in the NOC queue.
+ */
+async function restartSlaOnReopen(pool, ticketId, priorityId, teamId, actorId = null) {
+  const nextCycle = await archiveSlaCycle(pool, ticketId, actorId);
   const nocTeamId = await getNocTeamId(pool);
   if (nocTeamId && teamId === nocTeamId) {
     await startTriageSla(pool, ticketId, priorityId, null);
+    await pool.query("UPDATE ticket_triage_slas SET cycle = ? WHERE ticket_id = ?", [nextCycle, ticketId]);
   } else {
     await assignSla(pool, ticketId, priorityId, teamId, { restart: true });
+    await pool.query("UPDATE ticket_slas SET cycle = ?, cycle_started_at = NOW() WHERE ticket_id = ?", [nextCycle, ticketId]);
   }
 }
 
@@ -856,6 +929,9 @@ export function makeTicketController(pool) {
           return send.forbidden(res);
         }
 
+        // Files attached to the request itself (not to a message).
+        ticket.attachments = (await loadAttachments(pool, ticketId)).filter((a) => !a.comment_id);
+
         return send.ok(res, { ticket });
       } catch (e) {
         console.error(e);
@@ -890,7 +966,7 @@ export function makeTicketController(pool) {
         // NOC-routed ticket has ONLY this — its team response/resolve SLA has not
         // started yet — so fetch it BEFORE bailing on a missing team SLA row.
         const [triageRows] = await pool.query(
-          `SELECT target_minutes, due_at, met_at, breached, started_at
+          `SELECT target_minutes, due_at, met_at, breached, started_at, cycle
            FROM ticket_triage_slas WHERE ticket_id = ?`,
           [ticketId]
         );
@@ -957,8 +1033,41 @@ export function makeTicketController(pool) {
           };
         }
 
-        // Nothing to show only if there is no team SLA, no triage SLA, and no manager SLA.
-        if (rows.length === 0 && !triage && !manager) return send.ok(res, { sla: null, escalation });
+        // Earlier SLA cycles (a reopened ticket starts a new set; the old ones stay on record).
+        const [historyRows] = await pool.query(
+          `SELECT h.*, u.full_name AS ended_by_name
+             FROM ticket_sla_history h LEFT JOIN users u ON u.id = h.ended_by
+            WHERE h.ticket_id = ? ORDER BY h.cycle, FIELD(h.kind, 'triage', 'team')`,
+          [ticketId]
+        );
+        const outcome = (due, met, breached) =>
+          met ? (breached || (due && new Date(met) > new Date(due)) ? "met_late" : "met") : breached ? "breached" : "not_met";
+        const slaHistory = historyRows.map((h) => ({
+          cycle: h.cycle,
+          kind: h.kind,
+          policy_name: h.policy_name,
+          team_name: h.team_name,
+          priority_label: h.priority_label,
+          started_at: h.started_at,
+          ended_at: h.ended_at,
+          ended_reason: h.ended_reason,
+          ended_by_name: h.ended_by_name,
+          ...(h.kind === "team"
+            ? {
+                response_due_at: h.response_due_at, response_met_at: h.response_met_at,
+                response_outcome: outcome(h.response_due_at, h.response_met_at, h.response_breached),
+                resolve_due_at: h.resolve_due_at, resolve_met_at: h.resolve_met_at,
+                resolve_outcome: outcome(h.resolve_due_at, h.resolve_met_at, h.resolve_breached),
+              }
+            : {
+                target_minutes: h.target_minutes, due_at: h.due_at, met_at: h.met_at,
+                triage_outcome: outcome(h.due_at, h.met_at, h.breached),
+              }),
+        }));
+        const currentCycle = rows[0]?.cycle || triage?.cycle || (historyRows.length ? historyRows[historyRows.length - 1].cycle + 1 : 1);
+
+        // Nothing to show only if there is no team SLA, no triage SLA, no manager SLA and no history.
+        if (rows.length === 0 && !triage && !manager && !slaHistory.length) return send.ok(res, { sla: null, escalation });
 
         const sla = rows[0] || null;
         const now = new Date();
@@ -1032,6 +1141,10 @@ export function makeTicketController(pool) {
                  : (manager.breached || managerRemainingMs === 0) ? "breached"
                  : (managerRemainingMs !== null && managerRemainingMs < 600000) ? "at_risk" : "on_track")
               : null,
+            // SLA cycles: 1 = as raised; each reopen starts the next one.
+            cycle: currentCycle,
+            cycle_started_at: sla?.cycle_started_at || (triage && !sla ? triage.started_at : null) || sla?.created_at || null,
+            history: slaHistory,
           },
           escalation,
         });
@@ -1871,7 +1984,7 @@ export function makeTicketController(pool) {
 
         // A reopened ticket is live again: restart its clocks and tell the team.
         if (reopening) {
-          await restartSlaOnReopen(pool, ticketId, req.body.priority_id || current.priority_id, req.body.team_id || current.team_id);
+          await restartSlaOnReopen(pool, ticketId, req.body.priority_id || current.priority_id, req.body.team_id || current.team_id, req.user.id);
           await insertEvent(pool, { ticketId, actorId: req.user.id, type: "ticket.reopened", payload: { from_status: current.status_key } });
           await notifyReopen(pool, ticketId, req.user.id, null);
         }
@@ -2778,6 +2891,13 @@ export function makeTicketController(pool) {
       const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
       if (reason.length < 5) return send.bad(res, "Tell the team what's still not working (a few words at least).");
       if (reason.length > 4000) return send.bad(res, "Please keep the note under 4000 characters.");
+      let checked = [];
+      try {
+        checked = validateFiles(req.files || []);
+      } catch (err) {
+        if (err instanceof AttachmentError) return send.bad(res, err.message);
+        throw err;
+      }
 
       try {
         const [[t]] = await pool.query(
@@ -2808,16 +2928,22 @@ export function makeTicketController(pool) {
           "INSERT INTO ticket_comments (ticket_id, author_id, body, is_public) VALUES (?, ?, ?, 1)",
           [ticketId, req.user.id, `Reopened: ${reason}`]
         );
+        const attachments = checked.length
+          ? await saveAttachments(pool, { ticketId, commentId: comment.insertId, userId: req.user.id, checked })
+          : [];
         await insertEvent(pool, {
           ticketId, actorId: req.user.id, type: "ticket.updated",
           payload: { changes: { status: { from: t.status_key, to: "in_progress" } } },
         });
         await insertEvent(pool, {
           ticketId, actorId: req.user.id, type: "ticket.reopened",
-          payload: { reason, from_status: t.status_key, comment_id: comment.insertId, by_requester: isRequester },
+          payload: {
+            reason, from_status: t.status_key, comment_id: comment.insertId, by_requester: isRequester,
+            ...(attachments.length ? { attachments: attachments.map((a) => a.file_name) } : {}),
+          },
         });
 
-        await restartSlaOnReopen(pool, ticketId, t.priority_id, t.team_id);
+        await restartSlaOnReopen(pool, ticketId, t.priority_id, t.team_id, req.user.id);
         await notifyReopen(pool, ticketId, req.user.id, reason);
 
         return send.ok(res, { ok: true });
@@ -2883,7 +3009,7 @@ export function makeTicketController(pool) {
               payload: { reason: "Team work was reopened", from_status: ticketRows[0].status_key },
             });
             const [[tk]] = await pool.query("SELECT priority_id, team_id FROM tickets WHERE id = ?", [ticketId]);
-            await restartSlaOnReopen(pool, ticketId, tk.priority_id, tk.team_id);
+            await restartSlaOnReopen(pool, ticketId, tk.priority_id, tk.team_id, req.user.id);
           }
         }
 
@@ -2917,6 +3043,8 @@ export function makeTicketController(pool) {
            ORDER BY c.created_at ASC`,
           [ticketId]
         );
+        const files = await loadAttachments(pool, ticketId);
+        for (const c of rows) c.attachments = files.filter((a) => a.comment_id === c.id);
         return send.ok(res, { items: rows });
       } catch (e) {
         console.error(e);
@@ -2944,12 +3072,32 @@ export function makeTicketController(pool) {
           return send.forbidden(res);
         }
 
-        const isPublic = isAgent(req.user) ? !!req.body.isPublic : true;
+        // Multipart (with files) sends every field as a string.
+        const flag = (v) => v === true || v === "true" || v === "1" || v === 1;
+        const isPublic = isAgent(req.user) ? flag(req.body.isPublic) : true;
+        const files = req.files || [];
+        let checked = [];
+        try {
+          checked = validateFiles(files);
+        } catch (err) {
+          if (err instanceof AttachmentError) return send.bad(res, err.message);
+          throw err;
+        }
+        const text = typeof req.body.body === "string" ? req.body.body.trim() : "";
         const [result] = await pool.query(
           `INSERT INTO ticket_comments (ticket_id, author_id, body, is_public)
            VALUES (?, ?, ?, ?)`,
-          [ticketId, req.user.id, req.body.body, isPublic ? 1 : 0]
+          [ticketId, req.user.id, text, isPublic ? 1 : 0]
         );
+        let attachments = [];
+        if (checked.length) {
+          try {
+            attachments = await saveAttachments(pool, { ticketId, commentId: result.insertId, userId: req.user.id, checked });
+          } catch (err) {
+            await pool.query("DELETE FROM ticket_comments WHERE id = ?", [result.insertId]);
+            throw err;
+          }
+        }
 
         // The TEAM response SLA is the handling team's alone — it's met only by
         // that team's first public reply: a member of the ticket's CURRENT team
@@ -3018,12 +3166,17 @@ export function makeTicketController(pool) {
           ticketId,
           actorId: req.user.id,
           type: "ticket.commented",
-          payload: { commentId: result.insertId, isPublic },
+          payload: {
+            commentId: result.insertId, isPublic,
+            ...(attachments.length ? { attachments: attachments.map((a) => a.file_name) } : {}),
+          },
         });
 
         // @mentions — notify the tagged users (any team; internal coordination).
-        const mentionIds = Array.isArray(req.body.mentions)
-          ? [...new Set(req.body.mentions.map(Number).filter((n) => n && n !== req.user.id))]
+        let rawMentions = req.body.mentions;
+        if (typeof rawMentions === "string") { try { rawMentions = JSON.parse(rawMentions); } catch { rawMentions = []; } }
+        const mentionIds = Array.isArray(rawMentions)
+          ? [...new Set(rawMentions.map(Number).filter((n) => n && n !== req.user.id))]
           : [];
         if (mentionIds.length) {
           try {
@@ -3045,9 +3198,70 @@ export function makeTicketController(pool) {
           }
         }
 
-        return send.created(res, { id: result.insertId });
+        return send.created(res, { id: result.insertId, attachments });
       } catch (e) {
         console.error(e);
+        return send.serverErr(res);
+      }
+    },
+
+    // POST /api/tickets/:id/attachments — files on the request itself (e.g. a
+    // customer adding screenshots or documents right after raising it).
+    addAttachments: async (req, res) => {
+      const ticketId = Number(req.params.id);
+      try {
+        const [[t]] = await pool.query("SELECT requester_id FROM tickets WHERE id = ?", [ticketId]);
+        if (!t) return send.notFound(res, "Ticket not found");
+        if (!isAgent(req.user) && t.requester_id !== req.user.id) return send.forbidden(res);
+        const files = req.files || [];
+        if (!files.length) return send.bad(res, "Choose at least one file.");
+        const checked = validateFiles(files);
+        const attachments = await saveAttachments(pool, { ticketId, userId: req.user.id, checked });
+        await insertEvent(pool, {
+          ticketId, actorId: req.user.id, type: "ticket.attachments_added",
+          payload: { files: attachments.map((a) => a.file_name) },
+        });
+        return send.created(res, { attachments });
+      } catch (e) {
+        if (e instanceof AttachmentError) return send.bad(res, e.message);
+        console.error("add attachments error:", e);
+        return send.serverErr(res);
+      }
+    },
+
+    // GET /api/tickets/:id/attachments/:attachmentId — authenticated download.
+    // Customers only get files on the request or on public messages.
+    downloadAttachment: async (req, res) => {
+      const ticketId = Number(req.params.id);
+      const attachmentId = Number(req.params.attachmentId);
+      try {
+        const [[a]] = await pool.query(
+          `SELECT a.*, t.requester_id, c.is_public
+             FROM ticket_attachments a
+             JOIN tickets t ON t.id = a.ticket_id
+             LEFT JOIN ticket_comments c ON c.id = a.comment_id
+            WHERE a.id = ? AND a.ticket_id = ?`,
+          [attachmentId, ticketId]
+        );
+        if (!a) return send.notFound(res, "Attachment not found");
+        if (!isAgent(req.user)) {
+          if (a.requester_id !== req.user.id) return send.forbidden(res);
+          if (a.comment_id && !a.is_public) return send.notFound(res, "Attachment not found");
+        }
+        const abs = resolveStoredPath(a.storage_path);
+        await fs.promises.access(abs, fs.constants.R_OK).catch(() => { throw new AttachmentError("File is missing from storage", 404); });
+
+        const inline = isInlineType(a.file_type) && req.query.download !== "1";
+        const ascii = a.file_name.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "'");
+        res.setHeader("Content-Type", a.file_type || "application/octet-stream");
+        res.setHeader("Content-Length", a.file_size);
+        res.setHeader("X-Content-Type-Options", "nosniff");
+        res.setHeader("Cache-Control", "private, max-age=300");
+        res.setHeader("Content-Disposition", `${inline ? "inline" : "attachment"}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(a.file_name)}`);
+        fs.createReadStream(abs).on("error", () => res.destroy()).pipe(res);
+      } catch (e) {
+        if (e instanceof AttachmentError) return res.status(e.status).json({ error: e.message });
+        console.error("download attachment error:", e);
         return send.serverErr(res);
       }
     },

@@ -14,7 +14,8 @@
 import { useEffect, useState, useRef } from "react";
 import { useParams } from "react-router-dom";
 import { useWsNavigate, useWorkspace } from "../contexts/workspace";
-import { api, approvalsApi, ticketsApi, templatesApi, slaApi, csatApi, formsApi } from "../services/api";
+import { api, apiUpload, approvalsApi, ticketsApi, templatesApi, slaApi, csatApi, formsApi } from "../services/api";
+import { AttachmentPicker, AttachmentList } from "../components/tickets/Attachments";
 import { useMeta } from "../contexts/meta";
 import { useAuth } from "../contexts/auth";
 import { useToast } from "../contexts/toast";
@@ -76,8 +77,13 @@ export default function TicketDetail() {
   const [showReopen, setShowReopen] = useState(false);
   const [reopenReason, setReopenReason] = useState("");
   const [reopening, setReopening] = useState(false);
+  const [reopenFiles, setReopenFiles] = useState([]);
 
   const [commentBody, setCommentBody] = useState("");
+  const [commentFiles, setCommentFiles] = useState([]);
+  // Files added to the request itself (from the Description card).
+  const [requestFiles, setRequestFiles] = useState([]);
+  const [uploadingRequestFiles, setUploadingRequestFiles] = useState(false);
   const [isInternalNote, setIsInternalNote] = useState(false);
   const [submittingComment, setSubmittingComment] = useState(false);
   // @mentions
@@ -341,12 +347,16 @@ export default function TicketDetail() {
     finally { setActionLoading(null); }
   };
 
-  const openReopen = () => { setReopenReason(""); setShowReopen(true); };
+  const openReopen = () => { setReopenReason(""); setReopenFiles([]); setShowReopen(true); };
   const submitReopen = async () => {
     if (reopenReason.trim().length < 5) return toast.error("Tell the team what's still not working");
     setReopening(true);
     try {
-      await api(`/tickets/${id}/reopen`, { method: "POST", body: { reason: reopenReason.trim() } });
+      if (reopenFiles.length) {
+        await apiUpload(`/tickets/${id}/reopen`, { fields: { reason: reopenReason.trim() }, files: reopenFiles });
+      } else {
+        await api(`/tickets/${id}/reopen`, { method: "POST", body: { reason: reopenReason.trim() } });
+      }
       setShowReopen(false);
       toast.success("Reopened — the team has your note and is back on it");
       await loadTicketData();
@@ -414,12 +424,20 @@ export default function TicketDetail() {
 
   const handleSubmitComment = async (e) => {
     e.preventDefault();
-    if (!commentBody.trim()) return;
+    if (!commentBody.trim() && !commentFiles.length) return;
     try {
       setSubmittingComment(true);
       const activeMentions = mentions.filter((m) => commentBody.includes("@" + m.name)).map((m) => m.id);
-      await api(`/tickets/${id}/comments`, { method: "POST", body: { body: commentBody, isPublic: !isInternalNote, mentions: activeMentions } });
+      if (commentFiles.length) {
+        await apiUpload(`/tickets/${id}/comments`, {
+          fields: { body: commentBody, isPublic: !isInternalNote, mentions: activeMentions },
+          files: commentFiles,
+        });
+      } else {
+        await api(`/tickets/${id}/comments`, { method: "POST", body: { body: commentBody, isPublic: !isInternalNote, mentions: activeMentions } });
+      }
       setCommentBody("");
+      setCommentFiles([]);
       setIsInternalNote(false);
       setMentions([]);
       setMention({ open: false, query: "", start: 0 });
@@ -429,6 +447,21 @@ export default function TicketDetail() {
       toast.error(err.message || "Failed to post comment");
     }
     finally { setSubmittingComment(false); }
+  };
+
+  const uploadRequestFiles = async () => {
+    if (!requestFiles.length) return;
+    setUploadingRequestFiles(true);
+    try {
+      await apiUpload(`/tickets/${id}/attachments`, { files: requestFiles });
+      setRequestFiles([]);
+      toast.success(requestFiles.length === 1 ? "File added" : `${requestFiles.length} files added`);
+      await loadTicketData();
+    } catch (err) {
+      toast.error(err.message || "Couldn't upload the files");
+    } finally {
+      setUploadingRequestFiles(false);
+    }
   };
 
   const handleAddTag = async (e) => {
@@ -831,6 +864,7 @@ export default function TicketDetail() {
     "approval.level_advanced": { icon: "arrowUp",    label: "Level Advanced",      color: "text-blue-400" },
     "approval.post_actions_applied": { icon: "check", label: "Post-Approval Actions", color: "text-emerald-400" },
     "ticket.reopened":         { icon: "refresh",    label: "Reopened",            color: "text-amber-400" },
+    "ticket.attachments_added": { icon: "paperclip", label: "Files Added",         color: "text-sky-400" },
     "ticket.rated":            { icon: "star",       label: "CSAT Rating",         color: "text-amber-400" },
     "sla.paused":              { icon: "pause",      label: "SLA Paused",          color: "text-amber-400" },
     "sla.resumed":             { icon: "play",       label: "SLA Resumed",         color: "text-emerald-400" },
@@ -1258,8 +1292,30 @@ export default function TicketDetail() {
               />
             </button>
             {showDescription && (
-              <div className="px-5 pb-5 -mt-1 text-sm text-[var(--fg-secondary)] leading-relaxed whitespace-pre-wrap">
-                {ticket.description || <span className="text-[var(--fg-muted)] italic">No description provided</span>}
+              <div className="px-5 pb-5 -mt-1 space-y-4">
+                <div className="text-sm text-[var(--fg-secondary)] leading-relaxed whitespace-pre-wrap">
+                  {ticket.description || <span className="text-[var(--fg-muted)] italic">No description provided</span>}
+                </div>
+                {(ticket.attachments?.length > 0 || isAgent || ticket.requester_id === user?.id) && (
+                  <div className="pt-3 border-t border-[var(--border-default)] space-y-2.5">
+                    <p className="text-label flex items-center gap-1.5">
+                      <Icon name="paperclip" size={12} /> Attachments{ticket.attachments?.length ? ` · ${ticket.attachments.length}` : ""}
+                    </p>
+                    <AttachmentList ticketId={id} attachments={ticket.attachments || []} />
+                    {(isAgent || ticket.requester_id === user?.id) && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex-1 min-w-0">
+                          <AttachmentPicker files={requestFiles} onChange={setRequestFiles} disabled={uploadingRequestFiles} />
+                        </div>
+                        {requestFiles.length > 0 && (
+                          <Button size="sm" onClick={uploadRequestFiles} loading={uploadingRequestFiles} icon={<Icon name="upload" size={14} />}>
+                            Upload {requestFiles.length === 1 ? "file" : `${requestFiles.length} files`}
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1387,7 +1443,10 @@ export default function TicketDetail() {
                       ))}
                     </div>
                   )}
-                  {commentBody.trim() && (
+                  <div className="mt-2">
+                    <AttachmentPicker files={commentFiles} onChange={setCommentFiles} disabled={submittingComment} compact />
+                  </div>
+                  {(commentBody.trim() || commentFiles.length > 0) && (
                     <div className="flex items-center justify-between mt-2">
                       {isAgent && (
                         <label className="inline-flex items-center gap-2 text-xs text-[var(--fg-muted)] cursor-pointer">
@@ -1401,7 +1460,7 @@ export default function TicketDetail() {
                         </label>
                       )}
                       <div className="flex items-center gap-2 ml-auto">
-                        <Button type="button" size="sm" variant="ghost" onClick={() => { setCommentBody(""); setIsInternalNote(false); }}>
+                        <Button type="button" size="sm" variant="ghost" onClick={() => { setCommentBody(""); setCommentFiles([]); setIsInternalNote(false); }}>
                           Cancel
                         </Button>
                         <Button type="submit" size="sm" loading={submittingComment} icon={<Icon name={isInternalNote ? "lock" : "send"} size={14} />}>
@@ -1432,12 +1491,13 @@ export default function TicketDetail() {
                         <span className="text-xs text-[var(--fg-muted)]">{getTimeAgo(c.created_at)}</span>
                       </div>
                       <div className={cn(
-                        "text-sm whitespace-pre-wrap rounded-xl px-3.5 py-3 border",
+                        "text-sm rounded-xl px-3.5 py-3 border space-y-2.5",
                         c.is_public
                           ? "bg-[var(--bg-base)] border-[var(--border-default)] text-[var(--fg-secondary)]"
                           : "bg-amber-500/5 border-amber-500/15 text-[var(--fg-secondary)]"
                       )}>
-                        {c.body}
+                        {c.body && <div className="whitespace-pre-wrap">{c.body}</div>}
+                        <AttachmentList ticketId={id} attachments={c.attachments || []} />
                       </div>
                     </div>
                   </div>
@@ -1589,6 +1649,13 @@ export default function TicketDetail() {
                                     {event.routed_team && <> for <span className="font-semibold text-[var(--fg-primary)]">{event.routed_team}</span></>}
                                   </p>
                                 )}
+                                {/* Files attached — to the request, or with a message. */}
+                                {(event.event_type === "ticket.attachments_added" || (event.event_type === "ticket.commented" && event.payload?.attachments?.length)) && (
+                                  <p className="text-sm text-[var(--fg-secondary)] mt-2 ml-[88px] flex items-start gap-1.5">
+                                    <Icon name="paperclip" size={13} className="mt-0.5 shrink-0 text-[var(--fg-muted)]" />
+                                    <span>{(event.payload?.files || event.payload?.attachments || []).join(", ")}</span>
+                                  </p>
+                                )}
                                 {/* Reopened: what the customer (or team) said is still wrong. */}
                                 {event.event_type === "ticket.reopened" && (
                                   <p className="text-sm text-[var(--fg-secondary)] mt-2 ml-[88px]">
@@ -1664,9 +1731,13 @@ export default function TicketDetail() {
                         <div className="flex-1 min-w-0">
                           {slaData.team_sla_present ? (
                             <>
-                              <h3 className="text-sm font-semibold text-[var(--fg-primary)]">{slaData.policy_name || "SLA Policy"}</h3>
+                              <h3 className="text-sm font-semibold text-[var(--fg-primary)] flex items-center gap-2 flex-wrap">
+                                {slaData.policy_name || "SLA Policy"}
+                                {slaData.cycle > 1 && <Badge tone="amber" size="sm">SLA cycle {slaData.cycle} · after reopening</Badge>}
+                              </h3>
                               <p className="text-xs text-[var(--fg-muted)]">
                                 Response target: {slaData.response_minutes ?? "N/A"}m · Resolution target: {slaData.resolve_minutes ?? "N/A"}m
+                                {slaData.cycle > 1 && slaData.cycle_started_at && <> · started {formatDate(slaData.cycle_started_at)}</>}
                               </p>
                             </>
                           ) : (
@@ -1841,6 +1912,69 @@ export default function TicketDetail() {
                         );
                       })()}
                     </div>
+
+                    {/* Earlier SLA cycles — kept on record when the ticket was reopened. */}
+                    {slaData.history?.length > 0 && (() => {
+                      const OUTCOME = {
+                        met: { label: "Met", tone: "emerald" },
+                        met_late: { label: "Met late", tone: "amber" },
+                        breached: { label: "Breached", tone: "rose" },
+                        not_met: { label: "Not met", tone: "slate" },
+                      };
+                      const cycles = [...new Set(slaData.history.map((h) => h.cycle))].sort((a, b) => b - a);
+                      const Row = ({ label, due, met, outcome }) => (
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                          <span className="w-24 shrink-0 text-[var(--fg-muted)]">{label}</span>
+                          <Badge tone={OUTCOME[outcome]?.tone || "slate"} size="sm">{OUTCOME[outcome]?.label || outcome}</Badge>
+                          <span className="text-[var(--fg-secondary)]">Due {formatDate(due)}</span>
+                          {met && <span className="text-[var(--fg-muted)]">· done {formatDate(met)}</span>}
+                        </div>
+                      );
+                      return (
+                        <div className="rounded-xl bg-[var(--bg-base)] border border-[var(--border-default)] overflow-hidden">
+                          <div className="px-4 py-3 border-b border-[var(--border-default)] flex items-center justify-between gap-2">
+                            <h3 className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">Earlier SLA cycles</h3>
+                            <span className="text-[11px] text-[var(--fg-muted)]">Kept on record when the ticket was reopened</span>
+                          </div>
+                          <div className="divide-y divide-[var(--border-default)]">
+                            {cycles.map((cycle) => {
+                              const entries = slaData.history.filter((h) => h.cycle === cycle);
+                              const first = entries[0];
+                              return (
+                                <div key={cycle} className="px-4 py-3 space-y-2">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="text-sm font-semibold text-[var(--fg-primary)]">
+                                      {cycle === 1 ? "Cycle 1 · as raised" : `Cycle ${cycle} · after reopening`}
+                                    </span>
+                                    <span className="text-xs text-[var(--fg-muted)]">
+                                      {formatDate(first.started_at)} → ended {formatDate(first.ended_at)}
+                                      {first.ended_reason === "reopened" && <> (reopened{first.ended_by_name ? ` by ${first.ended_by_name}` : ""})</>}
+                                    </span>
+                                  </div>
+                                  {entries.map((h, i) => (
+                                    <div key={i} className="space-y-1.5 pl-3 border-l-2 border-[var(--border-default)]">
+                                      <p className="text-xs font-medium text-[var(--fg-secondary)]">
+                                        {h.kind === "triage"
+                                          ? `${h.team_name || "NOC"} triage · ${h.target_minutes}m${h.priority_label ? ` · ${h.priority_label}` : ""}`
+                                          : `${h.policy_name || "Team SLA"}${h.team_name ? ` · ${h.team_name}` : ""}${h.priority_label ? ` · ${h.priority_label}` : ""}`}
+                                      </p>
+                                      {h.kind === "triage" ? (
+                                        <Row label="Routed" due={h.due_at} met={h.met_at} outcome={h.triage_outcome} />
+                                      ) : (
+                                        <>
+                                          <Row label="Response" due={h.response_due_at} met={h.response_met_at} outcome={h.response_outcome} />
+                                          <Row label="Resolution" due={h.resolve_due_at} met={h.resolve_met_at} outcome={h.resolve_outcome} />
+                                        </>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* SLA Timeline */}
                     <div className="rounded-xl bg-[var(--bg-base)] border border-[var(--border-default)] overflow-hidden">
@@ -2889,10 +3023,14 @@ export default function TicketDetail() {
               className="w-full px-3.5 py-2.5 rounded-xl text-sm resize-none bg-[var(--bg-base)] text-[var(--fg-primary)] placeholder:text-[var(--fg-muted)] border border-[var(--border-default)] focus:outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/20"
             />
           </div>
+          <div>
+            <p className="text-xs text-[var(--fg-muted)] mb-1.5">Screenshots, error messages or documents help the team (optional)</p>
+            <AttachmentPicker files={reopenFiles} onChange={setReopenFiles} disabled={reopening} />
+          </div>
           <div className="flex items-start gap-2.5 px-3.5 py-2.5 rounded-xl bg-blue-500/5 border border-blue-500/20">
             <Icon name="clock" size={15} className="text-blue-500 shrink-0 mt-0.5" />
             <p className="text-xs text-[var(--fg-secondary)]">
-              Your note is added to the conversation and sent to the team. The response and resolution times start again from now.
+              Your note is added to the conversation and sent to the team. A new set of response and resolution times starts now; the earlier ones stay on the record.
             </p>
           </div>
         </div>

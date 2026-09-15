@@ -44,3 +44,6 @@ star_vodafone_com_fj*
 
 # Corporate people exports contain names, emails and phones — never commit
 corporate-people-export*.json
+
+# Uploaded ticket attachments (can contain customer data)
+backend/uploads/

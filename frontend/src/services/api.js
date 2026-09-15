@@ -58,6 +58,44 @@ export async function api(path, { method = "GET", body, auth = true } = {}) {
   return data;
 }
 
+/**
+ * Multipart POST (file uploads). `fields` are plain values (objects/arrays are
+ * JSON-encoded); `files` go under the "files" field. The browser sets the
+ * multipart boundary, so no Content-Type header here.
+ */
+export async function apiUpload(path, { fields = {}, files = [] } = {}) {
+  const form = new FormData();
+  for (const [k, v] of Object.entries(fields)) {
+    if (v === undefined || v === null) continue;
+    form.append(k, typeof v === "object" ? JSON.stringify(v) : String(v));
+  }
+  for (const f of files) form.append("files", f, f.name);
+  const token = localStorage.getItem("token");
+  const response = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    headers: { "X-Workspace": currentWorkspace(), ...(token && { Authorization: `Bearer ${token}` }) },
+    body: form,
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || (response.status === 413 ? "Those files are too large to upload together." : `HTTP ${response.status}`));
+  }
+  return data;
+}
+
+/** Authenticated GET returning a Blob (attachment previews and downloads). */
+export async function apiBlob(path) {
+  const token = localStorage.getItem("token");
+  const response = await fetch(`${API_URL}${path}`, {
+    headers: { "X-Workspace": currentWorkspace(), ...(token && { Authorization: `Bearer ${token}` }) },
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || `HTTP ${response.status}`);
+  }
+  return response.blob();
+}
+
 export function clearToken() {
   localStorage.removeItem("token");
 }

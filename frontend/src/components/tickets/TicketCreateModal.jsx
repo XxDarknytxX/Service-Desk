@@ -10,7 +10,8 @@
  */
 
 import { useEffect, useMemo, useState, useRef } from "react";
-import { api, templatesApi, formsApi } from "../../services/api";
+import { api, apiUpload, templatesApi, formsApi } from "../../services/api";
+import { AttachmentPicker } from "./Attachments";
 import { useToast } from "../../contexts/toast";
 import { useWorkspace } from "../../contexts/workspace";
 import Button from "../ui/Button";
@@ -104,6 +105,8 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
   const [loading, setLoading] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
   const [resumingDraftId, setResumingDraftId] = useState(null);
+  // Files to attach to the request once it's created.
+  const [files, setFiles] = useState([]);
   const [teamMembers, setTeamMembers] = useState([]);
   const [loadingMembers, setLoadingMembers] = useState(false);
 
@@ -171,6 +174,7 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
     if (open) {
       setLoading(false);
       setSavingDraft(false);
+      setFiles([]);
       setTeamMembers([]);
       setSelectedTemplate(null);
       setTemplateValues({});
@@ -362,6 +366,7 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
       const data = resumingDraftId
         ? await api(`/tickets/${resumingDraftId}/submit`, { method: "POST", body: payload })
         : await api("/tickets", { method: "POST", body: payload });
+      await attachFiles(resumingDraftId || data.id);
       if (data.requiresApproval) {
         toast.info(resumingDraftId ? "Request submitted for approval" : "Ticket created and sent for approval");
       } else {
@@ -373,6 +378,17 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
       toast.error(err.message || "Failed to create ticket");
     } finally {
       setLoading(false);
+    }
+  }
+
+  // Upload the chosen files onto a just-created (or draft) request. The request
+  // already exists by now, so a failed upload is reported but doesn't undo it.
+  async function attachFiles(ticketId) {
+    if (!files.length || !ticketId) return;
+    try {
+      await apiUpload(`/tickets/${ticketId}/attachments`, { files });
+    } catch (err) {
+      toast.warning(`Your request was saved, but the files couldn't be attached: ${err.message} You can add them from the request.`, 9000);
     }
   }
 
@@ -404,9 +420,11 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
       const payload = buildPayload();
       if (resumingDraftId) {
         await api(`/tickets/${resumingDraftId}/submit?draftOnly=1`, { method: "POST", body: payload });
+        await attachFiles(resumingDraftId);
       } else {
         payload.statusKey = "draft";
-        await api("/tickets", { method: "POST", body: payload });
+        const draft = await api("/tickets", { method: "POST", body: payload });
+        await attachFiles(draft.id);
       }
       toast.success("Saved as draft");
       onCreated?.();
@@ -1100,6 +1118,11 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
           onChange={(e) => updateField("description", e.target.value)}
           placeholder="Describe the issue or request, the impact, and any reference numbers"
         />
+        <div>
+          <p className="block text-sm font-medium text-[var(--fg-primary)] mb-1.5">Attachments <span className="font-normal text-[var(--fg-muted)]">(optional)</span></p>
+          <p className="text-xs text-[var(--fg-muted)] mb-2">Screenshots, error messages, documents or spreadsheets that explain the issue.</p>
+          <AttachmentPicker files={files} onChange={setFiles} disabled={loading || savingDraft} />
+        </div>
         <Banner tone="muted" icon="info">
           Your request goes straight to the responsible team's queue and is tracked end-to-end — you'll be notified as it progresses.
         </Banner>
@@ -1129,6 +1152,8 @@ export default function TicketCreateModal({ open, onClose, meta, user, onCreated
             onChange={(e) => updateField("description", e.target.value)}
             placeholder="Provide context, impact, and desired outcome"
           />
+
+          <AttachmentPicker files={files} onChange={setFiles} disabled={loading || savingDraft} />
 
           {/* Create on behalf — agents/admins only */}
           {renderOnBehalfSection()}
