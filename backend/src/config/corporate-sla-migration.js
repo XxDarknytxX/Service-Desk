@@ -5,7 +5,8 @@
  *       Delivery (response / resolution) policies were shared by both apps, so a
  *       corporate request simply got the internal desk's default. Now a ticket
  *       only matches policies of its own app, managed from Corporate → SLA
- *       Settings and the internal SLA Policies page respectively.
+ *       Settings (a default SLA + an optional SLA per delivery team) and the
+ *       internal SLA Policies page respectively.
  *
  *   sla_policies.archived_at
  *       A policy that tickets already used can't be deleted (ticket_slas keeps a
@@ -124,14 +125,14 @@ async function migrate() {
             ORDER BY id LIMIT 1`,
           [pr.id]
         );
-        await insert(`Corporate · ${pr.label}`, pr.id, match || base, false);
+        await insert(`Corporate default · ${pr.label}`, pr.id, match || base, false);
       }
       // Fallback for a request without a priority: the Normal targets.
       const normal = priorities.find((p) => p.key === "normal");
       const [[normalRow]] = normal
         ? await conn.query(`SELECT ${fields} FROM sla_policies WHERE workspace = 'corporate' AND applies_to_priority_id = ? LIMIT 1`, [normal.id])
         : [[null]];
-      await insert("Corporate · Default", null, normalRow || base, true);
+      await insert("Corporate default", null, normalRow || base, true);
       console.log(`  + corporate delivery SLAs seeded for ${priorities.length} priorities (copied from current behaviour)`);
     }
 

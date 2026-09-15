@@ -1,20 +1,23 @@
 // src/controllers/corporateSlaController.js
 //
-// Corporate → SLA Settings: every clock a corporate request runs on, in one
-// place.
+// Corporate → SLA Settings: every clock a corporate request runs on.
 //
-//   Delivery      first response + resolution targets per priority (and an
-//                 optional at-risk warning), with optional per-team overrides.
-//                 Stored as corporate sla_policies rows. Runs on 24/7 time or a
-//                 business-hours schedule.
-//   NOC triage    time to route a request out of the triage queue, per priority
+//   Default SLA     first response + resolution (+ optional at-risk warning) per
+//                   priority, for any delivery team without its own SLA
+//   Team SLAs       each delivery team can have its own SLA — the same targets
+//                   per priority, on 24/7 time or a business-hours schedule
+//   NOC triage      NOC's own SLA: time to set the urgency of a "Not sure"
+//                   request and route it to a team, per priority
 //   Manager review  time each escalation layer has to act, per priority
-//                 (both in sla_clock_targets)
 //
-// Changes apply to clocks that start after saving; running clocks keep their
-// due times.
+// Storage: the default and team SLAs are corporate sla_policies rows (team NULL
+// = default; team + priority = that team's SLA), matched by assignSla in the
+// ticket controller. Triage and manager review are sla_clock_targets rows.
+//
+// NOC sets the urgency during triage; the routed team's SLA for that urgency
+// starts when NOC routes the request. Changes apply to clocks that start after
+// saving; running clocks keep their due times.
 import { CLOCKS } from "../services/slaTargets.js";
-import { isLayerRole } from "../utils/corporateRoles.js";
 
 const MAX_MINUTES = 365 * 24 * 60;
 const isAdmin = (req) => (req.user.roles || []).includes("admin");
@@ -34,20 +37,25 @@ function targets(row, label) {
   const response = minutes(row.response_minutes, `${label}: first response`);
   const resolve = minutes(row.resolve_minutes, `${label}: resolution`);
   if (response > resolve) throw new Invalid(`${label}: first response can't be longer than resolution.`);
-  const warn = row.notify_at_risk_minutes === null || row.notify_at_risk_minutes === "" || row.notify_at_risk_minutes === undefined
-    ? null
-    : minutes(row.notify_at_risk_minutes, `${label}: at-risk warning`, { allowZero: true });
+  const empty = row.notify_at_risk_minutes === null || row.notify_at_risk_minutes === "" || row.notify_at_risk_minutes === undefined;
+  const warn = empty ? null : minutes(row.notify_at_risk_minutes, `${label}: at-risk warning`, { allowZero: true });
   if (warn !== null && warn >= resolve) throw new Invalid(`${label}: the at-risk warning must be shorter than the resolution time.`);
   return { response, resolve, warn };
 }
 
-async function loadTeams(pool) {
-  const [teams] = await pool.query(
-    "SELECT id, name, corporate_role FROM teams WHERE workspace = 'corporate' ORDER BY name"
+/** Teams whose requests run on a delivery SLA: the corporate delivery queues. */
+async function deliveryTeams(db) {
+  const [teams] = await db.query(
+    "SELECT id, name FROM teams WHERE workspace = 'corporate' AND corporate_role = 'queue' ORDER BY name"
   );
-  // Hierarchy teams (business / executive) never hold tickets, so no SLA.
-  return teams.filter((t) => !isLayerRole(t.corporate_role));
+  return teams;
 }
+
+const toTargets = (p) => ({
+  response_minutes: p?.response_minutes ?? null,
+  resolve_minutes: p?.resolve_minutes ?? null,
+  notify_at_risk_minutes: p?.notify_at_risk_minutes ?? null,
+});
 
 export function makeCorporateSlaController(pool) {
   return {
@@ -56,21 +64,20 @@ export function makeCorporateSlaController(pool) {
       try {
         const [priorities] = await pool.query("SELECT id, `key`, label FROM ticket_priorities ORDER BY id");
         const [policies] = await pool.query(
-          `SELECT sp.id, sp.name, sp.response_minutes, sp.resolve_minutes, sp.notify_at_risk_minutes,
-                  sp.applies_to_priority_id, sp.applies_to_team_id, sp.is_default,
-                  sp.use_business_hours, sp.business_hours_id, sp.updated_at, t.name AS team_name
-             FROM sla_policies sp LEFT JOIN teams t ON t.id = sp.applies_to_team_id
-            WHERE sp.workspace = 'corporate' AND sp.policy_type = 'team' AND sp.archived_at IS NULL
-            ORDER BY t.name, sp.applies_to_priority_id`
+          `SELECT id, response_minutes, resolve_minutes, notify_at_risk_minutes, applies_to_priority_id,
+                  applies_to_team_id, is_default, use_business_hours, business_hours_id, updated_at
+             FROM sla_policies
+            WHERE workspace = 'corporate' AND policy_type = 'team' AND archived_at IS NULL`
         );
         const [clockRows] = await pool.query("SELECT clock, priority_id, minutes, updated_at FROM sla_clock_targets");
         const [businessHours] = await pool.query("SELECT id, name, timezone, is_default FROM business_hours ORDER BY is_default DESC, name");
+        const [[triageTeam]] = await pool.query("SELECT id, name FROM teams WHERE corporate_role = 'triage' ORDER BY id LIMIT 1");
+        const teams = await deliveryTeams(pool);
 
-        const base = policies.filter((p) => !p.applies_to_team_id);
-        const byPriority = (pid) => base.find((p) => p.applies_to_priority_id === pid);
-        const fallback = base.find((p) => p.is_default) || base[0];
+        const defaults = policies.filter((p) => !p.applies_to_team_id);
+        const fallback = defaults.find((p) => p.is_default) || defaults[0];
+        const defaultFor = (pid) => defaults.find((p) => p.applies_to_priority_id === pid) || fallback;
         const clockOf = (clock, pid) => clockRows.find((r) => r.clock === clock && r.priority_id === pid)?.minutes ?? null;
-        const clockSource = fallback || policies[0];
 
         const lastChanged = [...policies.map((p) => p.updated_at), ...clockRows.map((r) => r.updated_at)]
           .filter(Boolean).sort((a, b) => new Date(b) - new Date(a))[0] || null;
@@ -79,32 +86,28 @@ export function makeCorporateSlaController(pool) {
           can_edit: isAdmin(req),
           priorities,
           business_hours: businessHours,
-          teams: await loadTeams(pool),
+          triage_team: triageTeam || null,
           last_changed_at: lastChanged,
-          delivery: {
-            use_business_hours: !!clockSource?.use_business_hours,
-            business_hours_id: clockSource?.business_hours_id || null,
-            priorities: priorities.map((pr) => {
-              const p = byPriority(pr.id) || fallback;
-              return {
-                priority_id: pr.id,
-                response_minutes: p?.response_minutes ?? null,
-                resolve_minutes: p?.resolve_minutes ?? null,
-                notify_at_risk_minutes: p?.notify_at_risk_minutes ?? null,
-              };
-            }),
-            overrides: policies
-              .filter((p) => p.applies_to_team_id)
-              .map((p) => ({
-                id: p.id,
-                team_id: p.applies_to_team_id,
-                team_name: p.team_name,
-                priority_id: p.applies_to_priority_id,
-                response_minutes: p.response_minutes,
-                resolve_minutes: p.resolve_minutes,
-                notify_at_risk_minutes: p.notify_at_risk_minutes,
-              })),
+          default: {
+            use_business_hours: !!fallback?.use_business_hours,
+            business_hours_id: fallback?.business_hours_id || null,
+            priorities: priorities.map((pr) => ({ priority_id: pr.id, ...toTargets(defaultFor(pr.id)) })),
           },
+          teams: teams.map((t) => {
+            const own = policies.filter((p) => p.applies_to_team_id === t.id);
+            // A team row for one priority, or for "any priority", both count.
+            const forPriority = (pid) =>
+              own.find((p) => p.applies_to_priority_id === pid) || own.find((p) => !p.applies_to_priority_id) || defaultFor(pid);
+            const clockSource = own[0] || fallback;
+            return {
+              team_id: t.id,
+              name: t.name,
+              custom: own.length > 0,
+              use_business_hours: !!clockSource?.use_business_hours,
+              business_hours_id: clockSource?.business_hours_id || null,
+              priorities: priorities.map((pr) => ({ priority_id: pr.id, ...toTargets(forPriority(pr.id)) })),
+            };
+          }),
           triage: priorities.map((pr) => ({ priority_id: pr.id, minutes: clockOf("triage", pr.id) })),
           manager_review: priorities.map((pr) => ({ priority_id: pr.id, minutes: clockOf("manager_review", pr.id) })),
         });
@@ -122,70 +125,66 @@ export function makeCorporateSlaController(pool) {
       try {
         const [priorities] = await conn.query("SELECT id, `key`, label FROM ticket_priorities ORDER BY id");
         const labelOf = new Map(priorities.map((p) => [p.id, p.label]));
-        const teams = await loadTeams(conn);
+        const teams = await deliveryTeams(conn);
         const teamName = new Map(teams.map((t) => [t.id, t.name]));
+        const [bhRows] = await conn.query("SELECT id FROM business_hours");
+        const bhIds = new Set(bhRows.map((b) => b.id));
 
         // ── Validate everything before writing anything ────────────────────
-        const delivery = body.delivery || {};
-        const useBh = !!delivery.use_business_hours;
-        let bhId = null;
-        if (useBh) {
-          const [[bh]] = await conn.query("SELECT id FROM business_hours WHERE id = ?", [Number(delivery.business_hours_id) || 0]);
-          if (!bh) throw new Invalid("Choose the business-hours schedule the delivery SLA should follow.");
-          bhId = bh.id;
-        }
+        const parseSla = (sla, name) => {
+          if (!sla) throw new Invalid(`${name} is missing.`);
+          const useBh = !!sla.use_business_hours;
+          const bhId = useBh ? Number(sla.business_hours_id) : null;
+          if (useBh && !bhIds.has(bhId)) throw new Invalid(`${name}: choose the business-hours schedule it should follow.`);
+          const rows = new Map();
+          for (const row of sla.priorities || []) {
+            const pid = Number(row.priority_id);
+            if (!labelOf.has(pid)) throw new Invalid(`${name}: unknown priority.`);
+            rows.set(pid, targets(row, `${name} · ${labelOf.get(pid)}`));
+          }
+          const missing = priorities.filter((p) => !rows.has(p.id));
+          if (missing.length) throw new Invalid(`${name}: set targets for ${missing.map((p) => p.label).join(", ")}.`);
+          return { useBh, bhId, rows };
+        };
 
-        const base = new Map();
-        for (const row of delivery.priorities || []) {
-          const pid = Number(row.priority_id);
-          if (!labelOf.has(pid)) throw new Invalid("Unknown priority in delivery targets.");
-          base.set(pid, targets(row, labelOf.get(pid)));
-        }
-        const missing = priorities.filter((p) => !base.has(p.id));
-        if (missing.length) throw new Invalid(`Set delivery targets for ${missing.map((p) => p.label).join(", ")}.`);
+        const defaultSla = parseSla(body.default, "Default SLA");
 
-        const overrides = [];
-        const seen = new Set();
-        for (const row of delivery.overrides || []) {
-          const teamId = Number(row.team_id);
-          const pid = row.priority_id ? Number(row.priority_id) : null;
-          if (!teamName.has(teamId)) throw new Invalid("Team overrides must use a corporate delivery team.");
-          if (pid !== null && !labelOf.has(pid)) throw new Invalid("Unknown priority in a team override.");
-          const key = `${teamId}:${pid ?? "any"}`;
-          const label = `${teamName.get(teamId)} · ${pid ? labelOf.get(pid) : "any priority"}`;
-          if (seen.has(key)) throw new Invalid(`${label} is set twice.`);
-          seen.add(key);
-          overrides.push({ id: row.id ? Number(row.id) : null, teamId, pid, label, ...targets(row, label) });
+        const teamSlas = new Map();
+        for (const t of body.teams || []) {
+          const teamId = Number(t.team_id);
+          if (!teamName.has(teamId)) throw new Invalid("Team SLAs can only be set for corporate delivery teams.");
+          if (teamSlas.has(teamId)) throw new Invalid(`${teamName.get(teamId)} appears twice.`);
+          teamSlas.set(teamId, t.custom ? parseSla(t, `${teamName.get(teamId)} SLA`) : null);
         }
 
         const clocks = {};
         for (const clock of CLOCKS) {
-          const name = clock === "triage" ? "NOC triage" : "Manager review";
+          const name = clock === "triage" ? "NOC triage SLA" : "Manager review";
           clocks[clock] = new Map();
           for (const row of body[clock] || []) {
             const pid = Number(row.priority_id);
-            if (!labelOf.has(pid)) throw new Invalid(`Unknown priority in ${name}.`);
-            clocks[clock].set(pid, minutes(row.minutes, `${name}: ${labelOf.get(pid)}`));
+            if (!labelOf.has(pid)) throw new Invalid(`${name}: unknown priority.`);
+            clocks[clock].set(pid, minutes(row.minutes, `${name} · ${labelOf.get(pid)}`));
           }
           const gaps = priorities.filter((p) => !clocks[clock].has(p.id));
-          if (gaps.length) throw new Invalid(`Set ${name} targets for ${gaps.map((p) => p.label).join(", ")}.`);
+          if (gaps.length) throw new Invalid(`${name}: set targets for ${gaps.map((p) => p.label).join(", ")}.`);
         }
 
         // ── Write ─────────────────────────────────────────────────────────
         await conn.beginTransaction();
         const [existing] = await conn.query(
-          `SELECT id, applies_to_priority_id, applies_to_team_id, is_default FROM sla_policies
+          `SELECT id, applies_to_priority_id, applies_to_team_id FROM sla_policies
             WHERE workspace = 'corporate' AND policy_type = 'team' AND archived_at IS NULL`
         );
 
-        const upsert = async (current, { name, pid, teamId, response, resolve, warn, isDefault }) => {
-          const values = [name, response, resolve, warn, useBh ? 1 : 0, bhId];
+        const upsert = async (current, { name, pid, teamId, isDefault, sla, t }) => {
+          const values = [name, t.response, t.resolve, t.warn, sla.useBh ? 1 : 0, sla.bhId];
           if (current) {
             await conn.query(
               `UPDATE sla_policies SET name = ?, response_minutes = ?, resolve_minutes = ?, notify_at_risk_minutes = ?,
-                      use_business_hours = ?, business_hours_id = ?, applies_to_priority_id = ?, applies_to_team_id = ?, is_default = ?
+                      use_business_hours = ?, business_hours_id = ?, is_default = ?
                 WHERE id = ?`,
-              [...values, pid, teamId, isDefault ? 1 : 0, current.id]
+              [...values, isDefault ? 1 : 0, current.id]
             );
             return current.id;
           }
@@ -194,30 +193,43 @@ export function makeCorporateSlaController(pool) {
                (policy_type, workspace, name, description, response_minutes, resolve_minutes, notify_at_risk_minutes,
                 use_business_hours, business_hours_id, applies_to_priority_id, applies_to_team_id, is_default)
              VALUES ('team', 'corporate', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [name, DESCRIPTION, response, resolve, warn, useBh ? 1 : 0, bhId, pid, teamId, isDefault ? 1 : 0]
+            [name, DESCRIPTION, t.response, t.resolve, t.warn, sla.useBh ? 1 : 0, sla.bhId, pid, teamId, isDefault ? 1 : 0]
           );
           return ins.insertId;
         };
+        const find = (teamId, pid) =>
+          existing.find((e) => (e.applies_to_team_id ?? null) === teamId && (e.applies_to_priority_id ?? null) === pid);
 
         const kept = new Set();
+        // Default SLA: one row per priority, plus the catch-all default row
+        // (a request without a priority) which follows Normal.
         for (const pr of priorities) {
-          const current = existing.find((e) => !e.applies_to_team_id && e.applies_to_priority_id === pr.id);
-          kept.add(await upsert(current, { name: `Corporate · ${pr.label}`, pid: pr.id, teamId: null, ...base.get(pr.id), isDefault: false }));
+          kept.add(await upsert(find(null, pr.id), {
+            name: `Corporate default · ${pr.label}`, pid: pr.id, teamId: null, isDefault: false, sla: defaultSla, t: defaultSla.rows.get(pr.id),
+          }));
         }
-        // Default (a request without a priority) follows Normal.
         const normal = priorities.find((p) => p.key === "normal") || priorities[0];
-        const currentDefault = existing.find((e) => !e.applies_to_team_id && !e.applies_to_priority_id);
-        kept.add(await upsert(currentDefault, { name: "Corporate · Default", pid: null, teamId: null, ...base.get(normal.id), isDefault: true }));
+        kept.add(await upsert(find(null, null), {
+          name: "Corporate default", pid: null, teamId: null, isDefault: true, sla: defaultSla, t: defaultSla.rows.get(normal.id),
+        }));
 
-        for (const o of overrides) {
-          const current = (o.id && existing.find((e) => e.id === o.id && e.applies_to_team_id))
-            || existing.find((e) => e.applies_to_team_id === o.teamId && (e.applies_to_priority_id ?? null) === o.pid && !kept.has(e.id));
-          kept.add(await upsert(current, { name: `Corporate · ${o.label}`, pid: o.pid, teamId: o.teamId, ...o, isDefault: false }));
+        // Team SLAs: a custom team gets a row per priority; a team set back to
+        // the default loses its rows. Teams not in the request are left alone.
+        for (const [teamId, sla] of teamSlas) {
+          if (!sla) continue;
+          for (const pr of priorities) {
+            kept.add(await upsert(find(teamId, pr.id), {
+              name: `Corporate · ${teamName.get(teamId)} · ${pr.label}`, pid: pr.id, teamId, isDefault: false, sla, t: sla.rows.get(pr.id),
+            }));
+          }
         }
+        const removable = existing.filter(
+          (e) => !kept.has(e.id) && (e.applies_to_team_id === null || teamSlas.has(e.applies_to_team_id))
+        );
 
-        // Overrides that were removed: delete, or archive if tickets used them.
+        // Removed rows: delete, or archive if tickets already ran on them.
         let archived = 0;
-        for (const e of existing.filter((x) => !kept.has(x.id))) {
+        for (const e of removable) {
           const [[used]] = await conn.query("SELECT 1 AS yes FROM ticket_slas WHERE policy_id = ? LIMIT 1", [e.id]);
           if (used) {
             await conn.query("UPDATE sla_policies SET archived_at = NOW(), is_default = 0 WHERE id = ?", [e.id]);

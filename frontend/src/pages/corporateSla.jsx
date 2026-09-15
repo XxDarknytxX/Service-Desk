@@ -1,17 +1,20 @@
 /**
  * SLA Settings — Corporate Service Desk
  *
- * Every clock a corporate request runs on, set per priority:
+ * Every clock a corporate request runs on:
  *
- *   Delivery        first response + resolution for the delivery team holding
- *                   the request (with an optional at-risk warning), 24/7 or on a
- *                   business-hours schedule, plus optional per-team overrides
- *   NOC triage      time for NOC to route a "Not sure" request to a team
+ *   Default SLA     first response + resolution per priority, for any delivery
+ *                   team without its own SLA
+ *   Team SLAs       each delivery team can have its own SLA (per priority, 24/7
+ *                   or on a business-hours schedule)
+ *   NOC triage SLA  NOC's own clock: set the urgency of a "Not sure" request and
+ *                   route it to a team, per priority
  *   Manager review  time each escalation layer (L1, L2, …) has to act
  *
+ * NOC sets the urgency during triage (ticket sidebar); that re-targets the triage
+ * clock, and the routed team's SLA for that urgency starts when it's routed.
  * The internal desk keeps its own policies on the internal SLA Policies page.
- * Saving applies to clocks that start afterwards; running clocks keep their
- * due times. Admins edit; other corporate staff can read.
+ * Saving applies to clocks that start afterwards. Admins edit; staff can read.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -45,12 +48,22 @@ function unitFor(minutes) {
   return "min";
 }
 
+/** "1h 30m", "2d", "45m" */
+function formatMinutes(m) {
+  if (!m) return "—";
+  const d = Math.floor(m / 1440);
+  const h = Math.floor((m % 1440) / 60);
+  const mins = m % 60;
+  return [d && `${d}d`, h && `${h}h`, mins && `${mins}m`].filter(Boolean).join(" ");
+}
+
 /** Number + unit, stored as whole minutes. `null` value = empty. */
 function DurationInput({ value, onChange, disabled, allowEmpty = false, invalid, label }) {
   const [unit, setUnit] = useState(() => unitFor(value));
   const [text, setText] = useState(() => (value === null || value === undefined ? "" : String(value / UNITS.find((u) => u.key === unitFor(value)).factor)));
 
-  // Follow outside changes (load / discard) without fighting the user's typing.
+  // Follow outside changes (load / discard / copy from default) without
+  // fighting the user's typing.
   useEffect(() => {
     const factor = UNITS.find((u) => u.key === unit).factor;
     // An emptied required field reports 0 — don't snap "0" back in while typing.
@@ -106,15 +119,21 @@ function DurationInput({ value, onChange, disabled, allowEmpty = false, invalid,
 /** Client-side mirror of the server's checks; returns { field: message }. */
 function targetProblems(t) {
   const out = {};
-  if (!t.response_minutes) out.response = "Set a first response time";
-  if (!t.resolve_minutes) out.resolve = "Set a resolution time";
+  if (!t.response_minutes) out.response_minutes = "Set a first response time";
+  if (!t.resolve_minutes) out.resolve_minutes = "Set a resolution time";
   if (t.response_minutes && t.resolve_minutes && t.response_minutes > t.resolve_minutes) {
-    out.response = "Longer than resolution";
+    out.response_minutes = "Longer than resolution";
   }
   if (t.notify_at_risk_minutes !== null && t.notify_at_risk_minutes !== undefined && t.resolve_minutes && t.notify_at_risk_minutes >= t.resolve_minutes) {
-    out.warn = "Must be shorter than resolution";
+    out.notify_at_risk_minutes = "Must be shorter than resolution";
   }
   return out;
+}
+
+function slaProblems(sla) {
+  const rows = sla.priorities.map(targetProblems);
+  const clock = sla.use_business_hours && !sla.business_hours_id ? "Choose a schedule" : null;
+  return { rows, clock, any: !!clock || rows.some((r) => Object.keys(r).length) };
 }
 
 function Section({ icon, tone, title, description, children, aside }) {
@@ -124,7 +143,7 @@ function Section({ icon, tone, title, description, children, aside }) {
         <span className={cn("h-9 w-9 rounded-xl flex items-center justify-center shrink-0", tone)}>
           <Icon name={icon} size={17} />
         </span>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-[14rem] flex-1">
           <h2 className="text-[15px] font-semibold text-[var(--fg-primary)]">{title}</h2>
           <p className="text-xs text-[var(--fg-tertiary)] mt-0.5 max-w-2xl">{description}</p>
         </div>
@@ -144,12 +163,111 @@ function FieldError({ children }) {
   return <p className="mt-1 text-[11px] text-rose-500">{children}</p>;
 }
 
+function Segmented({ options, value, onChange, disabled, size = "md" }) {
+  return (
+    <div className="inline-flex p-1 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-default)]">
+      {options.map((o) => (
+        <button
+          key={String(o.value)}
+          type="button"
+          disabled={disabled}
+          aria-pressed={value === o.value}
+          onClick={() => onChange(o.value)}
+          className={cn(
+            "rounded-md font-medium transition-all disabled:cursor-not-allowed whitespace-nowrap",
+            size === "sm" ? "px-2.5 py-1 text-[11px]" : "px-3 py-1.5 text-xs",
+            value === o.value ? "bg-[var(--accent)] text-white" : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
+          )}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** 24/7 vs business hours (+ schedule) for one SLA. */
+function ClockPicker({ sla, onChange, businessHours, disabled, error }) {
+  return (
+    <div className="flex flex-col sm:items-end gap-2">
+      <Segmented
+        disabled={disabled}
+        value={!!sla.use_business_hours}
+        onChange={(v) => onChange({ use_business_hours: v, business_hours_id: v ? sla.business_hours_id || businessHours[0]?.id || null : sla.business_hours_id })}
+        options={[{ value: false, label: "24/7" }, { value: true, label: "Business hours" }]}
+      />
+      {sla.use_business_hours && (
+        businessHours.length ? (
+          <div className="sm:w-60">
+            <Select
+              size="sm"
+              disabled={disabled}
+              value={sla.business_hours_id || ""}
+              onChange={(e) => onChange({ business_hours_id: Number(e.target.value) || null })}
+            >
+              {businessHours.map((b) => (
+                <option key={b.id} value={b.id}>{b.name}{b.timezone ? ` (${b.timezone})` : ""}</option>
+              ))}
+            </Select>
+          </div>
+        ) : (
+          <p className="text-xs text-rose-500">{error || "No business-hours schedule exists yet."}</p>
+        )
+      )}
+    </div>
+  );
+}
+
+const TARGET_FIELDS = [
+  ["response_minutes", "First response", false],
+  ["resolve_minutes", "Resolution", false],
+  ["notify_at_risk_minutes", "At-risk warning", true],
+];
+
+/** Priority × (first response, resolution, at-risk warning). */
+function TargetsMatrix({ rows, problems, onChange, disabled, priorityById, labelPrefix }) {
+  return (
+    <div>
+      <div className="hidden md:grid grid-cols-[150px_repeat(3,minmax(0,1fr))] gap-3 px-1 pb-2 text-label">
+        <span>Priority</span>
+        <span>First response</span>
+        <span>Resolution</span>
+        <span>At-risk warning <span className="normal-case font-normal text-[var(--fg-muted)]">(before due)</span></span>
+      </div>
+      <div className="space-y-2">
+        {rows.map((row, i) => {
+          const pr = priorityById.get(row.priority_id);
+          return (
+            <div key={row.priority_id} className="grid grid-cols-1 md:grid-cols-[150px_repeat(3,minmax(0,1fr))] gap-3 items-start rounded-xl md:rounded-none border md:border-0 border-[var(--border-default)] p-3 md:p-1">
+              <div className="md:pt-2"><PriorityLabel priority={pr} /></div>
+              {TARGET_FIELDS.map(([field, label, allowEmpty]) => (
+                <div key={field}>
+                  <span className="md:hidden block text-[11px] text-[var(--fg-muted)] mb-1">{label}</span>
+                  <DurationInput
+                    label={`${labelPrefix} ${pr?.label} ${label}`}
+                    value={row[field]}
+                    allowEmpty={allowEmpty}
+                    disabled={disabled}
+                    invalid={!!problems[i]?.[field]}
+                    onChange={(v) => onChange(i, field, v)}
+                  />
+                  <FieldError>{problems[i]?.[field]}</FieldError>
+                </div>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function CorporateSla() {
   const toast = useToast();
   const { confirm, confirmDialog } = useConfirm();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [meta, setMeta] = useState(null); // priorities, teams, business_hours, can_edit
+  const [meta, setMeta] = useState(null);
   const [saved, setSaved] = useState(null); // last loaded settings (for dirty / discard)
   const [draft, setDraft] = useState(null);
 
@@ -157,12 +275,14 @@ export default function CorporateSla() {
     setLoading(true);
     try {
       const d = await api("/corporate/sla-settings");
-      const settings = {
-        delivery: d.delivery,
-        triage: d.triage,
-        manager_review: d.manager_review,
-      };
-      setMeta({ priorities: d.priorities, teams: d.teams, business_hours: d.business_hours, can_edit: d.can_edit, last_changed_at: d.last_changed_at });
+      const settings = { default: d.default, teams: d.teams, triage: d.triage, manager_review: d.manager_review };
+      setMeta({
+        priorities: d.priorities,
+        business_hours: d.business_hours,
+        triage_team: d.triage_team,
+        can_edit: d.can_edit,
+        last_changed_at: d.last_changed_at,
+      });
       setSaved(settings);
       setDraft(structuredClone(settings));
     } catch (err) {
@@ -180,6 +300,7 @@ export default function CorporateSla() {
   const priorityById = useMemo(() => new Map((meta?.priorities || []).map((p) => [p.id, p])), [meta]);
   const dirty = useMemo(() => !!draft && JSON.stringify(draft) !== JSON.stringify(saved), [draft, saved]);
   const canEdit = !!meta?.can_edit;
+  const businessHours = meta?.business_hours || [];
 
   // Warn before leaving with unsaved changes.
   useEffect(() => {
@@ -189,29 +310,18 @@ export default function CorporateSla() {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [dirty]);
 
-  const deliveryProblems = useMemo(
-    () => (draft?.delivery.priorities || []).map(targetProblems),
-    [draft]
-  );
-  const overrideProblems = useMemo(() => {
-    const seen = new Map();
-    return (draft?.delivery.overrides || []).map((o) => {
-      const p = targetProblems(o);
-      if (!o.team_id) p.team = "Choose a team";
-      const key = `${o.team_id}:${o.priority_id || "any"}`;
-      if (o.team_id && seen.has(key)) p.team = "Already set above";
-      seen.set(key, true);
-      return p;
-    });
+  const problems = useMemo(() => {
+    if (!draft) return null;
+    const def = slaProblems(draft.default);
+    const teams = draft.teams.map((t) => (t.custom ? slaProblems(t) : { rows: [], clock: null, any: false }));
+    const clock = (key) => draft[key].map((r) => (!r.minutes ? "Set a time" : null));
+    const triage = clock("triage");
+    const review = clock("manager_review");
+    return {
+      default: def, teams, triage, manager_review: review,
+      any: def.any || teams.some((t) => t.any) || triage.some(Boolean) || review.some(Boolean),
+    };
   }, [draft]);
-  const clockProblems = (clock) => (draft?.[clock] || []).map((r) => (!r.minutes ? "Set a time" : null));
-  const hasProblems = !!draft && (
-    deliveryProblems.some((p) => Object.keys(p).length)
-    || overrideProblems.some((p) => Object.keys(p).length)
-    || clockProblems("triage").some(Boolean)
-    || clockProblems("manager_review").some(Boolean)
-    || (draft.delivery.use_business_hours && !draft.delivery.business_hours_id)
-  );
 
   function update(mutator) {
     setDraft((d) => {
@@ -222,11 +332,11 @@ export default function CorporateSla() {
   }
 
   async function save() {
-    if (hasProblems) return toast.error("Fix the highlighted targets first");
+    if (problems?.any) return toast.error("Fix the highlighted targets first");
     setSaving(true);
     try {
       const r = await api("/corporate/sla-settings", { method: "PUT", body: draft });
-      toast.success(r.archived ? "SLA settings saved — removed overrides already used by requests were archived" : "SLA settings saved");
+      toast.success(r.archived ? "SLA settings saved. Removed targets that requests already used were archived." : "SLA settings saved");
       await load();
     } catch (err) {
       toast.error(err.message || "Couldn't save SLA settings");
@@ -244,21 +354,19 @@ export default function CorporateSla() {
     });
   }
 
-  const businessHours = meta?.business_hours || [];
+  const customCount = draft?.teams.filter((t) => t.custom).length || 0;
 
   return (
     <div className="space-y-5 pb-20">
       <PageHeader
         icon="sla"
         title="SLA Settings"
-        subtitle="Response, triage and escalation targets for corporate requests"
+        subtitle="Team, triage and escalation targets for corporate requests"
         actions={
           canEdit && (
-            <div className="flex items-center gap-2">
-              <Button onClick={save} loading={saving} disabled={!dirty || hasProblems} icon={<Icon name="check" size={16} />}>
-                Save changes
-              </Button>
-            </div>
+            <Button onClick={save} loading={saving} disabled={!dirty || problems?.any} icon={<Icon name="check" size={16} />}>
+              Save changes
+            </Button>
           )
         }
       />
@@ -276,215 +384,130 @@ export default function CorporateSla() {
 
       {loading || !draft ? (
         <div className="space-y-5">
-          <Skeleton className="h-80" rounded="rounded-2xl" />
-          <div className="grid lg:grid-cols-2 gap-5">
-            <Skeleton className="h-64" rounded="rounded-2xl" />
-            <Skeleton className="h-64" rounded="rounded-2xl" />
-          </div>
+          <Skeleton className="h-72" rounded="rounded-2xl" />
+          <Skeleton className="h-64" rounded="rounded-2xl" />
         </div>
       ) : (
         <>
-          {/* ── Delivery ─────────────────────────────────────────────────── */}
+          {/* ── Default SLA ──────────────────────────────────────────────── */}
           <Section
             icon="clock"
             tone="text-[var(--accent)] bg-[var(--accent)]/10"
-            title="Delivery SLA"
-            description="How quickly the delivery team holding a request must first respond and fully resolve it. The clock starts when the request lands in their queue (after NOC triage for “Not sure” requests)."
+            title="Default SLA"
+            description="Used by every delivery team that doesn't have its own SLA. The clock starts when a request lands in the team's queue, at the urgency NOC or the customer's category set."
             aside={
-              <div className="w-full sm:w-auto flex flex-col sm:items-end gap-2">
-                <div className="inline-flex p-1 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-default)]">
-                  {[
-                    { key: false, label: "24/7" },
-                    { key: true, label: "Business hours" },
-                  ].map((o) => (
-                    <button
-                      key={String(o.key)}
-                      type="button"
-                      disabled={!canEdit}
-                      onClick={() => update((d) => {
-                        d.delivery.use_business_hours = o.key;
-                        if (o.key && !d.delivery.business_hours_id) d.delivery.business_hours_id = businessHours[0]?.id || null;
-                      })}
-                      className={cn(
-                        "px-3 py-1.5 rounded-md text-xs font-medium transition-all disabled:cursor-not-allowed",
-                        draft.delivery.use_business_hours === o.key ? "bg-[var(--accent)] text-white" : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
-                      )}
-                    >
-                      {o.label}
-                    </button>
-                  ))}
-                </div>
-                {draft.delivery.use_business_hours && (
-                  businessHours.length ? (
-                    <Select
-                      size="sm"
-                      disabled={!canEdit}
-                      value={draft.delivery.business_hours_id || ""}
-                      onChange={(e) => update((d) => { d.delivery.business_hours_id = Number(e.target.value) || null; })}
-                      className="sm:w-60"
-                    >
-                      {businessHours.map((b) => (
-                        <option key={b.id} value={b.id}>{b.name}{b.timezone ? ` (${b.timezone})` : ""}</option>
-                      ))}
-                    </Select>
-                  ) : (
-                    <p className="text-xs text-rose-500">No business-hours schedule exists yet.</p>
-                  )
-                )}
-              </div>
+              <ClockPicker
+                sla={draft.default}
+                businessHours={businessHours}
+                disabled={!canEdit}
+                error={problems.default.clock}
+                onChange={(patch) => update((d) => Object.assign(d.default, patch))}
+              />
             }
           >
-            <div className="hidden md:grid grid-cols-[150px_repeat(3,minmax(0,1fr))] gap-3 px-1 pb-2 text-label">
-              <span>Priority</span>
-              <span>First response</span>
-              <span>Resolution</span>
-              <span>At-risk warning <span className="normal-case font-normal text-[var(--fg-muted)]">(before due)</span></span>
-            </div>
-            <div className="space-y-2">
-              {draft.delivery.priorities.map((row, i) => {
-                const pr = priorityById.get(row.priority_id);
-                const problems = deliveryProblems[i];
-                return (
-                  <div key={row.priority_id} className="grid grid-cols-1 md:grid-cols-[150px_repeat(3,minmax(0,1fr))] gap-3 items-start rounded-xl md:rounded-none border md:border-0 border-[var(--border-default)] p-3 md:p-1">
-                    <div className="md:pt-2"><PriorityLabel priority={pr} /></div>
-                    {[
-                      ["response_minutes", "First response", problems.response, false],
-                      ["resolve_minutes", "Resolution", problems.resolve, false],
-                      ["notify_at_risk_minutes", "At-risk warning", problems.warn, true],
-                    ].map(([field, label, error, allowEmpty]) => (
-                      <div key={field}>
-                        <span className="md:hidden block text-[11px] text-[var(--fg-muted)] mb-1">{label}</span>
-                        <DurationInput
-                          label={`${pr?.label} ${label}`}
-                          value={row[field]}
-                          allowEmpty={allowEmpty}
-                          disabled={!canEdit}
-                          invalid={!!error}
-                          onChange={(v) => update((d) => { d.delivery.priorities[i][field] = v; })}
-                        />
-                        <FieldError>{error}</FieldError>
-                      </div>
-                    ))}
-                  </div>
-                );
+            <TargetsMatrix
+              rows={draft.default.priorities}
+              problems={problems.default.rows}
+              priorityById={priorityById}
+              disabled={!canEdit}
+              labelPrefix="Default"
+              onChange={(i, field, v) => update((d) => {
+                d.default.priorities[i][field] = v;
+                // Teams following the default mirror it, so switching one to
+                // its own SLA starts from the current default.
+                d.teams.forEach((t) => { if (!t.custom) t.priorities[i][field] = v; });
               })}
-            </div>
-
-            {/* Team overrides */}
-            <div className="mt-6 pt-5 border-t border-[var(--border-default)]">
-              <div className="flex flex-wrap items-center gap-3 mb-3">
-                <div className="min-w-[14rem] flex-1">
-                  <p className="text-sm font-semibold text-[var(--fg-primary)]">Team overrides</p>
-                  <p className="text-xs text-[var(--fg-tertiary)] mt-0.5">
-                    Give one delivery team different targets. An override for a team and priority wins over the priority targets above; “Any priority” covers that team's other priorities.
-                  </p>
-                </div>
-                {canEdit && (
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    icon={<Icon name="plus" size={14} />}
-                    onClick={() => update((d) => {
-                      const normal = d.delivery.priorities.find((p) => priorityById.get(p.priority_id)?.key === "normal") || d.delivery.priorities[0];
-                      d.delivery.overrides.push({
-                        id: null,
-                        team_id: null,
-                        priority_id: null,
-                        response_minutes: normal?.response_minutes ?? 60,
-                        resolve_minutes: normal?.resolve_minutes ?? 480,
-                        notify_at_risk_minutes: normal?.notify_at_risk_minutes ?? null,
-                      });
-                    })}
-                  >
-                    Add override
-                  </Button>
-                )}
-              </div>
-
-              {draft.delivery.overrides.length === 0 ? (
-                <p className="text-xs text-[var(--fg-muted)] rounded-lg border border-dashed border-[var(--border-default)] px-4 py-3">
-                  No overrides — every delivery team uses the priority targets above.
-                </p>
-              ) : (
-                <div className="space-y-2">
-                  {draft.delivery.overrides.map((o, i) => {
-                    const problems = overrideProblems[i];
-                    return (
-                      <div
-                        key={o.id ?? `new-${i}`}
-                        className="grid grid-cols-1 sm:grid-cols-6 gap-3 items-start rounded-xl border border-[var(--border-default)] bg-[var(--bg-base)] p-3"
-                      >
-                        <div className="sm:col-span-3">
-                          <span className="block text-[11px] text-[var(--fg-muted)] mb-1">Team</span>
-                          <Select
-                            size="sm"
-                            disabled={!canEdit}
-                            value={o.team_id || ""}
-                            error={problems.team}
-                            onChange={(e) => update((d) => { d.delivery.overrides[i].team_id = Number(e.target.value) || null; })}
-                          >
-                            <option value="">Choose a team…</option>
-                            {meta.teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-                          </Select>
-                        </div>
-                        <div className="sm:col-span-2">
-                          <span className="block text-[11px] text-[var(--fg-muted)] mb-1">Priority</span>
-                          <Select
-                            size="sm"
-                            disabled={!canEdit}
-                            value={o.priority_id || ""}
-                            onChange={(e) => update((d) => { d.delivery.overrides[i].priority_id = Number(e.target.value) || null; })}
-                          >
-                            <option value="">Any priority</option>
-                            {meta.priorities.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-                          </Select>
-                        </div>
-                        {canEdit ? (
-                          <button
-                            type="button"
-                            title="Remove override"
-                            aria-label={`Remove override ${i + 1}`}
-                            onClick={() => update((d) => { d.delivery.overrides.splice(i, 1); })}
-                            className="justify-self-end sm:mt-5 p-2 rounded-lg text-[var(--fg-muted)] hover:text-rose-500 hover:bg-rose-500/10"
-                          >
-                            <Icon name="trash" size={15} />
-                          </button>
-                        ) : <span className="hidden sm:block" />}
-                        {[
-                          ["response_minutes", "First response", problems.response, false],
-                          ["resolve_minutes", "Resolution", problems.resolve, false],
-                          ["notify_at_risk_minutes", "At-risk warning", problems.warn, true],
-                        ].map(([field, label, error, allowEmpty]) => (
-                          <div key={field} className="sm:col-span-2">
-                            <span className="block text-[11px] text-[var(--fg-muted)] mb-1">{label}</span>
-                            <DurationInput
-                              label={`Override ${i + 1} ${label}`}
-                              value={o[field]}
-                              allowEmpty={allowEmpty}
-                              disabled={!canEdit}
-                              invalid={!!error}
-                              onChange={(v) => update((d) => { d.delivery.overrides[i][field] = v; })}
-                            />
-                            <FieldError>{error}</FieldError>
-                          </div>
-                        ))}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+            />
           </Section>
 
-          {/* ── Triage + manager review ──────────────────────────────────── */}
+          {/* ── Team SLAs ────────────────────────────────────────────────── */}
+          <Section
+            icon="teams"
+            tone="text-blue-500 bg-blue-500/10"
+            title="Team SLAs"
+            description="Give a delivery team its own SLA. A team set to Default follows the default SLA above."
+            aside={<Badge tone="slate" size="sm">{customCount} of {draft.teams.length} with their own SLA</Badge>}
+          >
+            {draft.teams.length === 0 ? (
+              <p className="text-xs text-[var(--fg-muted)]">No corporate delivery teams yet. Add them under Delivery Teams.</p>
+            ) : (
+              <div className="space-y-3">
+                {draft.teams.map((team, ti) => {
+                  const tp = problems.teams[ti];
+                  const urgent = team.priorities[team.priorities.length - 1];
+                  const normal = team.priorities.find((p) => priorityById.get(p.priority_id)?.key === "normal") || team.priorities[0];
+                  return (
+                    <div
+                      key={team.team_id}
+                      className={cn(
+                        "rounded-xl border",
+                        team.custom ? "border-[var(--border-strong,var(--border-default))] bg-[var(--bg-base)]" : "border-[var(--border-default)]"
+                      )}
+                    >
+                      <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+                        <div className="min-w-[10rem] flex-1">
+                          <p className="text-sm font-semibold text-[var(--fg-primary)]">{team.name}</p>
+                          <p className="text-xs text-[var(--fg-muted)] mt-0.5">
+                            {team.custom
+                              ? `Own SLA · ${team.use_business_hours ? "business hours" : "24/7"}`
+                              : `Default SLA · Normal ${formatMinutes(normal?.response_minutes)} / ${formatMinutes(normal?.resolve_minutes)} · Urgent ${formatMinutes(urgent?.response_minutes)} / ${formatMinutes(urgent?.resolve_minutes)}`}
+                          </p>
+                        </div>
+                        <Segmented
+                          size="sm"
+                          disabled={!canEdit}
+                          value={!!team.custom}
+                          onChange={(custom) => update((d) => {
+                            const t = d.teams[ti];
+                            t.custom = custom;
+                            if (!custom) {
+                              // Back to the default: mirror it again.
+                              t.priorities = structuredClone(d.default.priorities);
+                              t.use_business_hours = d.default.use_business_hours;
+                              t.business_hours_id = d.default.business_hours_id;
+                            }
+                          })}
+                          options={[{ value: false, label: "Default" }, { value: true, label: "Own SLA" }]}
+                        />
+                      </div>
+                      {team.custom && (
+                        <div className="border-t border-[var(--border-default)] px-4 py-4 space-y-4">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <p className="text-xs text-[var(--fg-tertiary)]">Targets for requests in {team.name}'s queue.</p>
+                            <ClockPicker
+                              sla={team}
+                              businessHours={businessHours}
+                              disabled={!canEdit}
+                              error={tp.clock}
+                              onChange={(patch) => update((d) => Object.assign(d.teams[ti], patch))}
+                            />
+                          </div>
+                          <TargetsMatrix
+                            rows={team.priorities}
+                            problems={tp.rows}
+                            priorityById={priorityById}
+                            disabled={!canEdit}
+                            labelPrefix={team.name}
+                            onChange={(i, field, v) => update((d) => { d.teams[ti].priorities[i][field] = v; })}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </Section>
+
+          {/* ── NOC triage + manager review ──────────────────────────────── */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             {[
               {
                 clock: "triage",
                 icon: "filter",
                 tone: "text-amber-500 bg-amber-500/10",
-                title: "NOC triage",
-                description: "Time NOC has to set the priority of a “Not sure” request and route it to a delivery team. Runs 24/7. The delivery SLA starts once it's routed.",
+                title: `${meta.triage_team?.name || "NOC"} triage SLA`,
+                description: `${meta.triage_team?.name || "NOC"}'s own SLA: time to set the urgency of a “Not sure” request and route it to a delivery team. Changing the urgency during triage re-targets this clock; the team's SLA starts once it's routed. Runs 24/7.`,
               },
               {
                 clock: "manager_review",
@@ -493,33 +516,30 @@ export default function CorporateSla() {
                 title: "Manager review",
                 description: "Time each escalation layer has to act once a request reaches them: hand it back, resolve it, or pass it to the next level. Every layer (L1, L2, …) gets a fresh clock. Runs 24/7.",
               },
-            ].map((s) => {
-              const problems = clockProblems(s.clock);
-              return (
-                <Section key={s.clock} icon={s.icon} tone={s.tone} title={s.title} description={s.description}>
-                  <div className="space-y-2">
-                    {draft[s.clock].map((row, i) => {
-                      const pr = priorityById.get(row.priority_id);
-                      return (
-                        <div key={row.priority_id} className="grid grid-cols-[110px_minmax(0,1fr)] sm:grid-cols-[130px_minmax(0,220px)] gap-3 items-start">
-                          <div className="pt-2"><PriorityLabel priority={pr} /></div>
-                          <div>
-                            <DurationInput
-                              label={`${s.title} ${pr?.label}`}
-                              value={row.minutes}
-                              disabled={!canEdit}
-                              invalid={!!problems[i]}
-                              onChange={(v) => update((d) => { d[s.clock][i].minutes = v; })}
-                            />
-                            <FieldError>{problems[i]}</FieldError>
-                          </div>
+            ].map((s) => (
+              <Section key={s.clock} icon={s.icon} tone={s.tone} title={s.title} description={s.description}>
+                <div className="space-y-2">
+                  {draft[s.clock].map((row, i) => {
+                    const pr = priorityById.get(row.priority_id);
+                    return (
+                      <div key={row.priority_id} className="grid grid-cols-[110px_minmax(0,1fr)] sm:grid-cols-[130px_minmax(0,220px)] gap-3 items-start">
+                        <div className="pt-2"><PriorityLabel priority={pr} /></div>
+                        <div>
+                          <DurationInput
+                            label={`${s.title} ${pr?.label}`}
+                            value={row.minutes}
+                            disabled={!canEdit}
+                            invalid={!!problems[s.clock][i]}
+                            onChange={(v) => update((d) => { d[s.clock][i].minutes = v; })}
+                          />
+                          <FieldError>{problems[s.clock][i]}</FieldError>
                         </div>
-                      );
-                    })}
-                  </div>
-                </Section>
-              );
-            })}
+                      </div>
+                    );
+                  })}
+                </div>
+              </Section>
+            ))}
           </div>
         </>
       )}
@@ -529,12 +549,12 @@ export default function CorporateSla() {
           raised on phones so it clears the chat button. */}
       {canEdit && dirty && createPortal(
         <div className="fixed z-50 bottom-20 inset-x-4 sm:inset-x-auto sm:bottom-6 sm:left-1/2 sm:-translate-x-1/2 flex flex-wrap items-center justify-end gap-3 rounded-xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-card-hover)] px-4 py-3">
-          <span className="text-sm text-[var(--fg-secondary)] mr-auto lg:mr-2 flex items-center gap-2">
+          <span className="text-sm text-[var(--fg-secondary)] mr-auto sm:mr-2 flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-amber-500" />
-            {hasProblems ? "Fix the highlighted targets to save" : "Unsaved changes"}
+            {problems?.any ? "Fix the highlighted targets to save" : "Unsaved changes"}
           </span>
           <Button size="sm" variant="secondary" onClick={discard}>Discard</Button>
-          <Button size="sm" onClick={save} loading={saving} disabled={hasProblems}>Save changes</Button>
+          <Button size="sm" onClick={save} loading={saving} disabled={problems?.any}>Save changes</Button>
         </div>,
         document.body
       )}
