@@ -78,6 +78,12 @@ const CORPORATE_NAV = [
     ],
   },
   {
+    title: "Operations",
+    items: [
+      { to: "/corporate/sla", label: "SLA Settings", icon: "sla", roles: ["admin"] },
+    ],
+  },
+  {
     title: "Insights",
     items: [
       { to: "/corporate/reports", label: "Reports", icon: "reports", roles: ["admin", "agent"] },
@@ -93,7 +99,7 @@ const SWITCH_MAP = {
   internal: { "/users": "/people" },
   corporate: { "/people": "/users", "/customers": "/users" },
 };
-const SHARED_PAGES = ["/dashboard", "/tickets", "/reports", "/knowledge-base", "/teams", "/hierarchy", "/profile"];
+const SHARED_PAGES = ["/dashboard", "/tickets", "/reports", "/knowledge-base", "/teams", "/hierarchy", "/sla", "/profile"];
 
 function switchTarget(pathname, fromWs, toWs) {
   const bare = stripWorkspace(pathname);

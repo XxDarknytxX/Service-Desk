@@ -68,6 +68,7 @@ const MIGRATIONS = [
   "password-reset-migration.js",      // password_reset_tokens + users.password_changed_at
   "workspace-split-migration.js",     // Corporate vs Internal app: teams/tickets.workspace, corporate_role
   "corporate-people-migration.js",    // onboarding (must_set_password), layered manager escalation
+  "corporate-sla-migration.js",       // per-app SLA policies, corporate triage / manager-review targets
 ];
 
 // Optional demo data — teams, staff/customer users, ticket templates.

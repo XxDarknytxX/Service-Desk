@@ -232,7 +232,7 @@ export function makeApprovalSlaService(pool) {
     //    Matching: priority + team > priority > team > default
     const [policies] = await pool.query(
       `SELECT * FROM sla_policies
-       WHERE policy_type = 'approval' AND (
+       WHERE policy_type = 'approval' AND archived_at IS NULL AND workspace = 'internal' AND (
          (applies_to_priority_id = ? AND applies_to_team_id = ?)
          OR (applies_to_priority_id = ? AND applies_to_team_id IS NULL)
          OR (applies_to_priority_id IS NULL AND applies_to_team_id = ?)

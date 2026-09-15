@@ -1,6 +1,22 @@
 // src/controllers/slaController.js
 import { makeSlaService } from "../services/slaService.js";
 import { makeApprovalSlaService } from "../services/approvalSlaService.js";
+import { resolveRequestWorkspace } from "../middleware/workspace.js";
+
+// Each app has its own SLA policies (sla_policies.workspace): the internal SLA
+// Policies page manages internal ones, Corporate → SLA Settings the corporate
+// ones. Archived policies (removed, but kept for tickets that used them) are
+// hidden and never match new tickets.
+function workspaceError(res, err) {
+  return res.status(err.status || 403).json({ error: err.message || "Forbidden" });
+}
+
+/** A team-specific policy's team must work in the policy's app. */
+async function teamFitsWorkspace(pool, teamId, workspace) {
+  if (!teamId) return true;
+  const [[team]] = await pool.query("SELECT workspace FROM teams WHERE id = ?", [teamId]);
+  return team?.workspace === workspace;
+}
 
 export function makeSlaController(pool) {
   const slaService = makeSlaService(pool);
@@ -10,10 +26,16 @@ export function makeSlaController(pool) {
     async getPolicies(req, res) {
       try {
         const { type } = req.query;
-        let typeFilter = "";
-        const params = [];
+        let workspace;
+        try {
+          ({ workspace } = await resolveRequestWorkspace(req));
+        } catch (err) {
+          return workspaceError(res, err);
+        }
+        let typeFilter = "WHERE sp.workspace = ? AND sp.archived_at IS NULL";
+        const params = [workspace];
         if (type === "team" || type === "approval") {
-          typeFilter = "WHERE sp.policy_type = ?";
+          typeFilter += " AND sp.policy_type = ?";
           params.push(type);
         }
 
@@ -114,19 +136,33 @@ export function makeSlaController(pool) {
         const pType = policy_type === "approval" ? "approval" : "team";
         const aslMode = pType === "approval" ? (approval_sla_mode === "hierarchy" ? "hierarchy" : "stage") : null;
 
-        // If setting as default, unset other defaults of same type
+        let workspace;
+        try {
+          ({ workspace } = await resolveRequestWorkspace(req));
+        } catch (err) {
+          return workspaceError(res, err);
+        }
+        if (pType === "approval" && workspace !== "internal") {
+          return res.status(400).json({ error: "Approval SLAs belong to the internal service desk." });
+        }
+        if (!(await teamFitsWorkspace(pool, applies_to_team_id, workspace))) {
+          return res.status(400).json({ error: `Choose a team from the ${workspace} service desk.` });
+        }
+
+        // If setting as default, unset other defaults of the same type in this app
         if (is_default) {
-          await pool.query(`UPDATE sla_policies SET is_default = 0 WHERE policy_type = ?`, [pType]);
+          await pool.query(`UPDATE sla_policies SET is_default = 0 WHERE policy_type = ? AND workspace = ?`, [pType, workspace]);
         }
 
         const [result] = await pool.query(
           `INSERT INTO sla_policies (
-            policy_type, approval_sla_mode, name, description, response_minutes, resolve_minutes,
+            policy_type, workspace, approval_sla_mode, name, description, response_minutes, resolve_minutes,
             applies_to_priority_id, applies_to_team_id, is_default,
             business_hours_id, use_business_hours, escalation_minutes, notify_at_risk_minutes
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             pType,
+            workspace,
             aslMode,
             name,
             description,
@@ -201,14 +237,24 @@ export function makeSlaController(pool) {
           approval_sla_mode,
         } = req.body;
 
-        // Get current policy type
-        const [current] = await pool.query(`SELECT policy_type FROM sla_policies WHERE id = ?`, [id]);
-        const pType = policy_type || (current.length > 0 ? current[0].policy_type : "team");
+        // Get current policy type and app (a policy never moves between apps)
+        const [current] = await pool.query(`SELECT policy_type, workspace FROM sla_policies WHERE id = ?`, [id]);
+        if (!current.length) return res.status(404).json({ error: "Policy not found" });
+        const pType = policy_type || current[0].policy_type;
+        const workspace = current[0].workspace;
         const aslMode = pType === "approval" ? (approval_sla_mode === "hierarchy" ? "hierarchy" : "stage") : null;
+        try {
+          await resolveRequestWorkspace(req, workspace);
+        } catch (err) {
+          return workspaceError(res, err);
+        }
+        if (!(await teamFitsWorkspace(pool, applies_to_team_id, workspace))) {
+          return res.status(400).json({ error: `Choose a team from the ${workspace} service desk.` });
+        }
 
-        // If setting as default, unset other defaults of same type
+        // If setting as default, unset other defaults of the same type in this app
         if (is_default) {
-          await pool.query(`UPDATE sla_policies SET is_default = 0 WHERE id != ? AND policy_type = ?`, [id, pType]);
+          await pool.query(`UPDATE sla_policies SET is_default = 0 WHERE id != ? AND policy_type = ? AND workspace = ?`, [id, pType, workspace]);
         }
 
         await pool.query(
@@ -277,6 +323,20 @@ export function makeSlaController(pool) {
     async deletePolicy(req, res) {
       try {
         const { id } = req.params;
+        const [[policy]] = await pool.query(`SELECT workspace FROM sla_policies WHERE id = ?`, [id]);
+        if (!policy) return res.status(404).json({ error: "Policy not found" });
+        try {
+          await resolveRequestWorkspace(req, policy.workspace);
+        } catch (err) {
+          return workspaceError(res, err);
+        }
+        // Tickets that used it keep a reference for their history — archive
+        // those instead of deleting (the foreign key would refuse anyway).
+        const [[used]] = await pool.query(`SELECT 1 AS yes FROM ticket_slas WHERE policy_id = ? LIMIT 1`, [id]);
+        if (used) {
+          await pool.query(`UPDATE sla_policies SET archived_at = NOW(), is_default = 0 WHERE id = ?`, [id]);
+          return res.json({ success: true, archived: true });
+        }
         await pool.query(`DELETE FROM sla_policies WHERE id = ?`, [id]);
         res.json({ success: true });
       } catch (error) {

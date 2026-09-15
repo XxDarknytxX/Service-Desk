@@ -393,17 +393,19 @@ export function makeSlaService(pool) {
         // Find matching SLA policy
         const [policies] = await pool.query(
           `SELECT id, response_minutes, resolve_minutes FROM sla_policies
-           WHERE (applies_to_priority_id = ? AND applies_to_team_id = ?)
+           WHERE policy_type = 'team' AND archived_at IS NULL
+             AND workspace = (SELECT workspace FROM tickets WHERE id = ?)
+             AND ((applies_to_priority_id = ? AND applies_to_team_id = ?)
               OR (applies_to_priority_id = ? AND applies_to_team_id IS NULL)
               OR (applies_to_priority_id IS NULL AND applies_to_team_id = ?)
-              OR (is_default = 1)
+              OR (is_default = 1))
            ORDER BY
              CASE WHEN applies_to_priority_id = ? AND applies_to_team_id = ? THEN 1
                   WHEN applies_to_priority_id = ? AND applies_to_team_id IS NULL THEN 2
                   WHEN applies_to_priority_id IS NULL AND applies_to_team_id = ? THEN 3
                   ELSE 4 END
            LIMIT 1`,
-          [priorityId, teamId, priorityId, teamId, priorityId, teamId, priorityId, teamId]
+          [ticketId, priorityId, teamId, priorityId, teamId, priorityId, teamId, priorityId, teamId]
         );
 
         if (policies.length === 0) return null;

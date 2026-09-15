@@ -17,6 +17,7 @@ import Hierarchy from "./pages/hierarchy";
 import KnowledgeBase from "./pages/knowledgeBase";
 import Assets from "./pages/assets";
 import SlaManagement from "./pages/sla";
+import CorporateSla from "./pages/corporateSla";
 import Reports from "./pages/reports";
 import Approvals from "./pages/approvals";
 import ApprovalRules from "./pages/approvalRules";
@@ -168,6 +169,7 @@ export default function App() {
               <Route path="/corporate/customers" element={<Navigate to="/corporate/people" replace />} />
               <Route path="/corporate/hierarchy" element={page(<CorporateHierarchy />, { ...C, roles: ["admin", "agent"] })} />
               <Route path="/corporate/teams" element={page(<Keyed><Teams /></Keyed>, { ...C, roles: ["admin"] })} />
+              <Route path="/corporate/sla" element={page(<CorporateSla />, { ...C, roles: ["admin"] })} />
               <Route path="/corporate/reports" element={page(<Keyed><Reports /></Keyed>, { ...C, roles: ["admin", "agent"] })} />
               <Route path="/corporate/knowledge-base" element={page(<Keyed><KnowledgeBase /></Keyed>, C)} />
               <Route path="/corporate/profile" element={page(<Keyed><Profile /></Keyed>, C)} />

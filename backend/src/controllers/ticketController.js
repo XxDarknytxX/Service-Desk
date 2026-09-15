@@ -11,6 +11,7 @@ import {
 } from "../middleware/workspace.js";
 import { getEscalationChain } from "../services/hierarchyService.js";
 import { isLayerRole } from "../utils/corporateRoles.js";
+import { getClockMinutes } from "../services/slaTargets.js";
 
 const send = {
   ok: (res, data = {}) => res.json(data),
@@ -127,10 +128,13 @@ async function getPriorityKey(pool, priorityId) {
 // Auto-assign SLA when ticket is created or priority/team changes
 async function assignSla(pool, ticketId, priorityId, teamId) {
   try {
-    // Find matching SLA policy: prefer specific match, then priority-only, then default
+    // Find matching SLA policy IN THE TICKET'S APP (corporate requests use the
+    // targets from Corporate → SLA Settings): team + priority, then priority,
+    // then team, then the app's default. Archived policies never match.
     const [policies] = await pool.query(
       `SELECT id, response_minutes, resolve_minutes, use_business_hours, business_hours_id FROM sla_policies
-       WHERE policy_type = 'team'
+       WHERE policy_type = 'team' AND archived_at IS NULL
+         AND workspace = (SELECT workspace FROM tickets WHERE id = ?)
          AND ((applies_to_priority_id = ? AND applies_to_team_id = ?)
           OR (applies_to_priority_id = ? AND applies_to_team_id IS NULL)
           OR (applies_to_priority_id IS NULL AND applies_to_team_id = ?)
@@ -141,7 +145,7 @@ async function assignSla(pool, ticketId, priorityId, teamId) {
               WHEN applies_to_priority_id IS NULL AND applies_to_team_id = ? THEN 3
               ELSE 4 END
        LIMIT 1`,
-      [priorityId, teamId, priorityId, teamId, priorityId, teamId, priorityId, teamId]
+      [ticketId, priorityId, teamId, priorityId, teamId, priorityId, teamId, priorityId, teamId]
     );
 
     if (policies.length === 0) return;
@@ -188,15 +192,12 @@ async function assignSla(pool, ticketId, priorityId, teamId) {
 // A second SLA, separate from the team response/resolve SLA: how long the NOC
 // queue has to route a ticket out to the correct team ("reassign on time").
 // Tracked in its own table (ticket_triage_slas) so the team SLA re-point on
-// (re)assign can never clobber it. Priority-based calendar minutes.
-const TRIAGE_SLA_MINUTES = { 1: 120, 2: 60, 3: 30, 4: 15 }; // low / normal / high / urgent
-const DEFAULT_TRIAGE_MINUTES = 60;
-
-// Manager review SLA — the window a team manager (lead) has to act once a ticket
-// is escalated to them (reassign it back to an engineer, or resolve it). Its own
-// calendar minutes, priority-based. Urgent 30m / High 60m / Normal 120m / Low 240m.
-const MANAGER_SLA_MINUTES = { 1: 240, 2: 120, 3: 60, 4: 30 }; // low / normal / high / urgent
-const DEFAULT_MANAGER_MINUTES = 120;
+// (re)assign can never clobber it. Priority-based calendar minutes, set in
+// Corporate → SLA Settings (sla_clock_targets, see services/slaTargets.js).
+//
+// Manager review SLA — the window each escalation layer has to act once a
+// ticket reaches them (hand it back, resolve it, or pass it up). Also set per
+// priority in Corporate → SLA Settings.
 
 async function getNocTeamId(pool) {
   return getTriageTeamId(pool);
@@ -277,7 +278,7 @@ async function resumeTicketSla(pool, ticketId, actorId) {
 // Start (or restart) the triage clock when a ticket enters the NOC queue.
 async function startTriageSla(pool, ticketId, priorityId, actorId) {
   try {
-    const minutes = TRIAGE_SLA_MINUTES[priorityId] || DEFAULT_TRIAGE_MINUTES;
+    const minutes = await getClockMinutes(pool, "triage", priorityId);
     const dueAt = new Date(Date.now() + minutes * 60000);
     await pool.query(
       `INSERT INTO ticket_triage_slas (ticket_id, priority_id, target_minutes, due_at, started_at, met_at, breached)
@@ -298,7 +299,7 @@ async function startTriageSla(pool, ticketId, priorityId, actorId) {
 // keeps the original started_at, just recomputes due_at from the new priority.
 async function recomputeTriageSla(pool, ticketId, priorityId) {
   try {
-    const minutes = TRIAGE_SLA_MINUTES[priorityId] || DEFAULT_TRIAGE_MINUTES;
+    const minutes = await getClockMinutes(pool, "triage", priorityId);
     await pool.query(
       `UPDATE ticket_triage_slas
        SET target_minutes = ?, priority_id = ?,
@@ -349,7 +350,7 @@ async function getOpenManagerSla(pool, ticketId) {
 // Start a manager review clock for one escalation layer.
 async function startManagerSla(pool, ticketId, priorityId, managerId, { layer = 1, fromUserId = null } = {}) {
   try {
-    const minutes = MANAGER_SLA_MINUTES[priorityId] || DEFAULT_MANAGER_MINUTES;
+    const minutes = await getClockMinutes(pool, "manager_review", priorityId);
     const dueAt = new Date(Date.now() + minutes * 60000);
     await pool.query(
       `INSERT INTO ticket_manager_slas
