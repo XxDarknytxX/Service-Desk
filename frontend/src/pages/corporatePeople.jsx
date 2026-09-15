@@ -336,14 +336,99 @@ export default function CorporatePeople() {
 
   const editingTeam = teams.find((t) => String(t.id) === String(form.team_id));
   const positionNames = POSITION_NAMES[editingTeam?.corporate_role] || ["Team Member", "Team Manager"];
+  // ── Quick "change reporting line" from the table ─────────────────────────
+  const [reportingFor, setReportingFor] = useState(null);
+  const [reportingManagerId, setReportingManagerId] = useState("");
+  const [savingReporting, setSavingReporting] = useState(false);
+
+  function openReporting(person) {
+    setReportingFor(person);
+    setReportingManagerId(person.manager_id ? String(person.manager_id) : "");
+  }
+
+  async function saveReporting() {
+    setSavingReporting(true);
+    try {
+      await api(`/corporate/people/${reportingFor.id}`, {
+        method: "PATCH",
+        body: { manager_id: reportingManagerId ? Number(reportingManagerId) : null },
+      });
+      toast.success(`${reportingFor.full_name.split(" ")[0]} now ${reportingManagerId ? `reports to ${staffById.get(Number(reportingManagerId))?.full_name}` : "sits at the top of the chain"}`);
+      setReportingFor(null);
+      load();
+    } catch (err) {
+      toast.error(err.message || "Couldn't change reporting line");
+    } finally {
+      setSavingReporting(false);
+    }
+  }
+
+  const reportingBlocked = useMemo(() => {
+    const out = new Set();
+    if (!reportingFor) return out;
+    let frontier = [reportingFor.id];
+    while (frontier.length) {
+      const next = staff.filter((s) => frontier.includes(s.manager_id) && !out.has(s.id)).map((s) => s.id);
+      next.forEach((id) => out.add(id));
+      frontier = next;
+    }
+    return out;
+  }, [staff, reportingFor]);
+
+  // People below the person being edited can't become their manager (loop).
+  const blockedManagers = useMemo(() => {
+    const selfId = editing?.person?.id;
+    const out = new Set();
+    if (!selfId) return out;
+    let frontier = [selfId];
+    while (frontier.length) {
+      const next = staff.filter((s) => frontier.includes(s.manager_id) && !out.has(s.id)).map((s) => s.id);
+      next.forEach((id) => out.add(id));
+      frontier = next;
+    }
+    return out;
+  }, [staff, editing]);
+
   const managerOptions = staff
-    .filter((s) => s.is_active && s.id !== editing?.person?.id)
+    .filter((s) => s.is_active && s.id !== editing?.person?.id && !blockedManagers.has(s.id))
+    .sort((a, b) => (a.org_level || 1) - (b.org_level || 1) || a.full_name.localeCompare(b.full_name))
     .map((s) => ({
       value: String(s.id),
       label: s.full_name,
-      subtitle: (s.positions || []).map((p) => `${p.label} · ${p.team_name}`).join(", "),
+      subtitle: `Level ${s.org_level || 1} · ${(s.positions || []).map((p) => `${p.label} · ${p.team_name}`).join(", ")}`,
     }));
   const chainPreview = editing?.kind === "staff" ? chainFrom(form.manager_id, editing?.person?.id) : [];
+
+  // Level they'll sit at: one below their manager, or 1 at the top.
+  const placementLevel = form.manager_id ? (staffById.get(Number(form.manager_id))?.org_level || 1) + 1 : 1;
+  const teamLeadOther = editing?.kind === "staff"
+    ? staff.find((s) => s.id !== editing?.person?.id && (s.positions || []).some((p) => String(p.team_id) === String(form.team_id) && p.is_lead))
+    : null;
+  const directReports = editing?.person ? staff.filter((s) => s.manager_id === editing.person.id) : [];
+
+  /**
+   * Place someone by choosing who they report to. Reporting to a team manager
+   * makes them an engineer in that manager's team; reporting to someone who
+   * doesn't run a team (a head of delivery, say) makes them a team manager —
+   * unless their team already has one. Team and position stay editable.
+   */
+  function placeUnder(managerId) {
+    setForm((f) => {
+      const next = { ...f, manager_id: managerId };
+      if (!managerId) return next;
+      const mgr = staffById.get(Number(managerId));
+      const ledTeams = (mgr?.positions || []).filter((p) => p.is_lead);
+      if (ledTeams.length) {
+        const sameTeam = ledTeams.find((p) => String(p.team_id) === String(f.team_id));
+        next.team_id = String((sameTeam || ledTeams[0]).team_id);
+        next.is_lead = false;
+      } else {
+        const hasLead = staff.some((s) => s.id !== editing?.person?.id && (s.positions || []).some((p) => String(p.team_id) === String(f.team_id) && p.is_lead));
+        next.is_lead = !hasLead;
+      }
+      return next;
+    });
+  }
 
   return (
     <div className="space-y-5">
@@ -479,18 +564,32 @@ export default function CorporatePeople() {
                           </div>
                         </td>
                         <td className="px-4 py-3 hidden lg:table-cell">
-                          {p.manager_name ? (
-                            <span className="inline-flex items-center gap-1.5 text-[var(--fg-secondary)]">
-                              {p.manager_name}
-                              <Badge tone="slate" size="sm">L{p.org_level}</Badge>
-                            </span>
-                          ) : p.outside_manager ? (
-                            <span className="text-xs text-[var(--fg-muted)]" title="This reporting line crosses into the internal desk, so escalation stops here.">
-                              Top of chain · reports outside Corporate to {p.outside_manager.full_name}
-                            </span>
-                          ) : (
-                            <span className="text-xs text-[var(--fg-muted)]">Top of chain</span>
-                          )}
+                          {(() => {
+                            const label = p.manager_name ? (
+                              <span className="text-[var(--fg-secondary)]">{p.manager_name}</span>
+                            ) : p.outside_manager ? (
+                              <span className="text-xs text-[var(--fg-muted)]" title="This reporting line crosses into the internal desk, so escalation stops here.">
+                                Top · reports outside Corporate to {p.outside_manager.full_name}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-[var(--fg-muted)]">Top of chain</span>
+                            );
+                            return (
+                              <div className="flex items-center gap-2">
+                                <Badge tone="slate" size="sm">Level {p.org_level || 1}</Badge>
+                                {caps.can_manage_staff ? (
+                                  <button
+                                    onClick={() => openReporting(p)}
+                                    className="group inline-flex items-center gap-1 text-left hover:text-[var(--accent)]"
+                                    title="Change who they report to"
+                                  >
+                                    {label}
+                                    <Icon name="pencil" size={11} className="text-[var(--fg-muted)] opacity-0 group-hover:opacity-100" />
+                                  </button>
+                                ) : label}
+                              </div>
+                            );
+                          })()}
                         </td>
                       </>
                     )}
@@ -593,7 +692,47 @@ export default function CorporatePeople() {
           </div>
 
           <div className="rounded-xl border border-[var(--border-default)] p-4 space-y-4">
-            <p className="text-label">Position in the corporate flow</p>
+            <div>
+              <p className="text-label">Where they sit in the hierarchy</p>
+              <p className="text-xs text-[var(--fg-tertiary)] mt-1">
+                Pick who they report to — their team, position and level follow from that. Adjust below if needed.
+              </p>
+            </div>
+
+            <SearchableSelect
+              label="Reports to (next level up)"
+              value={form.manager_id || ""}
+              onChange={(e) => placeUnder(e.target.value)}
+              options={[
+                { value: "", label: "No one — top of the chain", subtitle: "Level 1 · final approver for escalations" },
+                ...managerOptions,
+              ]}
+              placeholder="No one — top of the chain"
+              searchPlaceholder="Search by name, team or position…"
+            />
+
+            {/* The resulting placement, in plain words. */}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)] px-3 py-2.5">
+              <Badge tone="blue" size="sm">Level {placementLevel}</Badge>
+              <span className="text-sm font-medium text-[var(--fg-primary)]">{positionNames[form.is_lead ? 1 : 0]}</span>
+              <span className="text-xs text-[var(--fg-muted)]">{editingTeam?.name || "No team"}</span>
+              <span className="text-xs text-[var(--fg-secondary)] sm:ml-auto flex items-center gap-1 flex-wrap">
+                {chainPreview.length === 0 ? (
+                  "Top of the escalation chain"
+                ) : (
+                  <>
+                    Escalates to
+                    {chainPreview.map((p, i) => (
+                      <span key={p.id} className="inline-flex items-center gap-1">
+                        {i > 0 && <Icon name="chevronRight" size={11} className="text-[var(--fg-muted)]" />}
+                        <span className="font-medium text-[var(--fg-primary)]">{p.full_name.split(" ")[0]}</span>
+                      </span>
+                    ))}
+                  </>
+                )}
+              </span>
+            </div>
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Select
                 label="Team"
@@ -603,7 +742,8 @@ export default function CorporatePeople() {
                   setForm((f) => ({
                     ...f,
                     team_id: teamId,
-                    manager_id: editing?.person ? f.manager_id : defaultManagerFor(teamId, f.is_lead),
+                    // Only suggest a manager while none has been chosen.
+                    manager_id: f.manager_id || editing?.person ? f.manager_id : defaultManagerFor(teamId, f.is_lead),
                   }));
                 }}
               >
@@ -618,7 +758,7 @@ export default function CorporatePeople() {
                     <button
                       key={String(lead)}
                       type="button"
-                      onClick={() => setForm((f) => ({ ...f, is_lead: lead, manager_id: editing?.person ? f.manager_id : defaultManagerFor(f.team_id, lead) }))}
+                      onClick={() => setForm((f) => ({ ...f, is_lead: lead }))}
                       className={cn(
                         "px-2 py-1.5 rounded-md text-[12px] font-medium transition-all",
                         form.is_lead === lead ? "bg-[var(--accent)] text-white" : "text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]"
@@ -628,39 +768,90 @@ export default function CorporatePeople() {
                     </button>
                   ))}
                 </div>
+                {form.is_lead && teamLeadOther && (
+                  <p className="mt-1.5 text-xs text-amber-600">
+                    {editingTeam?.name} already has a manager ({teamLeadOther.full_name}).
+                  </p>
+                )}
               </div>
             </div>
 
-            <SearchableSelect
-              label="Reports to"
-              value={form.manager_id || ""}
-              onChange={(e) => setForm({ ...form, manager_id: e.target.value })}
-              options={[{ value: "", label: "No one — top of the escalation chain" }, ...managerOptions]}
-              placeholder="No one — top of the escalation chain"
-              searchPlaceholder="Search delivery staff…"
-            />
-            <div className="rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)] px-3 py-2.5">
-              <p className="text-xs font-medium text-[var(--fg-secondary)] mb-1.5">Escalation layers for their requests</p>
-              {chainPreview.length === 0 ? (
-                <p className="text-xs text-[var(--fg-muted)]">
-                  None — escalations from this person go to their team's manager, if the team has one.
-                </p>
-              ) : (
-                <div className="flex items-center flex-wrap gap-1.5 text-xs">
-                  {chainPreview.map((p, i) => (
-                    <span key={p.id} className="inline-flex items-center gap-1.5">
-                      {i > 0 && <Icon name="chevronRight" size={12} className="text-[var(--fg-muted)]" />}
-                      <Badge tone={i === 0 ? "blue" : "slate"} size="sm">L{i + 1}</Badge>
-                      <span className="text-[var(--fg-primary)]">{p.full_name}</span>
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
+            {editing?.person && directReports.length > 0 && (
+              <p className="text-xs text-[var(--fg-muted)]">
+                {directReports.length === 1 ? "1 person reports" : `${directReports.length} people report`} to {editing.person.full_name.split(" ")[0]} (
+                {directReports.map((p) => p.full_name).join(", ")}) — they move with them.
+              </p>
+            )}
           </div>
 
           {!editing?.person && <AccessSection form={form} setForm={setForm} />}
         </div>
+      </Modal>
+
+      {/* ── Quick reporting-line change ── */}
+      <Modal
+        open={!!reportingFor}
+        onClose={() => setReportingFor(null)}
+        title="Who do they report to?"
+        subtitle={reportingFor ? `${reportingFor.full_name} · ${(reportingFor.positions || []).map((p) => `${p.label}, ${p.team_name}`).join(" · ")}` : ""}
+        actions={
+          <>
+            <Button variant="secondary" onClick={() => setReportingFor(null)}>Cancel</Button>
+            <Button onClick={saveReporting} loading={savingReporting}>Save</Button>
+          </>
+        }
+      >
+        {reportingFor && (() => {
+          const chain = chainFrom(reportingManagerId, reportingFor.id);
+          const level = reportingManagerId ? (staffById.get(Number(reportingManagerId))?.org_level || 1) + 1 : 1;
+          const below = staff.filter((s) => s.manager_id === reportingFor.id);
+          return (
+            <div className="space-y-4">
+              <SearchableSelect
+                label="Reports to (next level up)"
+                value={reportingManagerId}
+                onChange={(e) => setReportingManagerId(e.target.value)}
+                options={[
+                  { value: "", label: "No one — top of the chain", subtitle: "Level 1 · final approver for escalations" },
+                  ...staff
+                    .filter((s) => s.is_active && s.id !== reportingFor.id && !reportingBlocked.has(s.id))
+                    .sort((a, b) => (a.org_level || 1) - (b.org_level || 1) || a.full_name.localeCompare(b.full_name))
+                    .map((s) => ({
+                      value: String(s.id),
+                      label: s.full_name,
+                      subtitle: `Level ${s.org_level || 1} · ${(s.positions || []).map((p) => `${p.label} · ${p.team_name}`).join(", ")}`,
+                    })),
+                ]}
+                placeholder="No one — top of the chain"
+                searchPlaceholder="Search by name, team or position…"
+              />
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)] px-3 py-2.5">
+                <Badge tone="blue" size="sm">Level {level}</Badge>
+                <span className="text-xs text-[var(--fg-secondary)] flex items-center gap-1 flex-wrap">
+                  {chain.length === 0 ? "Top of the escalation chain" : (
+                    <>
+                      Escalates to
+                      {chain.map((p, i) => (
+                        <span key={p.id} className="inline-flex items-center gap-1">
+                          {i > 0 && <Icon name="chevronRight" size={11} className="text-[var(--fg-muted)]" />}
+                          <span className="font-medium text-[var(--fg-primary)]">{p.full_name.split(" ")[0]}</span>
+                        </span>
+                      ))}
+                    </>
+                  )}
+                </span>
+              </div>
+              {reportingFor.outside_manager && (
+                <p className="text-xs text-amber-600">Currently reports to {reportingFor.outside_manager.full_name}, outside the corporate desk.</p>
+              )}
+              {below.length > 0 && (
+                <p className="text-xs text-[var(--fg-muted)]">
+                  {below.map((b) => b.full_name).join(", ")} {below.length === 1 ? "reports" : "report"} to {reportingFor.full_name.split(" ")[0]} and will move with them.
+                </p>
+              )}
+            </div>
+          );
+        })()}
       </Modal>
 
       {confirmDialog}

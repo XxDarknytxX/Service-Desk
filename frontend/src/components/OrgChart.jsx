@@ -164,7 +164,7 @@ function EmployeeNode({ employee, onEdit, hasReports, isExpanded, dimmed, highli
             {employee.position_label || role.label}
           </Badge>
           {employee.org_level != null && (
-            <Badge tone="slate" size="sm">L{employee.org_level}</Badge>
+            <Badge tone="slate" size="sm">Level {employee.org_level}</Badge>
           )}
 
           {hasReports && (
@@ -439,7 +439,7 @@ export default function OrgChart({ users, hierarchy, onEditUser, query = "" }) {
             <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-blue-500" /> Delivery</span>
             <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-amber-500" /> Triage (NOC)</span>
             <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-violet-500" /> Service Delivery</span>
-            <span className="inline-flex items-center gap-1.5"><span className="font-semibold">L#</span> level in the chain</span>
+            <span className="inline-flex items-center gap-1.5"><span className="font-semibold">Level</span> 1 = top of the chain</span>
           </div>
         )}
 

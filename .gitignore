@@ -41,3 +41,6 @@ C:temp*
 *.key
 *.crt
 star_vodafone_com_fj*
+
+# Corporate people exports contain names, emails and phones — never commit
+corporate-people-export*.json
