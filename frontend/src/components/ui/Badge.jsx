@@ -96,6 +96,7 @@ export function StatusBadge({ status, size = "md", className }) {
     open: { tone: "blue", label: "Open", dot: true },
     pending: { tone: "amber", label: "Pending", dot: true },
     in_progress: { tone: "indigo", label: "In Progress", dot: true },
+    partially_resolved: { tone: "cyan", label: "Partially Resolved", dot: true },
     on_hold: { tone: "violet", label: "On Hold", dot: true },
     solved: { tone: "emerald", label: "Solved", dot: true },
     closed: { tone: "slate", label: "Closed", dot: false },

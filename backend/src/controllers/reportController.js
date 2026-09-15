@@ -134,8 +134,9 @@ export function makeReportController(pool) {
 
     // ═══════════════════════════════════════════════════════════════
     // 3. SLA COMPLIANCE  (existing — enhanced)
-    //    Counts every SLA cycle: a reopened ticket's earlier cycles
-    //    (ticket_sla_history) stay in the record alongside the live one.
+    //    Counts every SLA record: each team working a request (ticket_slas
+    //    for team 1, ticket_team_slas for collaborators) and a reopened
+    //    ticket's earlier cycles (ticket_sla_history).
     // ═══════════════════════════════════════════════════════════════
     async getSlaCompliance(req, res) {
       try {
@@ -161,6 +162,10 @@ export function makeReportController(pool) {
                   UNION ALL
                   SELECT ticket_id, policy_id, cycle, response_due_at, response_met_at, response_breached,
                          resolve_due_at, resolve_met_at, resolve_breached
+                    FROM ticket_team_slas WHERE policy_id IS NOT NULL
+                  UNION ALL
+                  SELECT ticket_id, policy_id, cycle, response_due_at, response_met_at, response_breached,
+                         resolve_due_at, resolve_met_at, resolve_breached
                     FROM ticket_sla_history WHERE kind = 'team') ts ON t.id = ts.ticket_id ${where}`, p);
 
         const [byPolicy] = await pool.query(
@@ -178,6 +183,10 @@ export function makeReportController(pool) {
                   UNION ALL
                   SELECT ticket_id, policy_id, cycle, response_due_at, response_met_at, response_breached,
                          resolve_due_at, resolve_met_at, resolve_breached
+                    FROM ticket_team_slas WHERE policy_id IS NOT NULL
+                  UNION ALL
+                  SELECT ticket_id, policy_id, cycle, response_due_at, response_met_at, response_breached,
+                         resolve_due_at, resolve_met_at, resolve_breached
                     FROM ticket_sla_history WHERE kind = 'team') ts ON t.id = ts.ticket_id
           JOIN sla_policies sp ON ts.policy_id = sp.id ${where}
           GROUP BY sp.id, sp.name ORDER BY total_tickets DESC`, p);
@@ -192,6 +201,10 @@ export function makeReportController(pool) {
           JOIN (SELECT ticket_id, policy_id, cycle, response_due_at, response_met_at, response_breached,
                          resolve_due_at, resolve_met_at, resolve_breached
                     FROM ticket_slas
+                  UNION ALL
+                  SELECT ticket_id, policy_id, cycle, response_due_at, response_met_at, response_breached,
+                         resolve_due_at, resolve_met_at, resolve_breached
+                    FROM ticket_team_slas WHERE policy_id IS NOT NULL
                   UNION ALL
                   SELECT ticket_id, policy_id, cycle, response_due_at, response_met_at, response_breached,
                          resolve_due_at, resolve_met_at, resolve_breached
@@ -732,6 +745,10 @@ export function makeReportController(pool) {
             JOIN (SELECT ticket_id, policy_id, cycle, response_due_at, response_met_at, response_breached,
                          resolve_due_at, resolve_met_at, resolve_breached
                     FROM ticket_slas
+                  UNION ALL
+                  SELECT ticket_id, policy_id, cycle, response_due_at, response_met_at, response_breached,
+                         resolve_due_at, resolve_met_at, resolve_breached
+                    FROM ticket_team_slas WHERE policy_id IS NOT NULL
                   UNION ALL
                   SELECT ticket_id, policy_id, cycle, response_due_at, response_met_at, response_breached,
                          resolve_due_at, resolve_met_at, resolve_breached

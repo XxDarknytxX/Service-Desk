@@ -34,11 +34,28 @@ function cn(...parts) {
 
 const STATUS_COLORS = {
   draft: "slate", open: "blue", pending: "amber", in_progress: "indigo",
-  on_hold: "violet", solved: "emerald", closed: "slate",
+  partially_resolved: "cyan", on_hold: "violet", solved: "emerald", closed: "slate",
 };
 const PRIORITY_COLORS = {
   urgent: "rose", high: "orange", normal: "blue", low: "slate",
 };
+const WORKING_STATUSES = ["open", "pending", "in_progress", "partially_resolved", "on_hold"];
+
+/** Team number: 1 = the team the request is assigned to, 2, 3 … = teams brought in to collaborate. */
+function TeamTag({ seq, size = "md" }) {
+  return (
+    <span
+      title={seq === 1 ? "Team 1 — the team the request is assigned to" : `Team ${seq} — brought in to collaborate`}
+      className={cn(
+        "inline-flex items-center justify-center rounded-full font-semibold tabular-nums shrink-0 text-white",
+        size === "sm" ? "h-4 min-w-[1rem] px-1 text-[9px]" : "h-5 min-w-[1.25rem] px-1.5 text-[10px]",
+        seq === 1 ? "bg-[var(--accent)]" : "bg-indigo-500"
+      )}
+    >
+      {seq}
+    </span>
+  );
+}
 
 export default function TicketDetail() {
   const { id } = useParams();
@@ -132,6 +149,9 @@ export default function TicketDetail() {
   const [newTeamId, setNewTeamId] = useState("");
   const [newTeamNotes, setNewTeamNotes] = useState("");
   const [addingTeam, setAddingTeam] = useState(false);
+  // Escalating to a manager needs a note for them.
+  const [showEscalate, setShowEscalate] = useState(false);
+  const [escalateNote, setEscalateNote] = useState("");
   // NOC triage: only NOC members (+ admins) may reassign across teams; others flag back to NOC.
   const [isNocMember, setIsNocMember] = useState(false);
   const [showFlagModal, setShowFlagModal] = useState(false);
@@ -174,6 +194,16 @@ export default function TicketDetail() {
     user?.roles?.includes("admin") ||
     (ticketIsCorporate ? isNocMember && inTriageQueue : canWork)
   );
+  // Collaboration: several teams on one request, each resolving its own part.
+  const isAdminUser = !!user?.roles?.includes("admin");
+  const hasCollaborators = (ticket?.collaborator_count || 0) > 0;
+  const viewerIsAssignee = ticket?.assignee_id != null && Number(ticket.assignee_id) === Number(user?.id);
+  // On a collaborating team only (not the assigned team): they resolve their part, nothing else.
+  const collabOnly = !!(ticket?.viewer_collab_team && !ticket?.viewer_is_team_member && !isAdminUser && !viewerIsAssignee);
+  const canAddTeam = !!(ticket?.team_id && !inTriageQueue && WORKING_STATUSES.includes(ticket?.status_key)
+    && (isAdminUser || ticket?.viewer_is_team_member || viewerIsAssignee));
+  const resolveLabel = !hasCollaborators ? "Resolve"
+    : isAdminUser && !ticket?.viewer_is_team_member && !viewerIsAssignee ? "Resolve all parts" : "Resolve our part";
   // Who may move the ticket to another team (see the same rule server-side).
   const canReassign = !!(
     user?.roles?.includes("admin") ||
@@ -338,7 +368,13 @@ export default function TicketDetail() {
     if (!status) return;
     setActionLoading(statusKey);
     try {
-      await api(`/tickets/${id}`, { method: "PATCH", body: { status_id: status.id } });
+      const res = await api(`/tickets/${id}`, { method: "PATCH", body: { status_id: status.id } });
+      if (statusKey === "solved" && res?.resolved_parts?.length) {
+        const names = res.resolved_parts.map((t) => t.team_name).join(" and ");
+        toast.success(res.partially_resolved
+          ? `${names}'s part is resolved — waiting on the other team${ticket?.collaborator_count > 1 ? "s" : ""}`
+          : `${names}'s part is resolved — every team is done, the request is resolved`);
+      }
       await loadTicketData();
     } catch (err) {
       console.error("Status update failed:", err);
@@ -380,11 +416,14 @@ export default function TicketDetail() {
   };
 
   // Hand the ticket to the team manager to review and freeze the SLA if needed.
-  const handleEscalateToManager = async () => {
+  const handleEscalateToManager = () => { setEscalateNote(""); setShowEscalate(true); };
+  const submitEscalation = async () => {
+    if (escalateNote.trim().length < 5) return toast.error("Add a note for the manager");
     setActionLoading("escalateManager");
     try {
-      const res = await api(`/tickets/${id}/escalate-to-manager`, { method: "POST" });
-      toast.success(res.managerName ? `Escalated to ${res.managerName} (layer ${res.layer})` : "Escalated to your manager");
+      const res = await api(`/tickets/${id}/escalate-to-manager`, { method: "POST", body: { reason: escalateNote.trim() } });
+      setShowEscalate(false);
+      toast.success(res.managerName ? `Escalated to ${res.managerName} (layer ${res.layer}) with your note` : "Escalated to your manager");
       await loadTicketData();
     } catch (err) {
       toast.error(err.message || "Failed to escalate to manager");
@@ -699,11 +738,12 @@ export default function TicketDetail() {
     }
     setAddingTeam(true);
     try {
-      await ticketsApi.addTeam(id, {
+      const res = await ticketsApi.addTeam(id, {
         team_id: parseInt(newTeamId),
-        is_primary: ticketTeams.length === 0,
         notes: newTeamNotes.trim() || null,
       });
+      const name = teams.find((t) => t.id === parseInt(newTeamId))?.name || "Team";
+      toast.success(`${name} added as team ${res.team_seq} — its SLA has started`);
       setShowAddTeamModal(false);
       setNewTeamId("");
       setNewTeamNotes("");
@@ -733,12 +773,12 @@ export default function TicketDetail() {
     }
   };
 
-  const handleCompleteTeamWork = async (teamId) => {
+  const handleCompleteTeamWork = async (teamId, teamName) => {
     try {
       const result = await ticketsApi.completeTeamWork(id, teamId, "");
-      if (result.allTeamsComplete && result.ticketResolved) {
-        toast.success("All teams have completed their work. Ticket has been automatically resolved!");
-      }
+      toast.success(result.ticketResolved
+        ? "Every team has finished — the request is resolved"
+        : `${teamName || "The team"}'s part is done${result.remainingTeams ? ` — ${result.remainingTeams} team${result.remainingTeams > 1 ? "s" : ""} still working` : ""}`);
       await loadTicketData();
     } catch (err) {
       toast.error(err.message || "Failed to mark team work as complete");
@@ -841,6 +881,73 @@ export default function TicketDetail() {
     return { text: `${timeText} left`, tone: "emerald", overdue: false };
   };
 
+  /** Compact SLA line for the sidebar cards. */
+  const renderSlaRow = (label, due, remainingMs, metAt, breached) => {
+    const r = getSlaRemaining(due, remainingMs);
+    return (
+      <div key={label} className="flex items-center justify-between">
+        <span className="text-xs text-[var(--fg-muted)]">{label}</span>
+        {breached ? (
+          <Badge tone="rose" className="text-xs">Breached</Badge>
+        ) : metAt ? (
+          <span className="text-xs font-medium text-emerald-400">✓ Met</span>
+        ) : r ? (
+          <span className={`text-xs font-medium ${r.tone === "rose" ? "text-rose-400" : r.tone === "amber" ? "text-amber-400" : "text-emerald-400"}`}>{r.text}</span>
+        ) : (
+          <span className="text-xs font-medium text-[var(--fg-muted)]">No target</span>
+        )}
+      </div>
+    );
+  };
+
+  /** Response / resolution card for the SLA tab. */
+  const renderSlaCard = (title, due, metAt, breachedFlag, remainingMs) => {
+    const breached = !!breachedFlag;
+    const met = !!metAt;
+    const remaining = getSlaRemaining(due, remainingMs);
+    return (
+      <div key={title} className={cn(
+        "rounded-xl border p-4",
+        breached ? "border-rose-500/30 bg-rose-500/5"
+          : met ? "border-emerald-500/30 bg-emerald-500/5"
+          : "border-[var(--border-default)] bg-[var(--bg-base)]"
+      )}>
+        <div className="flex items-center justify-between mb-4">
+          <span className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">{title}</span>
+          <Badge tone={breached ? "rose" : met ? "emerald" : "amber"} className="text-xs">
+            {breached ? "Breached" : met ? "Met" : "Pending"}
+          </Badge>
+        </div>
+        <div className="space-y-3">
+          <div className="flex justify-between text-sm">
+            <span className="text-[var(--fg-muted)]">Due at</span>
+            <span className="text-[var(--fg-primary)] font-medium">{due ? formatDate(due) : "No target"}</span>
+          </div>
+          {met && (
+            <div className="flex justify-between text-sm">
+              <span className="text-[var(--fg-muted)]">Met at</span>
+              <span className="text-emerald-400 font-medium">{formatDate(metAt)}</span>
+            </div>
+          )}
+          {!met && !breached && remaining && (
+            <div className="flex justify-between text-sm">
+              <span className="text-[var(--fg-muted)]">Remaining</span>
+              <span className={cn("font-semibold", remaining.tone === "rose" ? "text-rose-400" : remaining.tone === "amber" ? "text-amber-400" : "text-emerald-400")}>
+                {remaining.text}
+              </span>
+            </div>
+          )}
+          {breached && (
+            <div className="flex justify-between text-sm">
+              <span className="text-[var(--fg-muted)]">Breached</span>
+              <span className="text-rose-400 font-semibold">{remaining ? remaining.text : "Yes"}</span>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   // ── History event config ──────────────────────────────────────
   const HISTORY_EVENT_CONFIG = {
     "ticket.created":          { icon: "plus",       label: "Created",            color: "text-emerald-400" },
@@ -854,8 +961,8 @@ export default function TicketDetail() {
     "ticket.tag_removed":      { icon: "tag",        label: "Tag Removed",        color: "text-slate-400" },
     "ticket.team_added":       { icon: "teams",      label: "Team Added",         color: "text-indigo-400" },
     "ticket.team_removed":     { icon: "teams",      label: "Team Removed",       color: "text-slate-400" },
-    "ticket.team_completed":   { icon: "checkCircle", label: "Team Completed",    color: "text-emerald-400" },
-    "ticket.team_reopened":    { icon: "refresh",    label: "Team Reopened",       color: "text-amber-400" },
+    "ticket.team_completed":   { icon: "checkCircle", label: "Team Part Done",    color: "text-emerald-400" },
+    "ticket.team_reopened":    { icon: "refresh",    label: "Team Part Reopened",  color: "text-amber-400" },
     "ticket.auto_resolved":    { icon: "check",      label: "Auto Resolved",      color: "text-emerald-400" },
     "ticket.sent_for_approval":{ icon: "shield",     label: "Sent for Approval",  color: "text-violet-400" },
     "approval.delegated":      { icon: "share",      label: "Approval Delegated", color: "text-cyan-400" },
@@ -1064,7 +1171,17 @@ export default function TicketDetail() {
                 {/* Work-the-ticket actions — only the agent who owns this ticket (on
                     its current team, assigned, or admin) and only after it's left the
                     NOC triage queue. */}
-                {canWork && !inTriageQueue && ["open", "pending", "in_progress", "on_hold"].includes(ticket.status_key) && (
+                {/* A collaborating team's member only resolves their team's part. */}
+                {collabOnly && ticket.viewer_collab_team.status === "active" && WORKING_STATUSES.includes(ticket.status_key) && (
+                  <ToolbarAction
+                    icon="checkCircle"
+                    label={`Resolve ${ticket.viewer_collab_team.team_name}'s part`}
+                    onClick={() => handleQuickStatus("solved")}
+                    loading={actionLoading === "solved"}
+                    tone="success"
+                  />
+                )}
+                {canWork && !collabOnly && !inTriageQueue && WORKING_STATUSES.includes(ticket.status_key) && (
                   withManager ? (
                     /* Escalated: only the manager holding the CURRENT layer (or an
                        admin) acts — hand it back to an engineer (with a comment),
@@ -1086,7 +1203,7 @@ export default function TicketDetail() {
                         />
                         <ToolbarAction
                           icon="checkCircle"
-                          label="Resolve"
+                          label={hasCollaborators ? "Resolve team 1's part" : "Resolve"}
                           onClick={() => handleQuickStatus("solved")}
                           loading={actionLoading === "solved"}
                           tone="success"
@@ -1136,7 +1253,7 @@ export default function TicketDetail() {
                       {/* Escalate up the reporting hierarchy: the button names who
                           it goes to (L1 = the viewer's manager, or the team manager
                           if no reporting line is set). Hidden for the top of the chain. */}
-                      {["open", "pending", "in_progress"].includes(ticket.status_key) && escalation?.viewer_can_escalate && escalation.next_for_viewer && (
+                      {["open", "pending", "in_progress", "partially_resolved"].includes(ticket.status_key) && escalation?.viewer_can_escalate && escalation.next_for_viewer && (
                         <ToolbarAction
                           icon="arrowUp"
                           label={`Escalate to ${escalation.next_for_viewer.full_name.split(" ")[0]}`}
@@ -1152,10 +1269,10 @@ export default function TicketDetail() {
                           loading={actionLoading === "in_progress"}
                         />
                       )}
-                      {["open", "pending", "in_progress"].includes(ticket.status_key) && (
+                      {["open", "pending", "in_progress", "partially_resolved"].includes(ticket.status_key) && (
                         <ToolbarAction
                           icon="checkCircle"
-                          label="Resolve"
+                          label={resolveLabel}
                           onClick={() => handleQuickStatus("solved")}
                           loading={actionLoading === "solved"}
                           tone="success"
@@ -1645,9 +1762,26 @@ export default function TicketDetail() {
                                 {/* SLA target set on creation and re-set on every (re)assignment. */}
                                 {event.event_type === "sla.assigned" && (
                                   <p className="text-sm text-[var(--fg-secondary)] mt-2 ml-[88px]">
-                                    {event.payload?.restarted ? "SLA restarted after reopening" : "SLA target set"}
-                                    {event.routed_team && <> for <span className="font-semibold text-[var(--fg-primary)]">{event.routed_team}</span></>}
+                                    {event.payload?.restarted ? "SLA restarted after reopening" : event.payload?.collaboration ? "SLA started" : "SLA target set"}
+                                    {event.routed_team && <> for {event.payload?.team_seq && <TeamTag seq={event.payload.team_seq} size="sm" />} <span className="font-semibold text-[var(--fg-primary)]">{event.routed_team}</span></>}
                                   </p>
+                                )}
+                                {/* Collaboration: teams brought in, finishing / reopening their part, removed. */}
+                                {["ticket.team_added", "ticket.team_completed", "ticket.team_reopened", "ticket.team_removed"].includes(event.event_type) && (
+                                  <p className="text-sm text-[var(--fg-secondary)] mt-2 ml-[88px] flex flex-wrap items-center gap-1.5">
+                                    {event.payload?.team_seq && <TeamTag seq={event.payload.team_seq} size="sm" />}
+                                    <span className="font-semibold text-[var(--fg-primary)]">{event.team_name || "Team"}</span>
+                                    {{
+                                      "ticket.team_added": "brought in to collaborate — its SLA started",
+                                      "ticket.team_completed": "finished its part",
+                                      "ticket.team_reopened": "part reopened — a new SLA started",
+                                      "ticket.team_removed": "removed from the request",
+                                    }[event.event_type]}
+                                    {event.payload?.notes && <span className="basis-full text-xs text-[var(--fg-muted)] italic">“{event.payload.notes}”</span>}
+                                  </p>
+                                )}
+                                {event.event_type === "ticket.escalated_to_manager" && event.payload?.reason && (
+                                  <p className="text-xs text-[var(--fg-muted)] italic mt-2 ml-[88px]">Note: “{event.payload.reason}”</p>
                                 )}
                                 {/* Files attached — to the request, or with a message. */}
                                 {(event.event_type === "ticket.attachments_added" || (event.event_type === "ticket.commented" && event.payload?.attachments?.length)) && (
@@ -1736,7 +1870,9 @@ export default function TicketDetail() {
                                 {slaData.cycle > 1 && <Badge tone="amber" size="sm">SLA cycle {slaData.cycle} · after reopening</Badge>}
                               </h3>
                               <p className="text-xs text-[var(--fg-muted)]">
-                                Response target: {slaData.response_minutes ?? "N/A"}m · Resolution target: {slaData.resolve_minutes ?? "N/A"}m
+                                {slaData.team_slas?.length > 1
+                                  ? `${slaData.team_slas.length} teams on this request, each on its own SLA`
+                                  : <>Response target: {slaData.response_minutes ?? "N/A"}m · Resolution target: {slaData.resolve_minutes ?? "N/A"}m</>}
                                 {slaData.cycle > 1 && slaData.cycle_started_at && <> · started {formatDate(slaData.cycle_started_at)}</>}
                               </p>
                             </>
@@ -1753,108 +1889,33 @@ export default function TicketDetail() {
                       </div>
                     </div>
 
-                    {/* Response, Resolution & (NOC) Triage SLA Cards */}
+                    {/* One block per team: 1 = assigned, 2, 3 … = collaborating, each on its own SLA. */}
+                    {(slaData.team_slas || []).map((ts) => (
+                      <div key={`sla-team-${ts.seq}`} className="space-y-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <TeamTag seq={ts.seq} />
+                          <span className="text-sm font-semibold text-[var(--fg-primary)]">{ts.team_name || "Team"}</span>
+                          <span className="text-xs text-[var(--fg-muted)]">
+                            {ts.seq === 1 ? "Assigned team" : "Collaborating team"} · {ts.policy_name || "No SLA policy"}
+                            {ts.has_policy && ts.response_minutes != null && ` · ${ts.response_minutes}m / ${ts.resolve_minutes}m`}
+                          </span>
+                          {slaData.team_slas.length > 1 && (
+                            <Badge tone={ts.part_status === "completed" ? "emerald" : "amber"} size="sm" className="sm:ml-auto">
+                              {ts.part_status === "completed" ? "Part done" : "Working"}
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          {renderSlaCard("Response SLA", ts.response_due_at, ts.response_met_at, ts.response_breached, ts.response_remaining_ms)}
+                          {renderSlaCard("Resolution SLA", ts.resolve_due_at, ts.resolve_met_at, ts.resolve_breached, ts.resolve_remaining_ms)}
+                        </div>
+                        {ts.seq > 1 && ts.started_at && (
+                          <p className="text-[11px] text-[var(--fg-muted)]">Started {formatDate(ts.started_at)}, when {ts.team_name} was brought in.</p>
+                        )}
+                      </div>
+                    ))}
+
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {/* Response + Resolution show only once the team SLA has started
-                          (a NOC-triage ticket only has the Triage SLA below). */}
-                      {slaData.team_sla_present && (<>
-                      {/* Response SLA */}
-                      {(() => {
-                        const breached = !!slaData.response_breached;
-                        const met = !!slaData.response_met_at;
-                        const remaining = getSlaRemaining(slaData.response_due_at, slaData.response_remaining_ms);
-                        return (
-                          <div className={cn(
-                            "rounded-xl border p-4",
-                            breached ? "border-rose-500/30 bg-rose-500/5"
-                              : met ? "border-emerald-500/30 bg-emerald-500/5"
-                              : "border-[var(--border-default)] bg-[var(--bg-base)]"
-                          )}>
-                            <div className="flex items-center justify-between mb-4">
-                              <span className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">Response SLA</span>
-                              <Badge tone={breached ? "rose" : met ? "emerald" : "amber"} className="text-xs">
-                                {breached ? "Breached" : met ? "Met" : "Pending"}
-                              </Badge>
-                            </div>
-                            <div className="space-y-3">
-                              <div className="flex justify-between text-sm">
-                                <span className="text-[var(--fg-muted)]">Due at</span>
-                                <span className="text-[var(--fg-primary)] font-medium">{formatDate(slaData.response_due_at)}</span>
-                              </div>
-                              {met && (
-                                <div className="flex justify-between text-sm">
-                                  <span className="text-[var(--fg-muted)]">Met at</span>
-                                  <span className="text-emerald-400 font-medium">{formatDate(slaData.response_met_at)}</span>
-                                </div>
-                              )}
-                              {!met && !breached && remaining && (
-                                <div className="flex justify-between text-sm">
-                                  <span className="text-[var(--fg-muted)]">Remaining</span>
-                                  <span className={cn("font-semibold", remaining.tone === "rose" ? "text-rose-400" : remaining.tone === "amber" ? "text-amber-400" : "text-emerald-400")}>
-                                    {remaining.text}
-                                  </span>
-                                </div>
-                              )}
-                              {breached && (
-                                <div className="flex justify-between text-sm">
-                                  <span className="text-[var(--fg-muted)]">Breached</span>
-                                  <span className="text-rose-400 font-semibold">{remaining ? remaining.text : "Yes"}</span>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })()}
-
-                      {/* Resolution SLA */}
-                      {(() => {
-                        const breached = !!slaData.resolve_breached;
-                        const met = !!slaData.resolve_met_at;
-                        const remaining = getSlaRemaining(slaData.resolve_due_at, slaData.resolve_remaining_ms);
-                        return (
-                          <div className={cn(
-                            "rounded-xl border p-4",
-                            breached ? "border-rose-500/30 bg-rose-500/5"
-                              : met ? "border-emerald-500/30 bg-emerald-500/5"
-                              : "border-[var(--border-default)] bg-[var(--bg-base)]"
-                          )}>
-                            <div className="flex items-center justify-between mb-4">
-                              <span className="text-xs font-semibold text-[var(--fg-muted)] uppercase tracking-wider">Resolution SLA</span>
-                              <Badge tone={breached ? "rose" : met ? "emerald" : "amber"} className="text-xs">
-                                {breached ? "Breached" : met ? "Met" : "Pending"}
-                              </Badge>
-                            </div>
-                            <div className="space-y-3">
-                              <div className="flex justify-between text-sm">
-                                <span className="text-[var(--fg-muted)]">Due at</span>
-                                <span className="text-[var(--fg-primary)] font-medium">{formatDate(slaData.resolve_due_at)}</span>
-                              </div>
-                              {met && (
-                                <div className="flex justify-between text-sm">
-                                  <span className="text-[var(--fg-muted)]">Met at</span>
-                                  <span className="text-emerald-400 font-medium">{formatDate(slaData.resolve_met_at)}</span>
-                                </div>
-                              )}
-                              {!met && !breached && remaining && (
-                                <div className="flex justify-between text-sm">
-                                  <span className="text-[var(--fg-muted)]">Remaining</span>
-                                  <span className={cn("font-semibold", remaining.tone === "rose" ? "text-rose-400" : remaining.tone === "amber" ? "text-amber-400" : "text-emerald-400")}>
-                                    {remaining.text}
-                                  </span>
-                                </div>
-                              )}
-                              {breached && (
-                                <div className="flex justify-between text-sm">
-                                  <span className="text-[var(--fg-muted)]">Breached</span>
-                                  <span className="text-rose-400 font-semibold">{remaining ? remaining.text : "Yes"}</span>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })()}
-                      </>)}
-
                       {/* Triage SLA — only for tickets that passed through the NOC queue */}
                       {slaData.triage_present && (() => {
                         const met = !!slaData.triage_met_at;        // reassigned out of NOC
@@ -1949,11 +2010,14 @@ export default function TicketDetail() {
                                     <span className="text-xs text-[var(--fg-muted)]">
                                       {formatDate(first.started_at)} → ended {formatDate(first.ended_at)}
                                       {first.ended_reason === "reopened" && <> (reopened{first.ended_by_name ? ` by ${first.ended_by_name}` : ""})</>}
+                                      {first.ended_reason === "removed" && <> (team removed)</>}
+                                      {first.ended_reason === "team_reopened" && <> (team's part reopened)</>}
                                     </span>
                                   </div>
                                   {entries.map((h, i) => (
                                     <div key={i} className="space-y-1.5 pl-3 border-l-2 border-[var(--border-default)]">
-                                      <p className="text-xs font-medium text-[var(--fg-secondary)]">
+                                      <p className="text-xs font-medium text-[var(--fg-secondary)] flex items-center gap-1.5">
+                                        {h.kind === "team" && h.team_seq && <TeamTag seq={h.team_seq} size="sm" />}
                                         {h.kind === "triage"
                                           ? `${h.team_name || "NOC"} triage · ${h.target_minutes}m${h.priority_label ? ` · ${h.priority_label}` : ""}`
                                           : `${h.policy_name || "Team SLA"}${h.team_name ? ` · ${h.team_name}` : ""}${h.priority_label ? ` · ${h.priority_label}` : ""}`}
@@ -2300,57 +2364,37 @@ export default function TicketDetail() {
                 </div>
               </div>
             )}
-            {slaData?.team_sla_present && (
-              <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-card)] overflow-hidden animate-fade-up" style={{ animationDelay: "180ms" }}>
-                <div className="px-5 py-4 border-b border-[var(--border-default)] flex items-center justify-between gap-2">
-                  <span className="flex items-center gap-2.5 min-w-0">
-                    <span className="h-8 w-8 rounded-lg bg-amber-500/10 text-amber-500 flex items-center justify-center shrink-0">
-                      <Icon name="sla" size={16} />
+            {/* One SLA card per team working the request — numbered: 1 = the
+                assigned team, 2, 3 … = teams brought in to collaborate. */}
+            {(slaData?.team_slas || []).map((ts) => {
+              const multi = slaData.team_slas.length > 1;
+              return (
+                <div key={`team-sla-${ts.seq}`} className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-card)] overflow-hidden animate-fade-up" style={{ animationDelay: "180ms" }}>
+                  <div className="px-5 py-4 border-b border-[var(--border-default)] flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-2.5 min-w-0">
+                      <span className="h-8 w-8 rounded-lg bg-amber-500/10 text-amber-500 flex items-center justify-center shrink-0">
+                        <Icon name="sla" size={16} />
+                      </span>
+                      <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">SLA</h2>
                     </span>
-                    <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">SLA</h2>
-                  </span>
-                  <span className="text-[11px] text-[var(--fg-muted)] truncate">{ticket.team_name || slaData.policy_name}</span>
-                </div>
-                <div className="p-4 space-y-2.5">
-                  {(() => {
-                    const r = getSlaRemaining(slaData.response_due_at, slaData.response_remaining_ms);
-                    const met = !!slaData.response_met_at;
-                    return (
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      <TeamTag seq={ts.seq} />
+                      <span className="text-[12px] font-medium text-[var(--fg-secondary)] truncate">{ts.team_name || ts.policy_name}</span>
+                    </span>
+                  </div>
+                  <div className="p-4 space-y-2.5">
+                    {multi && (
                       <div className="flex items-center justify-between">
-                        <span className="text-xs text-[var(--fg-muted)]">Response</span>
-                        {slaData.response_breached ? (
-                          <Badge tone="rose" className="text-xs">Breached</Badge>
-                        ) : met ? (
-                          <span className="text-xs font-medium text-emerald-400">✓ Met</span>
-                        ) : r ? (
-                          <span className={`text-xs font-medium ${r.tone === "rose" ? "text-rose-400" : r.tone === "amber" ? "text-amber-400" : "text-emerald-400"}`}>{r.text}</span>
-                        ) : (
-                          <span className="text-xs font-medium text-emerald-400">Met</span>
-                        )}
+                        <span className="text-[11px] text-[var(--fg-muted)]">{ts.seq === 1 ? "Assigned team" : "Collaborating"}</span>
+                        <Badge tone={ts.part_status === "completed" ? "emerald" : "amber"} size="sm">{ts.part_status === "completed" ? "Part done" : "Working"}</Badge>
                       </div>
-                    );
-                  })()}
-                  {(() => {
-                    const r = getSlaRemaining(slaData.resolve_due_at, slaData.resolve_remaining_ms);
-                    const met = !!slaData.resolve_met_at;
-                    return (
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs text-[var(--fg-muted)]">Resolution</span>
-                        {slaData.resolve_breached ? (
-                          <Badge tone="rose" className="text-xs">Breached</Badge>
-                        ) : met ? (
-                          <span className="text-xs font-medium text-emerald-400">✓ Met</span>
-                        ) : r ? (
-                          <span className={`text-xs font-medium ${r.tone === "rose" ? "text-rose-400" : r.tone === "amber" ? "text-amber-400" : "text-emerald-400"}`}>{r.text}</span>
-                        ) : (
-                          <span className="text-xs font-medium text-emerald-400">Met</span>
-                        )}
-                      </div>
-                    );
-                  })()}
+                    )}
+                    {renderSlaRow("Response", ts.response_due_at, ts.response_remaining_ms, ts.response_met_at, ts.response_breached)}
+                    {renderSlaRow("Resolution", ts.resolve_due_at, ts.resolve_remaining_ms, ts.resolve_met_at, ts.resolve_breached)}
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })}
             {slaData?.manager_present && (
               <div className="rounded-2xl border border-violet-500/30 bg-[var(--bg-elevated)] shadow-[var(--shadow-card)] overflow-hidden animate-fade-up" style={{ animationDelay: "180ms" }}>
                 <div className="px-5 py-4 border-b border-[var(--border-default)] flex items-center justify-between gap-2">
@@ -2434,7 +2478,9 @@ export default function TicketDetail() {
               </div>
             )}
 
-            {/* Teams Panel */}
+            {/* Teams — 1 is the team the request is assigned to; 2, 3 … were brought
+                in to collaborate, each on its own SLA. Each team finishes its own
+                part; the request is resolved once every team is done. */}
             {isAgent && (
               <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-card)] overflow-hidden animate-fade-up" style={{ animationDelay: "210ms" }}>
                 <div className={`px-5 py-4 flex items-center justify-between${ticketTeams.length > 0 ? " border-b border-[var(--border-default)]" : ""}`}>
@@ -2444,92 +2490,97 @@ export default function TicketDetail() {
                     </span>
                     <h2 className="text-[15px] font-semibold text-[var(--fg-primary)] tracking-tight">Teams</h2>
                   </span>
-                  <button
-                    onClick={() => setShowAddTeamModal(true)}
-                    className="flex items-center gap-1 text-xs font-medium text-[var(--accent)] hover:underline"
-                  >
-                    <Icon name="plus" size={11} /> Add
-                  </button>
-                </div>
-                {ticketTeams.length > 0 && (
-                <div className="p-3 space-y-2">
-                  {ticketTeams.map((tt) => (
-                      <div key={tt.team_id} className="p-2 rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)]">
-                        <div className="flex items-center justify-between text-xs">
-                          <div className="flex items-center gap-2">
-                            <span className="text-[var(--fg-primary)] font-medium">{tt.team_name}</span>
-                            {tt.is_primary && (
-                              <Badge tone="blue" className="text-[10px]">Primary</Badge>
-                            )}
-                          </div>
-                          <Badge
-                            tone={tt.status === "completed" ? "emerald" : tt.status === "transferred" ? "slate" : "amber"}
-                            className="text-[10px] capitalize"
-                          >
-                            {tt.status}
-                          </Badge>
-                        </div>
-                        {tt.status === "completed" && tt.completed_at && (
-                          <p className="text-[10px] text-[var(--fg-muted)] mt-1">
-                            Completed {getTimeAgo(tt.completed_at)}
-                            {tt.completion_notes && `: ${tt.completion_notes}`}
-                          </p>
-                        )}
-                        <div className="flex items-center gap-1 mt-2">
-                          {tt.status === "active" ? (
-                            <button
-                              onClick={() => handleCompleteTeamWork(tt.team_id)}
-                              className="flex-1 py-1 px-2 text-[10px] font-medium rounded bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
-                            >
-                              Mark Complete
-                            </button>
-                          ) : tt.status === "completed" && (
-                            <button
-                              onClick={() => handleReopenTeamWork(tt.team_id)}
-                              className="flex-1 py-1 px-2 text-[10px] font-medium rounded bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors"
-                            >
-                              Reopen
-                            </button>
-                          )}
-                          {!tt.is_primary && tt.status !== "completed" && (
-                            <>
-                              <button
-                                onClick={() => handleSetPrimaryTeam(tt.team_id)}
-                                className="p-1 text-[var(--fg-muted)] hover:text-blue-400"
-                                title="Set as primary"
-                              >
-                                <Icon name="star" size={12} />
-                              </button>
-                              <button
-                                onClick={() => handleRemoveTeam(tt.team_id)}
-                                className="p-1 text-[var(--fg-muted)] hover:text-rose-400"
-                                title="Remove team"
-                              >
-                                <Icon name="close" size={12} />
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    ))
-                  }
-                  {ticketTeams.length > 1 && (
-                    <div className="mt-2 pt-2 border-t border-[var(--border-default)]">
-                      <div className="flex items-center justify-between text-[10px]">
-                        <span className="text-[var(--fg-muted)]">Progress</span>
-                        <span className="text-[var(--fg-primary)] font-medium">
-                          {ticketTeams.filter(t => t.status === "completed").length}/{ticketTeams.length} teams complete
-                        </span>
-                      </div>
-                      <div className="mt-1 h-1.5 bg-[var(--bg-base)] rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-emerald-500 transition-all duration-300"
-                          style={{ width: `${(ticketTeams.filter(t => t.status === "completed").length / ticketTeams.length) * 100}%` }}
-                        />
-                      </div>
-                    </div>
+                  {canAddTeam && (
+                    <button
+                      onClick={() => setShowAddTeamModal(true)}
+                      className="flex items-center gap-1 text-xs font-medium text-[var(--accent)] hover:underline"
+                    >
+                      <Icon name="plus" size={11} /> Add team
+                    </button>
                   )}
                 </div>
+                {ticketTeams.length === 0 ? (
+                  <p className="px-5 pb-4 -mt-1 text-xs text-[var(--fg-muted)] leading-relaxed">
+                    {ticket.team_name ? <><TeamTag seq={1} size="sm" /> <span className="font-medium text-[var(--fg-secondary)]">{ticket.team_name}</span> is working this request.</> : "No team yet."}
+                    {canAddTeam && " Bring in another team to collaborate — it gets its own SLA."}
+                  </p>
+                ) : (
+                  <div className="p-3 space-y-2">
+                    {ticketTeams.map((tt) => {
+                      const seq = tt.seq || (tt.is_primary ? 1 : null);
+                      const canFinish = tt.status === "active" && (tt.viewer_is_member || isAdminUser) && WORKING_STATUSES.includes(ticket.status_key);
+                      const canReopenPart = tt.status === "completed" && (tt.viewer_is_member || isAdminUser || ticket.viewer_is_team_member)
+                        && ["in_progress", "partially_resolved", "on_hold", "pending", "open", "solved"].includes(ticket.status_key);
+                      const canRemove = !tt.is_primary && tt.status === "active" && (isAdminUser || ticket.viewer_is_team_member || viewerIsAssignee);
+                      return (
+                        <div key={tt.team_id} className="p-2.5 rounded-lg bg-[var(--bg-base)] border border-[var(--border-default)]">
+                          <div className="flex items-center gap-2 min-w-0">
+                            {seq && <TeamTag seq={seq} />}
+                            <span className="text-sm font-medium text-[var(--fg-primary)] truncate">{tt.team_name}</span>
+                            <span className="text-[10px] text-[var(--fg-muted)] shrink-0">{tt.is_primary ? "Assigned" : "Collaborating"}</span>
+                            <Badge tone={tt.status === "completed" ? "emerald" : "amber"} size="sm" className="ml-auto shrink-0">
+                              {tt.status === "completed" ? "Done" : "Working"}
+                            </Badge>
+                          </div>
+                          {!tt.is_primary && tt.notes && (
+                            <p className="text-[11px] text-[var(--fg-muted)] mt-1.5 line-clamp-2">“{tt.notes}”</p>
+                          )}
+                          {tt.status === "completed" && tt.completed_at && (
+                            <p className="text-[10px] text-[var(--fg-muted)] mt-1">
+                              Done {getTimeAgo(tt.completed_at)}{tt.completed_by_name ? ` by ${tt.completed_by_name}` : ""}
+                              {tt.completion_notes && ` — ${tt.completion_notes}`}
+                            </p>
+                          )}
+                          {(canFinish || canReopenPart || canRemove) && (
+                            <div className="flex items-center gap-1 mt-2">
+                              {canFinish && (
+                                <button
+                                  onClick={() => handleCompleteTeamWork(tt.team_id, tt.team_name)}
+                                  className="flex-1 py-1 px-2 text-[11px] font-medium rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 transition-colors"
+                                >
+                                  Mark part done
+                                </button>
+                              )}
+                              {canReopenPart && (
+                                <button
+                                  onClick={() => handleReopenTeamWork(tt.team_id)}
+                                  className="flex-1 py-1 px-2 text-[11px] font-medium rounded bg-amber-500/10 text-amber-500 hover:bg-amber-500/20 transition-colors"
+                                >
+                                  Reopen part
+                                </button>
+                              )}
+                              {canRemove && (
+                                <button
+                                  onClick={() => handleRemoveTeam(tt.team_id)}
+                                  className="p-1 text-[var(--fg-muted)] hover:text-rose-400"
+                                  title={`Remove ${tt.team_name}`}
+                                  aria-label={`Remove ${tt.team_name}`}
+                                >
+                                  <Icon name="close" size={12} />
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {ticketTeams.length > 1 && (
+                      <div className="mt-2 pt-2 border-t border-[var(--border-default)]">
+                        <div className="flex items-center justify-between text-[10px]">
+                          <span className="text-[var(--fg-muted)]">Progress</span>
+                          <span className="text-[var(--fg-primary)] font-medium">
+                            {ticketTeams.filter((t) => t.status === "completed").length}/{ticketTeams.length} teams done
+                          </span>
+                        </div>
+                        <div className="mt-1 h-1.5 bg-[var(--bg-base)] rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-emerald-500 transition-all duration-300"
+                            style={{ width: `${(ticketTeams.filter((t) => t.status === "completed").length / ticketTeams.length) * 100}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             )}
@@ -3234,11 +3285,48 @@ export default function TicketDetail() {
         </div>
       </Modal>
 
+      {/* Escalate to manager — with a note for them */}
+      <Modal
+        open={showEscalate}
+        onClose={() => actionLoading !== "escalateManager" && setShowEscalate(false)}
+        title={escalation?.next_for_viewer ? `Escalate to ${escalation.next_for_viewer.full_name}` : "Escalate to your manager"}
+        subtitle={escalation?.next_for_viewer?.title || "Tell them why it needs their attention"}
+        size="sm"
+        actions={
+          <>
+            <Button variant="secondary" onClick={() => setShowEscalate(false)} disabled={actionLoading === "escalateManager"}>Cancel</Button>
+            <Button onClick={submitEscalation} loading={actionLoading === "escalateManager"} disabled={escalateNote.trim().length < 5} icon={<Icon name="arrowUp" size={14} />}>
+              Escalate
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <div>
+            <label htmlFor="escalate-note" className="block text-sm font-medium text-[var(--fg-primary)] mb-1.5">Note for the manager</label>
+            <textarea
+              id="escalate-note"
+              autoFocus
+              value={escalateNote}
+              onChange={(e) => setEscalateNote(e.target.value)}
+              rows={4}
+              maxLength={2000}
+              placeholder="What's happened, what you've tried, and what you need from them"
+              className="w-full px-3.5 py-2.5 rounded-xl text-sm resize-none bg-[var(--bg-base)] text-[var(--fg-primary)] placeholder:text-[var(--fg-muted)] border border-[var(--border-default)] focus:outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/20"
+            />
+          </div>
+          <p className="text-xs text-[var(--fg-muted)]">
+            Sent to them with the escalation and kept on the ticket as an internal note. Your team's SLA is paused while they review.
+          </p>
+        </div>
+      </Modal>
+
       {/* Add Team Modal */}
       <Modal
         open={showAddTeamModal}
         onClose={() => setShowAddTeamModal(false)}
-        title="Add Team to Ticket"
+        title="Bring in another team"
+        subtitle="They work this request with you, on their own SLA"
         size="sm"
         actions={
           <>
@@ -3257,8 +3345,8 @@ export default function TicketDetail() {
               <Icon name="info" size={16} className="text-blue-400" />
             </div>
             <div className="text-sm text-[var(--fg-secondary)]">
-              <p>Adding a team allows multiple teams to collaborate on this ticket.</p>
-              <p className="text-xs text-[var(--fg-muted)] mt-1">Each team can mark their work as complete independently.</p>
+              <p>The team gets its own response and resolution SLA, starting now, and is notified with your note.</p>
+              <p className="text-xs text-[var(--fg-muted)] mt-1">Each team resolves its own part. The request shows as Partially Resolved until every team is done.</p>
             </div>
           </div>
 
@@ -3280,8 +3368,8 @@ export default function TicketDetail() {
                         : "bg-[var(--bg-base)] text-[var(--fg-secondary)] border border-[var(--border-default)]"
                     )}
                   >
+                    {tt.seq && <TeamTag seq={tt.seq} size="sm" />}
                     <span>{tt.team_name}</span>
-                    {tt.is_primary && <Badge tone="blue" className="text-[9px] py-0">Primary</Badge>}
                     {tt.status === "completed" && <Icon name="checkCircle" size={12} className="text-emerald-400" />}
                   </div>
                 ))}
@@ -3312,13 +3400,13 @@ export default function TicketDetail() {
             >
               <option value="">Select a team...</option>
               {teams
-                .filter(t => !ticketTeams.some(tt => tt.team_id === t.id) && t.id !== ticket?.team_id)
+                .filter(t => (!ticketIsCorporate || t.corporate_role === "queue") && !ticketTeams.some(tt => tt.team_id === t.id) && t.id !== ticket?.team_id)
                 .map(t => (
                   <option key={t.id} value={t.id}>{t.name}</option>
                 ))
               }
             </select>
-            {teams.filter(t => !ticketTeams.some(tt => tt.team_id === t.id) && t.id !== ticket?.team_id).length === 0 && (
+            {teams.filter(t => (!ticketIsCorporate || t.corporate_role === "queue") && !ticketTeams.some(tt => tt.team_id === t.id) && t.id !== ticket?.team_id).length === 0 && (
               <p className="text-xs text-amber-400 mt-2 flex items-center gap-1">
                 <Icon name="alertTriangle" size={12} />
                 All teams are already assigned to this ticket
@@ -3330,13 +3418,13 @@ export default function TicketDetail() {
           <div>
             <div className="flex items-center gap-2 mb-2">
               <Icon name="edit" size={14} className="text-[var(--fg-muted)]" />
-              <label className="text-sm font-medium text-[var(--fg-primary)]">Notes</label>
-              <span className="text-xs text-[var(--fg-muted)]">(optional)</span>
+              <label className="text-sm font-medium text-[var(--fg-primary)]">Note for the team</label>
+              <span className="text-xs text-[var(--fg-muted)]">(recommended)</span>
             </div>
             <textarea
               value={newTeamNotes}
               onChange={(e) => setNewTeamNotes(e.target.value)}
-              placeholder="Describe what this team will be responsible for..."
+              placeholder="What do you need from them?"
               rows={3}
               className={cn(
                 "w-full px-3 py-2.5 rounded-lg text-sm resize-none transition-all",

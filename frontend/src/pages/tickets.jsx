@@ -368,6 +368,7 @@ export default function Tickets() {
       case "open": return "blue"
       case "pending": return "amber"
       case "in_progress": return "indigo"
+      case "partially_resolved": return "cyan"
       case "on_hold": return "violet"
       case "solved": return "emerald"
       case "closed": return "slate"

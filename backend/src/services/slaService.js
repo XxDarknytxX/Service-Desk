@@ -51,6 +51,28 @@ export function makeSlaService(pool) {
         );
         results.resolveBreaches = resolveResult.affectedRows;
 
+        // Collaborating teams' own SLAs (ticket_team_slas) — while their part is active.
+        const [teamResp] = await pool.query(
+          `UPDATE ticket_team_slas ts
+           INNER JOIN ticket_teams tt ON tt.ticket_id = ts.ticket_id AND tt.team_id = ts.team_id AND tt.status = 'active'
+           INNER JOIN tickets t ON t.id = ts.ticket_id
+           INNER JOIN ticket_statuses s ON s.id = t.status_id
+           SET ts.response_breached = 1
+           WHERE ts.response_breached = 0 AND ts.response_met_at IS NULL AND ts.response_due_at < NOW()
+             AND ts.paused_at IS NULL AND s.is_closed = 0`
+        );
+        const [teamRes] = await pool.query(
+          `UPDATE ticket_team_slas ts
+           INNER JOIN ticket_teams tt ON tt.ticket_id = ts.ticket_id AND tt.team_id = ts.team_id AND tt.status = 'active'
+           INNER JOIN tickets t ON t.id = ts.ticket_id
+           INNER JOIN ticket_statuses s ON s.id = t.status_id
+           SET ts.resolve_breached = 1
+           WHERE ts.resolve_breached = 0 AND ts.resolve_met_at IS NULL AND ts.resolve_due_at < NOW()
+             AND ts.paused_at IS NULL AND s.is_closed = 0`
+        );
+        results.responseBreaches += teamResp.affectedRows;
+        results.resolveBreaches += teamRes.affectedRows;
+
         if (results.responseBreaches > 0 || results.resolveBreaches > 0) {
           console.log(`[SLA Service] Marked breaches - Response: ${results.responseBreaches}, Resolve: ${results.resolveBreaches}`);
         }

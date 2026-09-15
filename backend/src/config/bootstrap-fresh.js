@@ -70,6 +70,7 @@ const MIGRATIONS = [
   "corporate-people-migration.js",    // onboarding (must_set_password), layered manager escalation
   "corporate-sla-migration.js",       // per-app SLA policies, corporate triage / manager-review targets
   "sla-history-attachments-migration.js", // SLA cycles kept on reopen; conversation attachments
+  "team-collaboration-migration.js",  // per-team SLAs for collaborating teams, partially resolved
 ];
 
 // Optional demo data — teams, staff/customer users, ticket templates.

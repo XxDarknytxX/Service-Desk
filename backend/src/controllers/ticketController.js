@@ -80,7 +80,9 @@ const STATUS_TRANSITIONS = {
   draft:       ["open"],                                                  // submit
   open:        ["pending", "in_progress", "on_hold", "solved", "closed"], // NOC triage → route / work / resolve
   pending:     ["in_progress", "on_hold", "open", "solved", "closed"],    // queue → pickup / park / re-triage
-  in_progress: ["on_hold", "pending", "open", "solved", "closed"],        // working → park / hand back / resolve
+  in_progress: ["on_hold", "pending", "open", "solved", "closed", "partially_resolved"], // working → park / hand back / resolve
+  // Some collaborating teams have finished their part, others are still on it.
+  partially_resolved: ["in_progress", "on_hold", "solved", "closed"],
   on_hold:     ["in_progress", "pending", "open", "solved", "closed"],    // resume / re-route / resolve
   solved:      ["in_progress", "closed"],                                 // reopen → in_progress; confirm → closed
   closed:      ["in_progress"],                                           // reopen → in_progress
@@ -105,7 +107,7 @@ const FIELD_LABELS = {
 // Status keys → human labels (auto-transition events log the raw key as "status").
 const STATUS_LABELS = {
   draft: "Draft", open: "Open", pending: "Pending", in_progress: "In Progress",
-  on_hold: "On Hold", solved: "Solved", closed: "Closed",
+  on_hold: "On Hold", solved: "Solved", closed: "Closed", partially_resolved: "Partially Resolved",
 };
 
 // Lookup table configs for batch ID resolution in audit trail
@@ -134,40 +136,56 @@ async function getPriorityKey(pool, priorityId) {
 // both the response and resolution clocks run again from now.
 async function assignSla(pool, ticketId, priorityId, teamId, { restart = false } = {}) {
   try {
-    // Find matching SLA policy IN THE TICKET'S APP (corporate requests use the
-    // targets from Corporate → SLA Settings): team + priority, then priority,
-    // then team, then the app's default. Archived policies never match.
-    const [policies] = await pool.query(
-      `SELECT id, response_minutes, resolve_minutes, use_business_hours, business_hours_id FROM sla_policies
-       WHERE policy_type = 'team' AND archived_at IS NULL
-         AND workspace = (SELECT workspace FROM tickets WHERE id = ?)
-         AND ((applies_to_priority_id = ? AND applies_to_team_id = ?)
-          OR (applies_to_priority_id = ? AND applies_to_team_id IS NULL)
-          OR (applies_to_priority_id IS NULL AND applies_to_team_id = ?)
-          OR (is_default = 1))
-       ORDER BY
-         CASE WHEN applies_to_priority_id = ? AND applies_to_team_id = ? THEN 1
-              WHEN applies_to_priority_id = ? AND applies_to_team_id IS NULL THEN 2
-              WHEN applies_to_priority_id IS NULL AND applies_to_team_id = ? THEN 3
-              ELSE 4 END
-       LIMIT 1`,
-      [ticketId, priorityId, teamId, priorityId, teamId, priorityId, teamId, priorityId, teamId]
-    );
+    const policy = await findSlaPolicy(pool, ticketId, priorityId, teamId);
+    if (!policy) return;
+    const { responseDue, resolveDue } = await slaDueDates(pool, policy);
+    return await writeTicketSla(pool, { ticketId, teamId, policy, responseDue, resolveDue, restart });
+  } catch (e) {
+    console.error("SLA assignment error:", e);
+  }
+}
 
-    if (policies.length === 0) return;
+/**
+ * The SLA policy for a team working a ticket, IN THE TICKET'S APP (corporate
+ * requests use Corporate → SLA Settings): team + priority, then priority, then
+ * team, then the app's default. Archived policies never match.
+ */
+async function findSlaPolicy(pool, ticketId, priorityId, teamId) {
+  const [policies] = await pool.query(
+    `SELECT id, response_minutes, resolve_minutes, use_business_hours, business_hours_id FROM sla_policies
+     WHERE policy_type = 'team' AND archived_at IS NULL
+       AND workspace = (SELECT workspace FROM tickets WHERE id = ?)
+       AND ((applies_to_priority_id = ? AND applies_to_team_id = ?)
+        OR (applies_to_priority_id = ? AND applies_to_team_id IS NULL)
+        OR (applies_to_priority_id IS NULL AND applies_to_team_id = ?)
+        OR (is_default = 1))
+     ORDER BY
+       CASE WHEN applies_to_priority_id = ? AND applies_to_team_id = ? THEN 1
+            WHEN applies_to_priority_id = ? AND applies_to_team_id IS NULL THEN 2
+            WHEN applies_to_priority_id IS NULL AND applies_to_team_id = ? THEN 3
+            ELSE 4 END
+     LIMIT 1`,
+    [ticketId, priorityId, teamId, priorityId, teamId, priorityId, teamId, priorityId, teamId]
+  );
+  return policies[0] || null;
+}
 
-    const policy = policies[0];
-    const now = new Date();
-    let responseDue, resolveDue;
+/** Response + resolution due times for a policy, starting now. */
+async function slaDueDates(pool, policy, now = new Date()) {
+  if (policy.use_business_hours) {
+    return {
+      responseDue: await calculateBusinessHoursDue(pool, now, policy.response_minutes, policy.business_hours_id),
+      resolveDue: await calculateBusinessHoursDue(pool, now, policy.resolve_minutes, policy.business_hours_id),
+    };
+  }
+  return {
+    responseDue: new Date(now.getTime() + policy.response_minutes * 60000),
+    resolveDue: new Date(now.getTime() + policy.resolve_minutes * 60000),
+  };
+}
 
-    if (policy.use_business_hours) {
-      responseDue = await calculateBusinessHoursDue(pool, now, policy.response_minutes, policy.business_hours_id);
-      resolveDue = await calculateBusinessHoursDue(pool, now, policy.resolve_minutes, policy.business_hours_id);
-    } else {
-      responseDue = new Date(now.getTime() + policy.response_minutes * 60000);
-      resolveDue = new Date(now.getTime() + policy.resolve_minutes * 60000);
-    }
-
+async function writeTicketSla(pool, { ticketId, teamId, policy, responseDue, resolveDue, restart }) {
+  try {
     // Upsert ticket_slas
     await pool.query(
       `INSERT INTO ticket_slas (ticket_id, policy_id, response_due_at, resolve_due_at, cycle_started_at)
@@ -420,6 +438,211 @@ async function resolveNextApprover(pool, fromUserId, teamId, workspace, { allowT
   return { next: null, outside };
 }
 
+// ── Team collaboration ────────────────────────────────────────────────────
+// A request can be worked by several teams. Team 1 is the team it's assigned
+// to (tickets.team_id, its SLA in ticket_slas); a team added to collaborate is
+// team 2, 3 … with its OWN response + resolution SLA in ticket_team_slas,
+// started the moment it's added. Each team resolves its own part: while some
+// teams are done and others aren't the request is Partially Resolved; it's
+// Solved once every team has finished.
+
+/**
+ * Keep the team-1 row in ticket_teams pointing at the ticket's current team
+ * (created on demand; re-pointed if NOC or a manager moved the ticket).
+ */
+async function syncPrimaryTeamRow(pool, ticketId) {
+  const [[t]] = await pool.query("SELECT team_id FROM tickets WHERE id = ?", [ticketId]);
+  if (!t?.team_id) return null;
+  const [rows] = await pool.query("SELECT id, team_id, is_primary, seq, status FROM ticket_teams WHERE ticket_id = ?", [ticketId]);
+  const primary = rows.find((r) => r.is_primary);
+  if (primary && primary.team_id === t.team_id) {
+    if (primary.seq !== 1) await pool.query("UPDATE ticket_teams SET seq = 1 WHERE id = ?", [primary.id]);
+    return { ...primary, seq: 1 };
+  }
+  // The ticket moved to a team that was collaborating — it becomes team 1.
+  const dup = rows.find((r) => !r.is_primary && r.team_id === t.team_id);
+  if (dup) {
+    await pool.query("DELETE FROM ticket_team_slas WHERE ticket_id = ? AND team_id = ?", [ticketId, t.team_id]);
+    await pool.query("DELETE FROM ticket_teams WHERE id = ?", [dup.id]);
+  }
+  if (primary) {
+    await pool.query(
+      `UPDATE ticket_teams SET team_id = ?, seq = 1, status = 'active', completed_at = NULL, completed_by = NULL, completion_notes = NULL
+        WHERE id = ?`,
+      [t.team_id, primary.id]
+    );
+    return { ...primary, team_id: t.team_id, seq: 1, status: "active" };
+  }
+  const [ins] = await pool.query(
+    "INSERT INTO ticket_teams (ticket_id, team_id, is_primary, seq, status) VALUES (?, ?, 1, 1, 'active')",
+    [ticketId, t.team_id]
+  );
+  return { id: ins.insertId, team_id: t.team_id, is_primary: 1, seq: 1, status: "active" };
+}
+
+async function collaboratorCount(pool, ticketId) {
+  const [[r]] = await pool.query("SELECT COUNT(*) AS n FROM ticket_teams WHERE ticket_id = ? AND is_primary = 0", [ticketId]);
+  return Number(r.n);
+}
+
+/** Start (or restart) a collaborating team's own response + resolution SLA. */
+async function startTeamSla(pool, ticketId, teamId, seq) {
+  const [[t]] = await pool.query(
+    "SELECT t.priority_id, ts.cycle FROM tickets t LEFT JOIN ticket_slas ts ON ts.ticket_id = t.id WHERE t.id = ?",
+    [ticketId]
+  );
+  const policy = await findSlaPolicy(pool, ticketId, t?.priority_id, teamId);
+  const { responseDue, resolveDue } = policy ? await slaDueDates(pool, policy) : { responseDue: null, resolveDue: null };
+  await pool.query(
+    `INSERT INTO ticket_team_slas (ticket_id, team_id, seq, policy_id, cycle, started_at, response_due_at, resolve_due_at)
+     VALUES (?, ?, ?, ?, ?, NOW(), ?, ?)
+     ON DUPLICATE KEY UPDATE seq = VALUES(seq), policy_id = VALUES(policy_id), cycle = VALUES(cycle), started_at = NOW(),
+       response_due_at = VALUES(response_due_at), resolve_due_at = VALUES(resolve_due_at),
+       response_met_at = NULL, resolve_met_at = NULL, response_breached = 0, resolve_breached = 0, paused_at = NULL`,
+    [ticketId, teamId, seq, policy?.id || null, t?.cycle || 1, responseDue, resolveDue]
+  );
+  await insertEvent(pool, {
+    ticketId, actorId: null, type: "sla.assigned",
+    payload: { policy_id: policy?.id || null, team_id: teamId, team_seq: seq, collaboration: true, response_due_at: responseDue, resolve_due_at: resolveDue },
+  });
+}
+
+/**
+ * Move one team's live SLA into ticket_sla_history and clear it.
+ * isPrimary → ticket_slas (team 1); otherwise that team's ticket_team_slas row.
+ */
+async function archiveTeamSla(pool, ticketId, { teamId = null, isPrimary, cycle = null, reason, actorId }) {
+  const now = new Date();
+  const late = (due, met) => !!due && (met ? new Date(met) > new Date(due) : new Date(due) < now);
+  const [[row]] = isPrimary
+    ? await pool.query(
+        `SELECT ts.*, ts.cycle_started_at AS started_at, sp.name AS policy_name, t.team_id, tm.name AS team_name, 1 AS seq,
+                t.priority_id, tp.label AS priority_label
+           FROM ticket_slas ts JOIN tickets t ON t.id = ts.ticket_id
+           LEFT JOIN sla_policies sp ON sp.id = ts.policy_id
+           LEFT JOIN teams tm ON tm.id = t.team_id
+           LEFT JOIN ticket_priorities tp ON tp.id = t.priority_id
+          WHERE ts.ticket_id = ?`,
+        [ticketId]
+      )
+    : await pool.query(
+        `SELECT tts.*, sp.name AS policy_name, tm.name AS team_name, t.priority_id, tp.label AS priority_label
+           FROM ticket_team_slas tts JOIN tickets t ON t.id = tts.ticket_id
+           LEFT JOIN sla_policies sp ON sp.id = tts.policy_id
+           LEFT JOIN teams tm ON tm.id = tts.team_id
+           LEFT JOIN ticket_priorities tp ON tp.id = t.priority_id
+          WHERE tts.ticket_id = ? AND tts.team_id = ?`,
+        [ticketId, teamId]
+      );
+  if (!row) return null;
+  await pool.query(
+    `INSERT INTO ticket_sla_history
+       (ticket_id, cycle, kind, policy_id, policy_name, team_id, team_name, team_seq, priority_id, priority_label, started_at,
+        response_due_at, response_met_at, response_breached, resolve_due_at, resolve_met_at, resolve_breached,
+        paused_at, ended_at, ended_reason, ended_by)
+     VALUES (?, ?, 'team', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)`,
+    [ticketId, cycle ?? row.cycle ?? 1, row.policy_id, row.policy_name, row.team_id, row.team_name, row.seq, row.priority_id, row.priority_label,
+     row.started_at || row.created_at,
+     row.response_due_at, row.response_met_at, row.response_breached || late(row.response_due_at, row.response_met_at) ? 1 : 0,
+     row.resolve_due_at, row.resolve_met_at, row.resolve_breached || late(row.resolve_due_at, row.resolve_met_at) ? 1 : 0,
+     row.paused_at, reason, actorId]
+  );
+  if (isPrimary) await pool.query("DELETE FROM ticket_slas WHERE ticket_id = ?", [ticketId]);
+  else await pool.query("DELETE FROM ticket_team_slas WHERE ticket_id = ? AND team_id = ?", [ticketId, teamId]);
+  return row;
+}
+
+async function setStatusKey(pool, ticketId, fromKey, toKey, actorId, extra = {}) {
+  const id = await getLookupId(pool, "ticket_statuses", toKey);
+  if (!id) return;
+  await pool.query(`UPDATE tickets SET status_id = ?${toKey === "solved" ? ", solved_at = NOW()" : ""} WHERE id = ?`, [id, ticketId]);
+  await insertEvent(pool, {
+    ticketId, actorId: null, type: "ticket.updated",
+    payload: { changes: { status: { from: fromKey, to: toKey } }, auto: true, ...extra, ...(actorId ? { triggered_by: actorId } : {}) },
+  });
+}
+
+/** Mark one team's part done: its resolution SLA is met. */
+async function completeTeamPart(pool, ticketId, row, actorId, notes = null) {
+  await pool.query(
+    `UPDATE ticket_teams SET status = 'completed', completed_at = NOW(), completed_by = ?, completion_notes = ?
+      WHERE ticket_id = ? AND team_id = ?`,
+    [actorId, notes || null, ticketId, row.team_id]
+  );
+  if (row.is_primary) {
+    await pool.query("UPDATE ticket_slas SET resolve_met_at = NOW() WHERE ticket_id = ? AND resolve_met_at IS NULL", [ticketId]);
+  } else {
+    await pool.query(
+      "UPDATE ticket_team_slas SET resolve_met_at = NOW() WHERE ticket_id = ? AND team_id = ? AND resolve_met_at IS NULL",
+      [ticketId, row.team_id]
+    );
+  }
+  await insertEvent(pool, {
+    ticketId, actorId, type: "ticket.team_completed",
+    payload: { team_id: row.team_id, team_seq: row.seq, notes: notes || null },
+  });
+}
+
+/**
+ * Where the request stands once teams have finished (or reopened, or left):
+ * every team done → Solved; some → Partially Resolved; none → back to In
+ * Progress if it was partially resolved. Returns the resulting status key.
+ */
+async function evaluateTeamResolution(pool, ticketId, actorId) {
+  const [rows] = await pool.query("SELECT status FROM ticket_teams WHERE ticket_id = ?", [ticketId]);
+  const [[t]] = await pool.query(
+    "SELECT s.`key` AS status_key FROM tickets t JOIN ticket_statuses s ON s.id = t.status_id WHERE t.id = ?",
+    [ticketId]
+  );
+  const key = t?.status_key;
+  if (!rows.length || !key) return key;
+  const done = rows.filter((r) => r.status === "completed").length;
+  if (done === rows.length) {
+    if (key !== "solved" && key !== "closed") {
+      await setStatusKey(pool, ticketId, key, "solved", actorId);
+      await pool.query("UPDATE ticket_slas SET resolve_met_at = NOW() WHERE ticket_id = ? AND resolve_met_at IS NULL", [ticketId]);
+      await meetManagerSla(pool, ticketId, "resolved", actorId);
+      await insertEvent(pool, {
+        ticketId, actorId: null, type: "ticket.auto_resolved",
+        payload: { reason: "Every team finished its part", triggered_by: actorId },
+      });
+    }
+    return "solved";
+  }
+  if (done > 0 && ["open", "pending", "in_progress"].includes(key)) {
+    await setStatusKey(pool, ticketId, key, "partially_resolved", actorId);
+    return "partially_resolved";
+  }
+  if (done === 0 && key === "partially_resolved") {
+    await setStatusKey(pool, ticketId, key, "in_progress", actorId);
+    return "in_progress";
+  }
+  return key;
+}
+
+/** Tell a team it has been added to collaborate on a request. */
+async function notifyTeamAdded(pool, ticketId, teamId, actorId, note) {
+  try {
+    const [[t]] = await pool.query(
+      `SELECT t.ticket_number, t.subject, tm.name AS from_team, nt.name AS to_team, u.full_name AS actor
+         FROM tickets t LEFT JOIN teams tm ON tm.id = t.team_id LEFT JOIN teams nt ON nt.id = ?
+         LEFT JOIN users u ON u.id = ? WHERE t.id = ?`,
+      [teamId, actorId, ticketId]
+    );
+    const [members] = await pool.query("SELECT user_id FROM team_members WHERE team_id = ? AND user_id <> ?", [teamId, actorId]);
+    if (!members.length || !t) return;
+    const rows = members.map((m) => [
+      m.user_id, ticketId,
+      `${t.to_team} added to ${t.ticket_number}`,
+      `${t.actor || t.from_team || "A team"} asked ${t.to_team} to collaborate on "${t.subject}"${note ? ` — ${note}` : ""}`,
+      "queue",
+    ]);
+    await pool.query("INSERT INTO notifications (user_id, ticket_id, title, message, type) VALUES ?", [rows]);
+  } catch (e) {
+    console.error("Collaboration notification error:", e);
+  }
+}
+
 // ── Reopen ────────────────────────────────────────────────────────────────
 // A solved / closed ticket that comes back is live work again: its clocks start
 // over from the moment it's reopened — the team's response AND resolution SLA,
@@ -468,23 +691,15 @@ async function archiveSlaCycle(pool, ticketId, actorId) {
     );
     await pool.query("DELETE FROM ticket_triage_slas WHERE ticket_id = ?", [ticketId]);
   }
-  if (team) {
-    const now = new Date();
-    const late = (due, met) => !!due && (met ? new Date(met) > new Date(due) : new Date(due) < now);
-    await pool.query(
-      `INSERT INTO ticket_sla_history
-         (ticket_id, cycle, kind, policy_id, policy_name, team_id, team_name, priority_id, priority_label, started_at,
-          response_due_at, response_met_at, response_breached, resolve_due_at, resolve_met_at, resolve_breached,
-          paused_at, ended_at, ended_reason, ended_by)
-       VALUES (?, ?, 'team', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 'reopened', ?)`,
-      [ticketId, cycle, team.policy_id, team.policy_name, team.team_id, team.team_name, team.priority_id, team.priority_label,
-       team.cycle_started_at || team.created_at,
-       team.response_due_at, team.response_met_at, team.response_breached || late(team.response_due_at, team.response_met_at) ? 1 : 0,
-       team.resolve_due_at, team.resolve_met_at, team.resolve_breached || late(team.resolve_due_at, team.resolve_met_at) ? 1 : 0,
-       team.paused_at, actorId]
-    );
-    await pool.query("DELETE FROM ticket_slas WHERE ticket_id = ?", [ticketId]);
+  if (team) await archiveTeamSla(pool, ticketId, { isPrimary: true, cycle, reason: "reopened", actorId });
+  // Collaborating teams' SLAs belong to the same cycle.
+  const [collab] = await pool.query("SELECT team_id FROM ticket_team_slas WHERE ticket_id = ? ORDER BY seq", [ticketId]);
+  for (const c of collab) {
+    await archiveTeamSla(pool, ticketId, { teamId: c.team_id, isPrimary: false, cycle, reason: "reopened", actorId });
   }
+  // Team 1 is back on it; collaborators' finished parts stay finished (their
+  // work can be reopened from the Teams panel, which starts them a new SLA).
+  await pool.query("UPDATE ticket_teams SET status = 'active', completed_at = NULL, completed_by = NULL WHERE ticket_id = ? AND is_primary = 1", [ticketId]);
   return cycle + 1;
 }
 
@@ -807,8 +1022,10 @@ export function makeTicketController(pool) {
         }
 
         if (req.query.teamId) {
-          where.push("t.team_id = ?");
-          params.push(req.query.teamId);
+          // A team's queue includes requests it was added to collaborate on.
+          where.push(`(t.team_id = ? OR EXISTS (SELECT 1 FROM ticket_teams ttq
+                         WHERE ttq.ticket_id = t.id AND ttq.team_id = ? AND ttq.is_primary = 0 AND ttq.status = 'active'))`);
+          params.push(req.query.teamId, req.query.teamId);
         }
 
         if (req.query.organizationId) {
@@ -932,6 +1149,21 @@ export function makeTicketController(pool) {
         // Files attached to the request itself (not to a message).
         ticket.attachments = (await loadAttachments(pool, ticketId)).filter((a) => !a.comment_id);
 
+        // Collaboration: how many teams are on it, and the viewer's own
+        // collaborating team (if they're on one) — they resolve only that part.
+        if (isAgent(req.user)) {
+          const [collab] = await pool.query(
+            `SELECT tt.team_id, tt.seq, tt.status, tm.name AS team_name,
+                    EXISTS(SELECT 1 FROM team_members m WHERE m.team_id = tt.team_id AND m.user_id = ?) AS mine
+               FROM ticket_teams tt JOIN teams tm ON tm.id = tt.team_id
+              WHERE tt.ticket_id = ? AND tt.is_primary = 0 ORDER BY tt.seq`,
+            [req.user.id, ticketId]
+          );
+          ticket.collaborator_count = collab.length;
+          const mine = collab.find((c) => c.mine);
+          ticket.viewer_collab_team = mine ? { team_id: mine.team_id, seq: mine.seq, status: mine.status, team_name: mine.team_name } : null;
+        }
+
         return send.ok(res, { ticket });
       } catch (e) {
         console.error(e);
@@ -1037,7 +1269,7 @@ export function makeTicketController(pool) {
         const [historyRows] = await pool.query(
           `SELECT h.*, u.full_name AS ended_by_name
              FROM ticket_sla_history h LEFT JOIN users u ON u.id = h.ended_by
-            WHERE h.ticket_id = ? ORDER BY h.cycle, FIELD(h.kind, 'triage', 'team')`,
+            WHERE h.ticket_id = ? ORDER BY h.cycle, FIELD(h.kind, 'triage', 'team'), h.team_seq, h.id`,
           [ticketId]
         );
         const outcome = (due, met, breached) =>
@@ -1047,6 +1279,7 @@ export function makeTicketController(pool) {
           kind: h.kind,
           policy_name: h.policy_name,
           team_name: h.team_name,
+          team_seq: h.team_seq,
           priority_label: h.priority_label,
           started_at: h.started_at,
           ended_at: h.ended_at,
@@ -1066,8 +1299,27 @@ export function makeTicketController(pool) {
         }));
         const currentCycle = rows[0]?.cycle || triage?.cycle || (historyRows.length ? historyRows[historyRows.length - 1].cycle + 1 : 1);
 
+        // Collaborating teams (2, 3 …), each on its own SLA.
+        const [collabSlas] = await pool.query(
+          `SELECT tts.*, tt.status AS part_status, tt.completed_at, tm.name AS team_name,
+                  sp.name AS policy_name, sp.response_minutes, sp.resolve_minutes, sp.use_business_hours, sp.business_hours_id
+             FROM ticket_team_slas tts
+             JOIN ticket_teams tt ON tt.ticket_id = tts.ticket_id AND tt.team_id = tts.team_id
+             LEFT JOIN teams tm ON tm.id = tts.team_id
+             LEFT JOIN sla_policies sp ON sp.id = tts.policy_id
+            WHERE tts.ticket_id = ? ORDER BY tts.seq`,
+          [ticketId]
+        );
+        const [[primaryPart]] = await pool.query(
+          `SELECT tt.status, tt.completed_at, tm.name AS team_name
+             FROM tickets t LEFT JOIN teams tm ON tm.id = t.team_id
+             LEFT JOIN ticket_teams tt ON tt.ticket_id = t.id AND tt.is_primary = 1
+            WHERE t.id = ?`,
+          [ticketId]
+        );
+
         // Nothing to show only if there is no team SLA, no triage SLA, no manager SLA and no history.
-        if (rows.length === 0 && !triage && !manager && !slaHistory.length) return send.ok(res, { sla: null, escalation });
+        if (rows.length === 0 && !triage && !manager && !slaHistory.length && !collabSlas.length) return send.ok(res, { sla: null, escalation });
 
         const sla = rows[0] || null;
         const now = new Date();
@@ -1088,6 +1340,28 @@ export function makeTicketController(pool) {
         let resolveRemainingMs = sla?.resolve_due_at ? Math.max(0, new Date(sla.resolve_due_at) - now) : null;
 
         const triageRemainingMs = triage && triage.due_at ? Math.max(0, new Date(triage.due_at) - now) : null;
+
+        const teamSlaStatus = (dueAt, metAt, breached, remaining, riskMs) =>
+          metAt ? "met" : breached ? "breached" : remaining !== null && remaining < riskMs ? "at_risk" : "on_track";
+        const teamSlas = [];
+        for (const c of collabSlas) {
+          let respMs = c.response_due_at ? Math.max(0, new Date(c.response_due_at) - now) : null;
+          let resMs = c.resolve_due_at ? Math.max(0, new Date(c.resolve_due_at) - now) : null;
+          if (c.use_business_hours && c.business_hours_id) {
+            if (c.response_due_at && !c.response_met_at) respMs = await calcBusinessMsRemaining(pool, now, new Date(c.response_due_at), c.business_hours_id);
+            if (c.resolve_due_at && !c.resolve_met_at) resMs = await calcBusinessMsRemaining(pool, now, new Date(c.resolve_due_at), c.business_hours_id);
+          }
+          teamSlas.push({
+            seq: c.seq, team_id: c.team_id, team_name: c.team_name, is_primary: false,
+            part_status: c.part_status, completed_at: c.completed_at,
+            policy_name: c.policy_name, response_minutes: c.response_minutes, resolve_minutes: c.resolve_minutes,
+            started_at: c.started_at, has_policy: !!c.policy_id,
+            response_due_at: c.response_due_at, response_met_at: c.response_met_at, response_breached: !!c.response_breached,
+            response_remaining_ms: respMs, response_status: teamSlaStatus(c.response_due_at, c.response_met_at, c.response_breached, respMs, 3600000),
+            resolve_due_at: c.resolve_due_at, resolve_met_at: c.resolve_met_at, resolve_breached: !!c.resolve_breached,
+            resolve_remaining_ms: resMs, resolve_status: teamSlaStatus(c.resolve_due_at, c.resolve_met_at, c.resolve_breached, resMs, 14400000),
+          });
+        }
 
         // If using business hours, calculate business-minutes remaining instead of wall clock
         if (sla && useBH && bhId) {
@@ -1141,6 +1415,23 @@ export function makeTicketController(pool) {
                  : (manager.breached || managerRemainingMs === 0) ? "breached"
                  : (managerRemainingMs !== null && managerRemainingMs < 600000) ? "at_risk" : "on_track")
               : null,
+            // Every team's SLA, numbered: 1 = the team the request is assigned
+            // to, 2, 3 … = teams added to collaborate (each on its own clock).
+            team_slas: [
+              ...(sla ? [{
+                seq: 1, team_id: ticket.team_id, team_name: primaryPart?.team_name || null, is_primary: true,
+                part_status: primaryPart?.status || null, completed_at: primaryPart?.completed_at || null,
+                policy_name: sla.policy_name, response_minutes: sla.response_minutes, resolve_minutes: sla.resolve_minutes,
+                started_at: sla.cycle_started_at || sla.created_at, has_policy: true, paused_at: sla.paused_at,
+                response_due_at: sla.response_due_at, response_met_at: sla.response_met_at, response_breached: !!sla.response_breached,
+                response_remaining_ms: responseRemainingMs,
+                response_status: teamSlaStatus(sla.response_due_at, sla.response_met_at, sla.response_breached, responseRemainingMs, 3600000),
+                resolve_due_at: sla.resolve_due_at, resolve_met_at: sla.resolve_met_at, resolve_breached: !!sla.resolve_breached,
+                resolve_remaining_ms: resolveRemainingMs,
+                resolve_status: teamSlaStatus(sla.resolve_due_at, sla.resolve_met_at, sla.resolve_breached, resolveRemainingMs, 14400000),
+              }] : []),
+              ...teamSlas,
+            ],
             // SLA cycles: 1 = as raised; each reopen starts the next one.
             cycle: currentCycle,
             cycle_started_at: sla?.cycle_started_at || (triage && !sla ? triage.started_at : null) || sla?.created_at || null,
@@ -1791,6 +2082,41 @@ export function makeTicketController(pool) {
             }
           }
 
+          // Several teams on the request: "Resolve" finishes the RESOLVER'S part
+          // only (their team's resolution SLA is met). The request is Partially
+          // Resolved until every team has finished, then Solved.
+          if (isAgent(req.user) && newStatusKey === "solved" && (await collaboratorCount(pool, ticketId)) > 0) {
+            await syncPrimaryTeamRow(pool, ticketId);
+            const prIsAdmin = (req.user.roles || []).includes("admin");
+            const [active] = await pool.query(
+              `SELECT tt.team_id, tt.is_primary, tt.seq, tm.name AS team_name,
+                      EXISTS(SELECT 1 FROM team_members m WHERE m.team_id = tt.team_id AND m.user_id = ?) AS mine
+                 FROM ticket_teams tt JOIN teams tm ON tm.id = tt.team_id
+                WHERE tt.ticket_id = ? AND tt.status = 'active' ORDER BY tt.seq`,
+              [req.user.id, ticketId]
+            );
+            const openReview = await getOpenManagerSla(pool, ticketId);
+            // The assignee (e.g. the manager holding an escalation) resolves team 1's part.
+            let parts = active.filter((r) => r.mine || (r.is_primary && current.assignee_id === req.user.id));
+            if (!parts.length && prIsAdmin) parts = active;
+            // While escalated, team 1's part is the current layer's manager's call.
+            if (openReview && !prIsAdmin && req.user.id !== openReview.manager_id) parts = parts.filter((r) => !r.is_primary);
+            if (!parts.length) {
+              return send.forbidden(res, openReview && active.some((r) => r.is_primary)
+                ? `Team 1's part is with ${openReview.manager_name || "the manager"} — only they can resolve it.`
+                : "Only a team working on this request can resolve its part.");
+            }
+            for (const row of parts) await completeTeamPart(pool, ticketId, row, req.user.id);
+            if (parts.some((r) => r.is_primary)) await meetManagerSla(pool, ticketId, "resolved", req.user.id);
+            const status = await evaluateTeamResolution(pool, ticketId, req.user.id);
+            return send.ok(res, {
+              ok: true,
+              status,
+              partially_resolved: status === "partially_resolved",
+              resolved_parts: parts.map((r) => ({ team_id: r.team_id, seq: r.seq, team_name: r.team_name })),
+            });
+          }
+
           // An agent can only resolve/close a ticket that's in their own team's
           // queue (or one they're assigned, or an admin) — once NOC routes a ticket
           // to another team it can no longer resolve it.
@@ -1827,6 +2153,10 @@ export function makeTicketController(pool) {
           // misleading "Closed Date changed"). closed_at is reserved for an actual close.
           if (newStatusKey === "solved") {
             try { await pool.query("UPDATE tickets SET solved_at = NOW() WHERE id = ?", [ticketId]); } catch (_) {}
+            await pool.query(
+              "UPDATE ticket_teams SET status = 'completed', completed_at = NOW(), completed_by = ? WHERE ticket_id = ? AND status = 'active'",
+              [req.user.id, ticketId]
+            );
           }
           if (newStatusKey === "closed") {
             req.body.closed_at = new Date();
@@ -2246,7 +2576,9 @@ export function makeTicketController(pool) {
     escalateToManager: async (req, res) => {
       if (!isAgent(req.user)) return send.forbidden(res);
       const ticketId = Number(req.params.id);
-      const { reason } = req.body;
+      const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+      // The manager needs to know why it's coming to them.
+      if (reason.length < 5) return send.bad(res, "Add a note for the manager explaining why you're escalating.");
       try {
         const [[t]] = await pool.query(
           `SELECT t.team_id, t.priority_id, t.ticket_number, t.subject, t.assignee_id, t.workspace, s.\`key\` AS status_key
@@ -2256,7 +2588,7 @@ export function makeTicketController(pool) {
 
         // Only an active ticket can be escalated — not a draft, solved, or closed
         // one (this also stops re-escalating a ticket the manager already resolved).
-        if (!["open", "pending", "in_progress"].includes(t.status_key)) {
+        if (!["open", "pending", "in_progress", "partially_resolved"].includes(t.status_key)) {
           return send.bad(res, "Only an open ticket can be escalated to the manager.");
         }
 
@@ -2600,173 +2932,160 @@ export function makeTicketController(pool) {
       }
     },
 
-    // GET /api/tickets/:id/teams
-    // Get all teams associated with a ticket
+    // GET /api/tickets/:id/teams — teams on the request, team 1 first.
     getTicketTeams: async (req, res) => {
       const ticketId = Number(req.params.id);
       try {
+        const [[t]] = await pool.query("SELECT requester_id FROM tickets WHERE id = ?", [ticketId]);
+        if (!t) return send.notFound(res, "Ticket not found");
+        if (!isAgent(req.user) && t.requester_id !== req.user.id) return send.forbidden(res);
+        if ((await collaboratorCount(pool, ticketId)) > 0) await syncPrimaryTeamRow(pool, ticketId);
         const [rows] = await pool.query(
-          `SELECT tt.*, t.name as team_name, u.full_name as assigned_by_name
+          `SELECT tt.*, t.name as team_name, u.full_name as assigned_by_name, cu.full_name AS completed_by_name,
+                  EXISTS(SELECT 1 FROM team_members m WHERE m.team_id = tt.team_id AND m.user_id = ?) AS viewer_is_member
            FROM ticket_teams tt
            INNER JOIN teams t ON t.id = tt.team_id
            LEFT JOIN users u ON u.id = tt.assigned_by
+           LEFT JOIN users cu ON cu.id = tt.completed_by
            WHERE tt.ticket_id = ?
-           ORDER BY tt.is_primary DESC, tt.assigned_at ASC`,
-          [ticketId]
+           ORDER BY tt.is_primary DESC, tt.seq ASC, tt.assigned_at ASC`,
+          [req.user.id, ticketId]
         );
-        return send.ok(res, { teams: rows });
+        return send.ok(res, { teams: rows.map((r) => ({ ...r, is_primary: !!r.is_primary, viewer_is_member: !!r.viewer_is_member })) });
       } catch (e) {
         console.error(e);
         return send.serverErr(res);
       }
     },
 
-    // POST /api/tickets/:id/teams
-    // Add a team to a ticket
+    // POST /api/tickets/:id/teams  { team_id, notes }
+    // The team working a request brings in another team to collaborate. The new
+    // team is numbered (2, 3 …) and its own SLA starts now.
     addTicketTeam: async (req, res) => {
       if (!isAgent(req.user)) return send.forbidden(res);
       const ticketId = Number(req.params.id);
-      const { team_id, is_primary, notes } = req.body;
-
-      if (!team_id) return send.bad(res, "Team ID is required");
+      const teamId = Number(req.body?.team_id);
+      const notes = typeof req.body?.notes === "string" ? req.body.notes.trim() : "";
+      if (!teamId) return send.bad(res, "Choose the team to bring in.");
 
       try {
-        // A supporting team must work in the same app as the ticket.
-        const [[tws]] = await pool.query("SELECT workspace FROM tickets WHERE id = ?", [ticketId]);
-        if (!tws) return send.notFound(res);
-        if ((await getTeamWorkspace(pool, Number(team_id))) !== tws.workspace) {
-          return send.bad(res, "A supporting team must belong to the same workspace as the ticket.");
-        }
-
-        // Check if team already assigned
-        const [existing] = await pool.query(
-          `SELECT id FROM ticket_teams WHERE ticket_id = ? AND team_id = ?`,
-          [ticketId, team_id]
+        const [[t]] = await pool.query(
+          `SELECT t.workspace, t.team_id, t.assignee_id, s.\`key\` AS status_key
+             FROM tickets t JOIN ticket_statuses s ON s.id = t.status_id WHERE t.id = ?`,
+          [ticketId]
         );
-        if (existing.length > 0) {
-          return send.bad(res, "Team is already assigned to this ticket");
+        if (!t) return send.notFound(res);
+        if (!t.team_id) return send.bad(res, "Assign the request to a team before adding collaborators.");
+        if (!["open", "pending", "in_progress", "on_hold", "partially_resolved"].includes(t.status_key)) {
+          return send.bad(res, "Teams can only be added while the request is being worked.");
+        }
+        const nocTeamId = await getNocTeamId(pool);
+        if (nocTeamId && t.team_id === nocTeamId) {
+          return send.bad(res, "Route the request to a delivery team first — NOC triages, it doesn't collaborate.");
         }
 
-        // If setting as primary, unset existing primary
-        if (is_primary) {
-          await pool.query(
-            `UPDATE ticket_teams SET is_primary = 0 WHERE ticket_id = ?`,
-            [ticketId]
-          );
-          // Also update the main ticket's team_id
-          await pool.query(`UPDATE tickets SET team_id = ? WHERE id = ?`, [team_id, ticketId]);
+        // The team working it (or its assignee / an admin) decides who to bring in.
+        const isAdmin = (req.user.roles || []).includes("admin");
+        if (!isAdmin && t.assignee_id !== req.user.id && !(await isTeamMember(pool, req.user.id, t.team_id))) {
+          return send.forbidden(res, "Only the team working this request can bring in another team.");
         }
+
+        if ((await getTeamWorkspace(pool, teamId)) !== t.workspace) {
+          return send.bad(res, "Choose a team from the same service desk.");
+        }
+        if (t.workspace === "corporate") {
+          const queues = await getCorporateQueueTeamIds(pool);
+          if (!queues.includes(teamId)) return send.bad(res, "Choose one of the corporate delivery teams.");
+        }
+        if (teamId === t.team_id) return send.bad(res, "That team is already working this request.");
+
+        await syncPrimaryTeamRow(pool, ticketId);
+        const [[existing]] = await pool.query("SELECT id FROM ticket_teams WHERE ticket_id = ? AND team_id = ?", [ticketId, teamId]);
+        if (existing) return send.bad(res, "That team is already on this request.");
+        const [[{ nextSeq }]] = await pool.query(
+          "SELECT COALESCE(MAX(seq), 1) + 1 AS nextSeq FROM ticket_teams WHERE ticket_id = ?", [ticketId]
+        );
 
         await pool.query(
-          `INSERT INTO ticket_teams (ticket_id, team_id, is_primary, assigned_by, notes)
-           VALUES (?, ?, ?, ?, ?)`,
-          [ticketId, team_id, is_primary ? 1 : 0, req.user.id, notes || null]
+          `INSERT INTO ticket_teams (ticket_id, team_id, is_primary, seq, assigned_by, notes, status)
+           VALUES (?, ?, 0, ?, ?, ?, 'active')`,
+          [ticketId, teamId, nextSeq, req.user.id, notes || null]
         );
-
         await insertEvent(pool, {
-          ticketId,
-          actorId: req.user.id,
-          type: "ticket.team_added",
-          payload: { team_id, is_primary: !!is_primary },
+          ticketId, actorId: req.user.id, type: "ticket.team_added",
+          payload: { team_id: teamId, team_seq: nextSeq, notes: notes || null },
         });
+        if (notes) {
+          const [cmt] = await pool.query(
+            "INSERT INTO ticket_comments (ticket_id, author_id, body, is_public) VALUES (?, ?, ?, 0)",
+            [ticketId, req.user.id, notes]
+          );
+          await insertEvent(pool, {
+            ticketId, actorId: req.user.id, type: "ticket.commented",
+            payload: { commentId: cmt.insertId, isPublic: false, source: "team_added" },
+          });
+        }
+        await startTeamSla(pool, ticketId, teamId, nextSeq);
+        await notifyTeamAdded(pool, ticketId, teamId, req.user.id, notes);
 
-        return send.ok(res, { ok: true, message: "Team added to ticket" });
+        // A team joining a partly-finished request keeps it Partially Resolved.
+        return send.ok(res, { ok: true, team_seq: nextSeq, message: "Team added — its SLA has started" });
       } catch (e) {
         console.error(e);
         return send.serverErr(res);
       }
     },
 
-    // DELETE /api/tickets/:id/teams/:teamId
-    // Remove a team from a ticket
+    // DELETE /api/tickets/:id/teams/:teamId — take a collaborating team off.
     removeTicketTeam: async (req, res) => {
       if (!isAgent(req.user)) return send.forbidden(res);
       const ticketId = Number(req.params.id);
       const teamId = Number(req.params.teamId);
 
       try {
-        const [existing] = await pool.query(
-          `SELECT is_primary FROM ticket_teams WHERE ticket_id = ? AND team_id = ?`,
-          [ticketId, teamId]
+        const [[row]] = await pool.query(
+          "SELECT is_primary, seq, status FROM ticket_teams WHERE ticket_id = ? AND team_id = ?", [ticketId, teamId]
         );
-        if (existing.length === 0) {
-          return send.notFound(res, "Team not assigned to this ticket");
+        if (!row) return send.notFound(res, "Team not assigned to this ticket");
+        if (row.is_primary) return send.bad(res, "Team 1 is the team the request is assigned to — it can't be removed.");
+
+        const [[t]] = await pool.query("SELECT team_id, assignee_id FROM tickets WHERE id = ?", [ticketId]);
+        const isAdmin = (req.user.roles || []).includes("admin");
+        if (!isAdmin && t.assignee_id !== req.user.id && !(await isTeamMember(pool, req.user.id, t.team_id))) {
+          return send.forbidden(res, "Only the team working this request can remove a collaborating team.");
         }
 
-        // Prevent removing primary team
-        if (existing[0].is_primary) {
-          return send.bad(res, "Cannot remove primary team. Set another team as primary first.");
-        }
-
-        await pool.query(
-          `DELETE FROM ticket_teams WHERE ticket_id = ? AND team_id = ?`,
-          [ticketId, teamId]
-        );
-
+        // Its SLA stays on record.
+        await archiveTeamSla(pool, ticketId, { teamId, isPrimary: false, reason: "removed", actorId: req.user.id });
+        await pool.query("DELETE FROM ticket_teams WHERE ticket_id = ? AND team_id = ?", [ticketId, teamId]);
         await insertEvent(pool, {
-          ticketId,
-          actorId: req.user.id,
-          type: "ticket.team_removed",
-          payload: { team_id: teamId },
+          ticketId, actorId: req.user.id, type: "ticket.team_removed",
+          payload: { team_id: teamId, team_seq: row.seq },
         });
-
-        return send.ok(res, { ok: true, message: "Team removed from ticket" });
+        const status = await evaluateTeamResolution(pool, ticketId, req.user.id);
+        return send.ok(res, { ok: true, status, message: "Team removed from ticket" });
       } catch (e) {
         console.error(e);
         return send.serverErr(res);
       }
     },
 
-    // PATCH /api/tickets/:id/teams/:teamId
-    // Update team assignment (e.g., set as primary, update status)
+    // PATCH /api/tickets/:id/teams/:teamId — update a team's notes. Team 1 is
+    // always the team the request is assigned to, and a team's part is finished
+    // or reopened through /complete and /reopen (they move SLAs and status).
     updateTicketTeam: async (req, res) => {
       if (!isAgent(req.user)) return send.forbidden(res);
       const ticketId = Number(req.params.id);
       const teamId = Number(req.params.teamId);
-      const { is_primary, status, notes } = req.body;
-
+      if ("is_primary" in (req.body || {}) || "status" in (req.body || {})) {
+        return send.bad(res, "Use Mark done / Reopen on the team, or reassign the request to change team 1.");
+      }
       try {
-        const [existing] = await pool.query(
-          `SELECT id FROM ticket_teams WHERE ticket_id = ? AND team_id = ?`,
-          [ticketId, teamId]
+        const [result] = await pool.query(
+          "UPDATE ticket_teams SET notes = ? WHERE ticket_id = ? AND team_id = ?",
+          [req.body?.notes ?? null, ticketId, teamId]
         );
-        if (existing.length === 0) {
-          return send.notFound(res, "Team not assigned to this ticket");
-        }
-
-        // If setting as primary, unset others
-        if (is_primary) {
-          await pool.query(
-            `UPDATE ticket_teams SET is_primary = 0 WHERE ticket_id = ?`,
-            [ticketId]
-          );
-          // Update main ticket's team_id
-          await pool.query(`UPDATE tickets SET team_id = ? WHERE id = ?`, [teamId, ticketId]);
-        }
-
-        const updates = [];
-        const params = [];
-        if (is_primary !== undefined) {
-          updates.push("is_primary = ?");
-          params.push(is_primary ? 1 : 0);
-        }
-        if (status) {
-          updates.push("status = ?");
-          params.push(status);
-        }
-        if (notes !== undefined) {
-          updates.push("notes = ?");
-          params.push(notes);
-        }
-
-        if (updates.length > 0) {
-          params.push(ticketId, teamId);
-          await pool.query(
-            `UPDATE ticket_teams SET ${updates.join(", ")} WHERE ticket_id = ? AND team_id = ?`,
-            params
-          );
-        }
-
+        if (!result.affectedRows) return send.notFound(res, "Team not assigned to this ticket");
         return send.ok(res, { ok: true, message: "Team assignment updated" });
       } catch (e) {
         console.error(e);
@@ -2774,106 +3093,48 @@ export function makeTicketController(pool) {
       }
     },
 
-    // POST /api/tickets/:id/teams/:teamId/complete
-    // Mark a team's work as complete on a ticket
+    // POST /api/tickets/:id/teams/:teamId/complete  { notes }
+    // A team finishes its part: its resolution SLA is met; the request becomes
+    // Partially Resolved, or Solved once every team is done.
     completeTeamWork: async (req, res) => {
       if (!isAgent(req.user)) return send.forbidden(res);
       const ticketId = Number(req.params.id);
       const teamId = Number(req.params.teamId);
-      const { notes } = req.body;
+      const notes = typeof req.body?.notes === "string" ? req.body.notes.trim() : null;
 
       try {
-        // Verify team is assigned to ticket
-        const [existing] = await pool.query(
-          `SELECT id, status FROM ticket_teams WHERE ticket_id = ? AND team_id = ?`,
-          [ticketId, teamId]
+        await syncPrimaryTeamRow(pool, ticketId);
+        const [[row]] = await pool.query(
+          "SELECT team_id, is_primary, seq, status FROM ticket_teams WHERE ticket_id = ? AND team_id = ?", [ticketId, teamId]
         );
-        if (existing.length === 0) {
-          return send.notFound(res, "Team not assigned to this ticket");
+        if (!row) return send.notFound(res, "Team not assigned to this ticket");
+        if (row.status === "completed") return send.bad(res, "That team has already finished its part.");
+
+        // Only that team (or an admin) finishes its own part.
+        const isAdmin = (req.user.roles || []).includes("admin");
+        if (!isAdmin && !(await isTeamMember(pool, req.user.id, teamId))) {
+          return send.forbidden(res, "You can only finish your own team's part.");
         }
-        if (existing[0].status === "completed") {
-          return send.bad(res, "Team has already marked their work as complete");
-        }
-
-        // Only a member of that team (or an admin) can mark its work complete —
-        // this can auto-resolve the whole ticket, so it must respect team scope.
-        const ctwIsAdmin = (req.user.roles || []).includes("admin");
-        if (!ctwIsAdmin && !(await isTeamMember(pool, req.user.id, teamId))) {
-          return send.forbidden(res, "You can only complete work for your own team.");
-        }
-
-        // Mark team's work as complete
-        await pool.query(
-          `UPDATE ticket_teams
-           SET status = 'completed', completed_at = NOW(), completed_by = ?, completion_notes = ?
-           WHERE ticket_id = ? AND team_id = ?`,
-          [req.user.id, notes || null, ticketId, teamId]
-        );
-
-        // Log the event
-        await insertEvent(pool, {
-          ticketId,
-          actorId: req.user.id,
-          type: "ticket.team_completed",
-          payload: { team_id: teamId, notes },
-        });
-
-        // Check if ALL teams have completed their work
-        const [allTeams] = await pool.query(
-          `SELECT team_id, status FROM ticket_teams WHERE ticket_id = ?`,
-          [ticketId]
-        );
-
-        const allCompleted = allTeams.length > 0 && allTeams.every(t => t.status === "completed");
-
-        if (allCompleted) {
-          // Auto-resolve the ticket since all teams have completed. This is a
-          // resolve (not a close), so stamp solved_at — that keeps the ticket
-          // eligible for the 3-day auto-close sweep and leaves closed_at for an
-          // actual close, matching the update() resolve path.
-          const solvedId = await getLookupId(pool, "ticket_statuses", "solved");
-          if (solvedId) {
-            await pool.query(
-              `UPDATE tickets SET status_id = ?, solved_at = NOW() WHERE id = ?`,
-              [solvedId, ticketId]
-            );
-
-            // Mark SLA resolve as met
-            try {
-              await pool.query(
-                `UPDATE ticket_slas SET resolve_met_at = NOW()
-                 WHERE ticket_id = ? AND resolve_met_at IS NULL`,
-                [ticketId]
-              );
-            } catch (_) {}
-
-            // The system resolves the ticket once all teams report done — the
-            // engineer only completed their own team's work — so attribute it to
-            // System (actorId null) and record who triggered it in the payload.
-            await insertEvent(pool, {
-              ticketId,
-              actorId: null,
-              type: "ticket.auto_resolved",
-              payload: { reason: "All teams completed their work", triggered_by: req.user.id },
-            });
+        if (row.is_primary && !isAdmin) {
+          const openReview = await getOpenManagerSla(pool, ticketId);
+          if (openReview && openReview.manager_id !== req.user.id) {
+            return send.forbidden(res, `This request is with ${openReview.manager_name || "the manager"} — only they can resolve team 1's part.`);
           }
-
-          return send.ok(res, {
-            ok: true,
-            message: "Team work marked as complete. All teams have finished - ticket has been resolved.",
-            allTeamsComplete: true,
-            ticketResolved: true,
-          });
         }
 
-        // Get remaining active teams
-        const activeTeams = allTeams.filter(t => t.status === "active");
-
+        await completeTeamPart(pool, ticketId, row, req.user.id, notes);
+        if (row.is_primary) await meetManagerSla(pool, ticketId, "resolved", req.user.id);
+        const status = await evaluateTeamResolution(pool, ticketId, req.user.id);
+        const [[{ remaining }]] = await pool.query(
+          "SELECT COUNT(*) AS remaining FROM ticket_teams WHERE ticket_id = ? AND status = 'active'", [ticketId]
+        );
         return send.ok(res, {
           ok: true,
-          message: "Team work marked as complete",
-          allTeamsComplete: false,
-          remainingTeams: activeTeams.length,
+          status,
+          allTeamsComplete: status === "solved",
+          ticketResolved: status === "solved",
+          remainingTeams: Number(remaining),
+          message: status === "solved" ? "Every team has finished — the request is resolved." : "Your team's part is done.",
         });
       } catch (e) {
         console.error(e);
@@ -2954,66 +3215,69 @@ export function makeTicketController(pool) {
     },
 
     // POST /api/tickets/:id/teams/:teamId/reopen
-    // Reopen a team's work (mark as active again)
+    // A team's finished part needs more work: it's active again with a NEW SLA
+    // (the finished one stays on record), and the request's status follows.
     reopenTeamWork: async (req, res) => {
       if (!isAgent(req.user)) return send.forbidden(res);
       const ticketId = Number(req.params.id);
       const teamId = Number(req.params.teamId);
 
       try {
-        const [existing] = await pool.query(
-          `SELECT id, status FROM ticket_teams WHERE ticket_id = ? AND team_id = ?`,
-          [ticketId, teamId]
+        const [[row]] = await pool.query(
+          "SELECT team_id, is_primary, seq, status FROM ticket_teams WHERE ticket_id = ? AND team_id = ?", [ticketId, teamId]
         );
-        if (existing.length === 0) {
-          return send.notFound(res, "Team not assigned to this ticket");
-        }
-        if (existing[0].status !== "completed") {
-          return send.bad(res, "Team work is not marked as complete");
-        }
+        if (!row) return send.notFound(res, "Team not assigned to this ticket");
+        if (row.status !== "completed") return send.bad(res, "That team's part isn't marked done.");
 
-        // Reopen team's work
-        await pool.query(
-          `UPDATE ticket_teams
-           SET status = 'active', completed_at = NULL, completed_by = NULL, completion_notes = NULL
-           WHERE ticket_id = ? AND team_id = ?`,
-          [ticketId, teamId]
-        );
-
-        await insertEvent(pool, {
-          ticketId,
-          actorId: req.user.id,
-          type: "ticket.team_reopened",
-          payload: { team_id: teamId },
-        });
-
-        // If ticket was auto-resolved, reopen it
-        const [ticketRows] = await pool.query(
-          `SELECT s.\`key\` AS status_key FROM tickets t
-           INNER JOIN ticket_statuses s ON s.id = t.status_id
-           WHERE t.id = ?`,
+        const [[t]] = await pool.query(
+          `SELECT t.team_id, t.assignee_id, t.priority_id, s.\`key\` AS status_key
+             FROM tickets t JOIN ticket_statuses s ON s.id = t.status_id WHERE t.id = ?`,
           [ticketId]
         );
-        if (ticketRows[0]?.status_key === "solved" || ticketRows[0]?.status_key === "closed") {
-          const inProgressId = await getLookupId(pool, "ticket_statuses", "in_progress");
-          if (inProgressId) {
-            await pool.query(
-              `UPDATE tickets SET status_id = ?, closed_at = NULL, solved_at = NULL, reopened_count = COALESCE(reopened_count, 0) + 1 WHERE id = ?`,
-              [inProgressId, ticketId]
-            );
-
-            await insertEvent(pool, {
-              ticketId,
-              actorId: req.user.id,
-              type: "ticket.reopened",
-              payload: { reason: "Team work was reopened", from_status: ticketRows[0].status_key },
-            });
-            const [[tk]] = await pool.query("SELECT priority_id, team_id FROM tickets WHERE id = ?", [ticketId]);
-            await restartSlaOnReopen(pool, ticketId, tk.priority_id, tk.team_id, req.user.id);
-          }
+        const isAdmin = (req.user.roles || []).includes("admin");
+        if (!isAdmin && t.assignee_id !== req.user.id && !(await isTeamMember(pool, req.user.id, teamId))
+            && !(await isTeamMember(pool, req.user.id, t.team_id))) {
+          return send.forbidden(res, "Only that team or the team working the request can reopen its part.");
         }
 
-        return send.ok(res, { ok: true, message: "Team work reopened" });
+        await pool.query(
+          `UPDATE ticket_teams SET status = 'active', completed_at = NULL, completed_by = NULL, completion_notes = NULL
+            WHERE ticket_id = ? AND team_id = ?`,
+          [ticketId, teamId]
+        );
+        await insertEvent(pool, {
+          ticketId, actorId: req.user.id, type: "ticket.team_reopened",
+          payload: { team_id: teamId, team_seq: row.seq },
+        });
+
+        // A new SLA for that team.
+        if (row.is_primary) {
+          const old = await archiveTeamSla(pool, ticketId, { isPrimary: true, reason: "team_reopened", actorId: req.user.id });
+          await assignSla(pool, ticketId, t.priority_id, teamId, { restart: true });
+          if (old?.cycle) await pool.query("UPDATE ticket_slas SET cycle = ? WHERE ticket_id = ?", [old.cycle, ticketId]);
+        } else {
+          await archiveTeamSla(pool, ticketId, { teamId, isPrimary: false, reason: "team_reopened", actorId: req.user.id });
+          await startTeamSla(pool, ticketId, teamId, row.seq);
+        }
+
+        // Status: a solved / closed request is back in progress; a partially
+        // resolved one goes back to in progress once nobody is finished.
+        if (t.status_key === "solved" || t.status_key === "closed") {
+          await setStatusKey(pool, ticketId, t.status_key, "in_progress", req.user.id);
+          await pool.query(
+            "UPDATE tickets SET closed_at = NULL, solved_at = NULL, reopened_count = COALESCE(reopened_count, 0) + 1 WHERE id = ?",
+            [ticketId]
+          );
+          await insertEvent(pool, {
+            ticketId, actorId: req.user.id, type: "ticket.reopened",
+            payload: { reason: "A team's work was reopened", from_status: t.status_key },
+          });
+          await evaluateTeamResolution(pool, ticketId, req.user.id);
+        } else {
+          await evaluateTeamResolution(pool, ticketId, req.user.id);
+        }
+
+        return send.ok(res, { ok: true, message: "Team work reopened — a new SLA has started" });
       } catch (e) {
         console.error(e);
         return send.serverErr(res);
@@ -3143,6 +3407,26 @@ export function makeTicketController(pool) {
               payload: { agent_name: req.user.full_name || req.user.email },
             });
           } catch (_) {}
+        }
+
+        // A collaborating team's first message on the request (public or an
+        // internal note — it's answering the team that asked for help) meets
+        // that team's response SLA.
+        if (isAgent(req.user)) {
+          const [met] = await pool.query(
+            `UPDATE ticket_team_slas tts
+               JOIN ticket_teams tt ON tt.ticket_id = tts.ticket_id AND tt.team_id = tts.team_id AND tt.status = 'active'
+               JOIN team_members m ON m.team_id = tts.team_id AND m.user_id = ?
+                SET tts.response_met_at = NOW()
+              WHERE tts.ticket_id = ? AND tts.response_met_at IS NULL AND tts.paused_at IS NULL`,
+            [req.user.id, ticketId]
+          );
+          if (met.affectedRows) {
+            await insertEvent(pool, {
+              ticketId, actorId: req.user.id, type: "sla.response_met",
+              payload: { agent_name: req.user.full_name || req.user.email, collaboration: true },
+            });
+          }
         }
 
         // Auto-transition: the handling team's FIRST public reply advances the
@@ -3401,6 +3685,10 @@ export function makeTicketController(pool) {
           }
           if (event.event_type === "ticket.flagged_to_noc" && event.payload.from_team != null) {
             event.from_team_name = resolve("team_id", event.payload.from_team);
+          }
+          if (["ticket.team_added", "ticket.team_completed", "ticket.team_reopened", "ticket.team_removed"].includes(event.event_type)
+              && event.payload.team_id != null) {
+            event.team_name = resolve("team_id", Number(event.payload.team_id));
           }
 
           return { ...event, resolved_changes };
