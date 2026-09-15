@@ -20,6 +20,7 @@ import { useMeta } from "../contexts/meta";
 import { useAuth } from "../contexts/auth";
 import { useToast } from "../contexts/toast";
 import Modal from "../components/ui/Modal";
+import useConfirm from "../components/ui/useConfirm";
 import Icon from "../components/ui/Icon";
 import Badge, { TagBadge } from "../components/ui/Badge";
 import Button from "../components/ui/Button";
@@ -63,6 +64,7 @@ export default function TicketDetail() {
   const { user } = useAuth();
   const { meta } = useMeta();
   const toast = useToast();
+  const { confirm, confirmDialog } = useConfirm();
   const statuses = meta?.statuses || [];
   const priorities = meta?.priorities || [];
   const teams = meta?.teams || [];
@@ -755,13 +757,21 @@ export default function TicketDetail() {
     }
   };
 
-  const handleRemoveTeam = async (teamId) => {
-    try {
-      await ticketsApi.removeTeam(id, teamId);
-      await loadTicketData();
-    } catch (err) {
-      toast.error(err.message || "Failed to remove team");
-    }
+  const handleRemoveTeam = (teamId, teamName) => {
+    confirm({
+      title: `Remove ${teamName || "this team"}?`,
+      message: <>They'll no longer work this request and their SLA stops. It stays in the SLA history.</>,
+      confirmText: "Remove team",
+      onConfirm: async () => {
+        try {
+          await ticketsApi.removeTeam(id, teamId);
+          toast.success(`${teamName || "Team"} removed`);
+          await loadTicketData();
+        } catch (err) {
+          toast.error(err.message || "Failed to remove team");
+        }
+      },
+    });
   };
 
   const handleSetPrimaryTeam = async (teamId) => {
@@ -770,18 +780,6 @@ export default function TicketDetail() {
       await loadTicketData();
     } catch (err) {
       toast.error(err.message || "Failed to set primary team");
-    }
-  };
-
-  const handleCompleteTeamWork = async (teamId, teamName) => {
-    try {
-      const result = await ticketsApi.completeTeamWork(id, teamId, "");
-      toast.success(result.ticketResolved
-        ? "Every team has finished — the request is resolved"
-        : `${teamName || "The team"}'s part is done${result.remainingTeams ? ` — ${result.remainingTeams} team${result.remainingTeams > 1 ? "s" : ""} still working` : ""}`);
-      await loadTicketData();
-    } catch (err) {
-      toast.error(err.message || "Failed to mark team work as complete");
     }
   };
 
@@ -2479,8 +2477,9 @@ export default function TicketDetail() {
             )}
 
             {/* Teams — 1 is the team the request is assigned to; 2, 3 … were brought
-                in to collaborate, each on its own SLA. Each team finishes its own
-                part; the request is resolved once every team is done. */}
+                in to collaborate, each on its own SLA. A status view: each team
+                resolves its part with "Resolve our part" in the toolbar, and the
+                request is resolved once every team is done. */}
             {isAgent && (
               <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] shadow-[var(--shadow-card)] overflow-hidden animate-fade-up" style={{ animationDelay: "210ms" }}>
                 <div className={`px-5 py-4 flex items-center justify-between${ticketTeams.length > 0 ? " border-b border-[var(--border-default)]" : ""}`}>
@@ -2508,7 +2507,6 @@ export default function TicketDetail() {
                   <div className="p-3 space-y-2">
                     {ticketTeams.map((tt) => {
                       const seq = tt.seq || (tt.is_primary ? 1 : null);
-                      const canFinish = tt.status === "active" && (tt.viewer_is_member || isAdminUser) && WORKING_STATUSES.includes(ticket.status_key);
                       const canReopenPart = tt.status === "completed" && (tt.viewer_is_member || isAdminUser || ticket.viewer_is_team_member)
                         && ["in_progress", "partially_resolved", "on_hold", "pending", "open", "solved"].includes(ticket.status_key);
                       const canRemove = !tt.is_primary && tt.status === "active" && (isAdminUser || ticket.viewer_is_team_member || viewerIsAssignee);
@@ -2531,32 +2529,22 @@ export default function TicketDetail() {
                               {tt.completion_notes && ` — ${tt.completion_notes}`}
                             </p>
                           )}
-                          {(canFinish || canReopenPart || canRemove) && (
-                            <div className="flex items-center gap-1 mt-2">
-                              {canFinish && (
-                                <button
-                                  onClick={() => handleCompleteTeamWork(tt.team_id, tt.team_name)}
-                                  className="flex-1 py-1 px-2 text-[11px] font-medium rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 transition-colors"
-                                >
-                                  Mark part done
-                                </button>
-                              )}
+                          {(canReopenPart || canRemove) && (
+                            <div className="flex items-center gap-3 mt-2">
                               {canReopenPart && (
                                 <button
                                   onClick={() => handleReopenTeamWork(tt.team_id)}
-                                  className="flex-1 py-1 px-2 text-[11px] font-medium rounded bg-amber-500/10 text-amber-500 hover:bg-amber-500/20 transition-colors"
+                                  className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-500 hover:underline"
                                 >
-                                  Reopen part
+                                  <Icon name="refresh" size={11} /> Reopen part
                                 </button>
                               )}
                               {canRemove && (
                                 <button
-                                  onClick={() => handleRemoveTeam(tt.team_id)}
-                                  className="p-1 text-[var(--fg-muted)] hover:text-rose-400"
-                                  title={`Remove ${tt.team_name}`}
-                                  aria-label={`Remove ${tt.team_name}`}
+                                  onClick={() => handleRemoveTeam(tt.team_id, tt.team_name)}
+                                  className="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--fg-muted)] hover:text-rose-500 hover:underline"
                                 >
-                                  <Icon name="close" size={12} />
+                                  <Icon name="close" size={11} /> Remove team
                                 </button>
                               )}
                             </div>
@@ -3284,6 +3272,8 @@ export default function TicketDetail() {
           </div>
         </div>
       </Modal>
+
+      {confirmDialog}
 
       {/* Escalate to manager — with a note for them */}
       <Modal
