@@ -4,7 +4,6 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import compression from "compression";
-import rateLimit from "express-rate-limit";
 import { getPool } from "./config/db.js";
 import { setAuthPool } from "./middleware/auth.js";
 import { setWorkspacePool } from "./middleware/workspace.js";
@@ -100,36 +99,10 @@ app.use(helmet({
 // Gzip compression
 app.use(compression());
 
-// Rate limiting
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: isProd ? 200 : 1000,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: "Too many requests, please try again later" },
-});
-app.use("/api", apiLimiter);
-
-// Stricter rate limit on auth endpoints
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: isProd ? 20 : 100,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: "Too many auth attempts, please try again later" },
-});
-app.use("/api/login", authLimiter);
-
-// Each forgot-password request can send an email, so it gets its own budget.
-// Kept modest rather than tight: many staff can share one egress IP.
-const forgotPasswordLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: isProd ? 10 : 100,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: "Too many password reset requests, please try again later" },
-});
-app.use("/api/auth/forgot-password", forgotPasswordLimiter);
+// No per-IP request budget in the API. The old express-rate-limit rules (200
+// requests / 15 min per IP) blocked normal use: a whole office reaches the
+// server through one public IP, and a single ticket page makes ~10 calls. NGINX
+// still applies its short per-second burst limits (nginx.conf).
 
 // Request logging - only in development or minimal in production
 app.use((req, res, next) => {
